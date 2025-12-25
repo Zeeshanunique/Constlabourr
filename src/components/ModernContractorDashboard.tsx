@@ -1,38 +1,19 @@
 import React, { useState, useEffect, useContext } from "react";
-import { AppContext } from "../App";
-import { Button } from "./ui/button";
-import { Card, CardContent } from "./ui/card";
-import {
-  Building2,
-  Users,
-  Calendar,
-  DollarSign,
-  LogOut,
-  Home,
-  UserCircle,
-  CheckSquare,
-  BarChart3,
-  TrendingUp,
-  Clock,
-  MapPin,
-  Briefcase,
-  ChevronRight,
-  Plus,
-  FileText,
-  Shield,
-} from "lucide-react";
-import { WorkersTab } from "./WorkersTab";
-import { ForemenTab } from "./ForemenTab";
-import { SitesTab } from "./SitesTab";
-import { ForemanAttendanceTab } from "./ForemanAttendanceTab";
-import { BulkAttendanceTab } from "./BulkAttendanceTab";
-import { PayrollTab } from "./PayrollTab";
-import { ReportsTab } from "./ReportsTab";
-import { AgreementTab } from "./AgreementTab";
+import { View, ScrollView, StyleSheet, TouchableOpacity } from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
+import { Box } from "@/components/ui/box";
+import { Text } from "@/components/ui/text";
+import { VStack } from "@/components/ui/vstack";
+import { HStack } from "@/components/ui/hstack";
+import { Button, ButtonText } from "@/components/ui/button";
+import { Card } from "@/components/ui/card";
+import { AppContext } from "../context/AppContext";
+import { MaterialIcons, FontAwesome5, Ionicons } from "@expo/vector-icons";
 import { projectId } from "../utils/supabase/info";
+import { useNavigation, useRoute } from "@react-navigation/native";
 
 interface ContractorDashboardProps {
-  accessToken: string;
+  accessToken?: string;
 }
 
 interface Stats {
@@ -44,37 +25,32 @@ interface Stats {
   absentToday: number;
 }
 
-export function ModernContractorDashboard({
-  accessToken,
-}: ContractorDashboardProps) {
+export function ModernContractorDashboard({ accessToken }: ContractorDashboardProps) {
   const context = useContext(AppContext);
+  const navigation = useNavigation();
+  const route = useRoute();
+  const token = accessToken || (route.params as any)?.accessToken;
   const [stats, setStats] = useState<Stats | null>(null);
-  const [activeTab, setActiveTab] = useState("home");
 
   useEffect(() => {
-    fetchStats();
-  }, []);
-
-  // Refresh stats when returning to home tab
-  useEffect(() => {
-    if (activeTab === "home") {
+    if (token) {
       fetchStats();
     }
-  }, [activeTab]);
+  }, [token]);
 
   const fetchStats = async () => {
+    if (!token) return;
     try {
       const response = await fetch(
         `https://${projectId}.supabase.co/functions/v1/make-server-689d7d60/dashboard/stats`,
         {
           headers: {
-            Authorization: `Bearer ${accessToken}`,
+            Authorization: `Bearer ${token}`,
           },
-        },
+        }
       );
 
-      if (!response.ok)
-        throw new Error("Failed to fetch stats");
+      if (!response.ok) throw new Error("Failed to fetch stats");
 
       const data = await response.json();
       setStats(data.stats);
@@ -85,392 +61,370 @@ export function ModernContractorDashboard({
 
   if (!context) return null;
 
-  const renderHome = () => (
-    <div className="space-y-4">
-      {/* Stats Grid */}
-      <div className="grid grid-cols-2 gap-3">
-        <Card className="bg-gradient-to-br from-blue-500 to-blue-600 border-0">
-          <CardContent className="p-4">
-            <div className="flex items-start justify-between">
-              <div>
-                <p className="text-blue-100 text-xs mb-1">
-                  Total Workers
-                </p>
-                <p className="text-white text-3xl">
-                  {stats?.totalWorkers || 0}
-                </p>
-                <p className="text-blue-100 text-xs mt-1">
-                  {stats?.activeWorkers || 0} active
-                </p>
-              </div>
-              <div className="w-10 h-10 rounded-full bg-white/20 flex items-center justify-center">
-                <Users className="w-5 h-5 text-white" />
-              </div>
-            </div>
-          </CardContent>
-        </Card>
+  const StatCard = ({
+    title,
+    value,
+    subtitle,
+    icon,
+    bgColor,
+  }: {
+    title: string;
+    value: number;
+    subtitle: string;
+    icon: string | ((props: any) => JSX.Element);
+    bgColor: string;
+  }) => (
+    <View style={[styles.statCard, { backgroundColor: bgColor }]}>
+      <View style={styles.statCardContent}>
+        <View style={styles.statCardText}>
+          <Text style={styles.statCardTitle}>{title}</Text>
+          <Text style={styles.statCardValue}>{value}</Text>
+          <Text style={styles.statCardSubtitle}>{subtitle}</Text>
+        </View>
+        <View style={styles.statCardIcon}>
+          {typeof icon === 'string' ? (
+            <MaterialIcons name={icon as any} size={24} color="white" />
+          ) : (
+            icon({ size: 24, color: 'white' })
+          )}
+        </View>
+      </View>
+    </View>
+  );
 
-        <Card className="bg-gradient-to-br from-purple-500 to-purple-600 border-0">
-          <CardContent className="p-4">
-            <div className="flex items-start justify-between">
-              <div>
-                <p className="text-purple-100 text-xs mb-1">
-                  Active Sites
-                </p>
-                <p className="text-white text-3xl">
-                  {stats?.activeSites || 0}
-                </p>
-                <p className="text-purple-100 text-xs mt-1">
-                  of {stats?.totalSites || 0} total
-                </p>
-              </div>
-              <div className="w-10 h-10 rounded-full bg-white/20 flex items-center justify-center">
-                <MapPin className="w-5 h-5 text-white" />
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card className="bg-gradient-to-br from-green-500 to-green-600 border-0">
-          <CardContent className="p-4">
-            <div className="flex items-start justify-between">
-              <div>
-                <p className="text-green-100 text-xs mb-1">
-                  Present Today
-                </p>
-                <p className="text-white text-3xl">
-                  {stats?.presentToday || 0}
-                </p>
-                <p className="text-green-100 text-xs mt-1">
-                  attendance marked
-                </p>
-              </div>
-              <div className="w-10 h-10 rounded-full bg-white/20 flex items-center justify-center">
-                <CheckSquare className="w-5 h-5 text-white" />
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card className="bg-gradient-to-br from-orange-500 to-orange-600 border-0">
-          <CardContent className="p-4">
-            <div className="flex items-start justify-between">
-              <div>
-                <p className="text-orange-100 text-xs mb-1">
-                  Absent Today
-                </p>
-                <p className="text-white text-3xl">
-                  {stats?.absentToday || 0}
-                </p>
-                <p className="text-orange-100 text-xs mt-1">
-                  workers absent
-                </p>
-              </div>
-              <div className="w-10 h-10 rounded-full bg-white/20 flex items-center justify-center">
-                <Clock className="w-5 h-5 text-white" />
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-      </div>
-
-      {/* Quick Actions */}
-      <div>
-        <h3 className="text-gray-900 px-1 mb-3">
-          Quick Actions
-        </h3>
-        <div className="space-y-2">
-          <Card
-            className="cursor-pointer hover:shadow-md transition-shadow"
-            onClick={() => setActiveTab("bulk-attendance")}
-          >
-            <CardContent className="p-4">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-3">
-                  <div className="w-12 h-12 rounded-xl bg-blue-50 flex items-center justify-center">
-                    <CheckSquare className="w-6 h-6 text-blue-600" />
-                  </div>
-                  <div>
-                    <p className="text-gray-900">
-                      Mark Attendance
-                    </p>
-                    <p className="text-xs text-gray-500">
-                      Bulk mark for all workers
-                    </p>
-                  </div>
-                </div>
-                <ChevronRight className="w-5 h-5 text-gray-400" />
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card
-            className="cursor-pointer hover:shadow-md transition-shadow"
-            onClick={() => setActiveTab("workers")}
-          >
-            <CardContent className="p-4">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-3">
-                  <div className="w-12 h-12 rounded-xl bg-green-50 flex items-center justify-center">
-                    <Users className="w-6 h-6 text-green-600" />
-                  </div>
-                  <div>
-                    <p className="text-gray-900">
-                      Manage Workers
-                    </p>
-                    <p className="text-xs text-gray-500">
-                      Add, edit, or remove workers
-                    </p>
-                  </div>
-                </div>
-                <ChevronRight className="w-5 h-5 text-gray-400" />
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card
-            className="cursor-pointer hover:shadow-md transition-shadow"
-            onClick={() => setActiveTab("payroll")}
-          >
-            <CardContent className="p-4">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-3">
-                  <div className="w-12 h-12 rounded-xl bg-purple-50 flex items-center justify-center">
-                    <DollarSign className="w-6 h-6 text-purple-600" />
-                  </div>
-                  <div>
-                    <p className="text-gray-900">
-                      Process Payroll
-                    </p>
-                    <p className="text-xs text-gray-500">
-                      Calculate and pay wages
-                    </p>
-                  </div>
-                </div>
-                <ChevronRight className="w-5 h-5 text-gray-400" />
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card
-            className="cursor-pointer hover:shadow-md transition-shadow"
-            onClick={() => setActiveTab("reports")}
-          >
-            <CardContent className="p-4">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-3">
-                  <div className="w-12 h-12 rounded-xl bg-orange-50 flex items-center justify-center">
-                    <BarChart3 className="w-6 h-6 text-orange-600" />
-                  </div>
-                  <div>
-                    <p className="text-gray-900">
-                      View Reports
-                    </p>
-                    <p className="text-xs text-gray-500">
-                      Analytics and insights
-                    </p>
-                  </div>
-                </div>
-                <ChevronRight className="w-5 h-5 text-gray-400" />
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card
-            className="cursor-pointer hover:shadow-md transition-shadow"
-            onClick={() => setActiveTab("agreement")}
-          >
-            <CardContent className="p-4">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-3">
-                  <div className="w-12 h-12 rounded-xl bg-indigo-50 flex items-center justify-center">
-                    <Shield className="w-6 h-6 text-indigo-600" />
-                  </div>
-                  <div>
-                    <p className="text-gray-900">
-                      Worker Agreement
-                    </p>
-                    <p className="text-xs text-gray-500">
-                      Manage terms & signatures
-                    </p>
-                  </div>
-                </div>
-                <ChevronRight className="w-5 h-5 text-gray-400" />
-              </div>
-            </CardContent>
-          </Card>
-        </div>
-      </div>
-    </div>
+  const QuickActionCard = ({
+    title,
+    subtitle,
+    icon,
+    iconBg,
+    iconColor,
+    onPress,
+  }: {
+    title: string;
+    subtitle: string;
+    icon: string | ((props: any) => JSX.Element);
+    iconBg: string;
+    iconColor: string;
+    onPress: () => void;
+  }) => (
+    <TouchableOpacity onPress={onPress} activeOpacity={0.7} style={styles.quickActionCard}>
+      <View style={styles.quickActionContent}>
+        <View style={styles.quickActionLeft}>
+          <View style={[styles.quickActionIcon, { backgroundColor: iconBg }]}>
+            {typeof icon === 'string' ? (
+              <MaterialIcons name={icon as any} size={24} color={iconColor} />
+            ) : (
+              icon({ size: 24, color: iconColor })
+            )}
+          </View>
+          <View style={styles.quickActionText}>
+            <Text style={styles.quickActionTitle}>{title}</Text>
+            <Text style={styles.quickActionSubtitle}>{subtitle}</Text>
+          </View>
+        </View>
+        <MaterialIcons name="chevron-right" size={20} color="#9ca3af" />
+      </View>
+    </TouchableOpacity>
   );
 
   return (
-    <div className="h-screen flex flex-col bg-gray-50">
-      {/* Modern Header */}
-      <div className="bg-gradient-to-br from-blue-600 via-blue-700 to-indigo-700 text-white px-4 pt-6 pb-8 shadow-xl relative overflow-hidden">
-        {/* Background Pattern */}
-        <div className="absolute inset-0 opacity-10 bg-[rgba(0,0,0,0)]">
-          <div className="absolute top-0 left-0 w-64 h-64 bg-white rounded-full -translate-x-32 -translate-y-32"></div>
-          <div className="absolute bottom-0 right-0 w-96 h-96 bg-white rounded-full translate-x-48 translate-y-48"></div>
-        </div>
-
-        <div className="relative">
-          <div className="flex items-center justify-between mb-6">
-            <div className="flex items-center gap-3">
-              <div className="w-12 h-12 rounded-2xl bg-white shadow-lg flex items-center justify-center">
-                <Building2 className="w-6 h-6 text-blue-600" />
-              </div>
-              <div>
-                <h1 className="text-white text-lg">
-                  ConstLabour
-                </h1>
-                <p className="text-sm text-blue-100">
-                  {context.user?.name}
-                </p>
-              </div>
-            </div>
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={context.logout}
-              className="text-white hover:bg-white/10 rounded-xl"
-            >
-              <LogOut className="w-5 h-5" />
-            </Button>
-          </div>
-
-          {activeTab === "home" && (
-            <div className="space-y-2">
-              <p className="text-blue-100 text-sm">
-                Dashboard Overview
-              </p>
-              <h2 className="text-white text-2xl">
-                Welcome back!
-              </h2>
-            </div>
-          )}
-        </div>
-      </div>
+    <SafeAreaView style={styles.container} edges={['top']}>
+      {/* Header */}
+      <View style={styles.header}>
+        <View style={styles.headerTop}>
+          <View style={styles.headerLeft}>
+            <View style={styles.logoContainer}>
+              <MaterialIcons name="business" size={28} color="#2563eb" />
+            </View>
+            <View style={styles.headerText}>
+              <Text style={styles.headerTitle}>ConstLabour</Text>
+              <Text style={styles.headerSubtitle}>{context.user?.name}</Text>
+            </View>
+          </View>
+          <TouchableOpacity onPress={context.logout} style={styles.logoutButton}>
+            <MaterialIcons name="logout" size={24} color="#ffffff" />
+          </TouchableOpacity>
+        </View>
+        <View style={styles.headerBottom}>
+          <Text style={styles.dashboardLabel}>Dashboard Overview</Text>
+          <Text style={styles.welcomeText}>Welcome back!</Text>
+        </View>
+      </View>
 
       {/* Main Content */}
-      <div className="flex-1 overflow-y-auto px-4 pb-24 mt-4">
-        <div className="bg-white rounded-2xl shadow-lg p-4">
-          {activeTab === "home" && renderHome()}
-          {activeTab === "workers" && (
-            <WorkersTab accessToken={accessToken} />
-          )}
-          {activeTab === "foremen" && (
-            <ForemenTab accessToken={accessToken} />
-          )}
-          {activeTab === "sites" && (
-            <SitesTab accessToken={accessToken} />
-          )}
-          {activeTab === "attendance" && (
-            <ForemanAttendanceTab accessToken={accessToken} />
-          )}
-          {activeTab === "bulk-attendance" && (
-            <BulkAttendanceTab accessToken={accessToken} />
-          )}
-          {activeTab === "payroll" && (
-            <PayrollTab accessToken={accessToken} />
-          )}
-          {activeTab === "reports" && (
-            <ReportsTab accessToken={accessToken} />
-          )}
-          {activeTab === "agreement" && (
-            <AgreementTab accessToken={accessToken} />
-          )}
-        </div>
-      </div>
-
-      {/* Bottom Navigation */}
-      <div className="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 shadow-2xl safe-area-inset-bottom z-50">
-        <div className="grid grid-cols-6 gap-1 p-2 pb-safe">
-          <button
-            onClick={() => setActiveTab("home")}
-            className={`flex flex-col items-center gap-1 py-2 px-1 rounded-xl transition-all ${
-              activeTab === "home"
-                ? "bg-blue-50 text-blue-600"
-                : "text-gray-600 hover:bg-gray-50"
-            }`}
-          >
-            <Home
-              className={`w-5 h-5 ${activeTab === "home" ? "scale-110" : ""}`}
+      <ScrollView style={styles.scrollView} contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
+        <View style={styles.contentCard}>
+          {/* Stats Grid */}
+          <View style={styles.statsGrid}>
+            <StatCard
+              title="Total Workers"
+              value={stats?.totalWorkers || 0}
+              subtitle={`${stats?.activeWorkers || 0} active`}
+              icon="people"
+              bgColor="#3b82f6"
             />
-            <span className="text-xs">Home</span>
-          </button>
-
-          <button
-            onClick={() => setActiveTab("workers")}
-            className={`flex flex-col items-center gap-1 py-2 px-1 rounded-xl transition-all ${
-              activeTab === "workers"
-                ? "bg-blue-50 text-blue-600"
-                : "text-gray-600 hover:bg-gray-50"
-            }`}
-          >
-            <Users
-              className={`w-5 h-5 ${activeTab === "workers" ? "scale-110" : ""}`}
+            <StatCard
+              title="Active Sites"
+              value={stats?.activeSites || 0}
+              subtitle={`of ${stats?.totalSites || 0} total`}
+              icon="place"
+              bgColor="#a855f7"
             />
-            <span className="text-xs">Workers</span>
-          </button>
-
-          <button
-            onClick={() => setActiveTab("foremen")}
-            className={`flex flex-col items-center gap-1 py-2 px-1 rounded-xl transition-all ${
-              activeTab === "foremen"
-                ? "bg-blue-50 text-blue-600"
-                : "text-gray-600 hover:bg-gray-50"
-            }`}
-          >
-            <UserCircle
-              className={`w-5 h-5 ${activeTab === "foremen" ? "scale-110" : ""}`}
+            <StatCard
+              title="Present Today"
+              value={stats?.presentToday || 0}
+              subtitle="attendance marked"
+              icon="check-box"
+              bgColor="#22c55e"
             />
-            <span className="text-xs">Foremen</span>
-          </button>
-
-          <button
-            onClick={() => setActiveTab("sites")}
-            className={`flex flex-col items-center gap-1 py-2 px-1 rounded-xl transition-all ${
-              activeTab === "sites"
-                ? "bg-blue-50 text-blue-600"
-                : "text-gray-600 hover:bg-gray-50"
-            }`}
-          >
-            <Briefcase
-              className={`w-5 h-5 ${activeTab === "sites" ? "scale-110" : ""}`}
+            <StatCard
+              title="Absent Today"
+              value={stats?.absentToday || 0}
+              subtitle="workers absent"
+              icon="schedule"
+              bgColor="#f97316"
             />
-            <span className="text-xs">Sites</span>
-          </button>
+          </View>
 
-          <button
-            onClick={() => setActiveTab("attendance")}
-            className={`flex flex-col items-center gap-1 py-2 px-1 rounded-xl transition-all ${
-              activeTab === "attendance"
-                ? "bg-blue-50 text-blue-600"
-                : "text-gray-600 hover:bg-gray-50"
-            }`}
-          >
-            <Calendar
-              className={`w-5 h-5 ${activeTab === "attendance" ? "scale-110" : ""}`}
-            />
-            <span className="text-xs">Attend</span>
-          </button>
-
-          <button
-            onClick={() => setActiveTab("payroll")}
-            className={`flex flex-col items-center gap-1 py-2 px-1 rounded-xl transition-all ${
-              activeTab === "payroll"
-                ? "bg-blue-50 text-blue-600"
-                : "text-gray-600 hover:bg-gray-50"
-            }`}
-          >
-            <DollarSign
-              className={`w-5 h-5 ${activeTab === "payroll" ? "scale-110" : ""}`}
-            />
-            <span className="text-xs">Payroll</span>
-          </button>
-        </div>
-      </div>
-    </div>
+          {/* Quick Actions */}
+          <View style={styles.quickActionsSection}>
+            <Text style={styles.quickActionsTitle}>Quick Actions</Text>
+            <View style={styles.quickActionsList}>
+              <QuickActionCard
+                title="Mark Attendance"
+                subtitle="Bulk mark for all workers"
+                icon="check-box"
+                iconBg="#eff6ff"
+                iconColor="#2563eb"
+                onPress={() => navigation.navigate("BulkAttendance" as never)}
+              />
+              <QuickActionCard
+                title="Manage Workers"
+                subtitle="Add, edit, or remove workers"
+                icon="people"
+                iconBg="#f0fdf4"
+                iconColor="#16a34a"
+                onPress={() => navigation.navigate("Workers" as never)}
+              />
+              <QuickActionCard
+                title="Process Payroll"
+                subtitle="Calculate and pay wages"
+                icon="attach-money"
+                iconBg="#faf5ff"
+                iconColor="#9333ea"
+                onPress={() => navigation.navigate("Payroll" as never)}
+              />
+              <QuickActionCard
+                title="View Reports"
+                subtitle="Analytics and insights"
+                icon="bar-chart"
+                iconBg="#fff7ed"
+                iconColor="#ea580c"
+                onPress={() => navigation.navigate("Reports" as never)}
+              />
+              <QuickActionCard
+                title="Worker Agreement"
+                subtitle="Manage terms & signatures"
+                icon="security"
+                iconBg="#eef2ff"
+                iconColor="#6366f1"
+                onPress={() => navigation.navigate("Agreements" as never)}
+              />
+            </View>
+          </View>
+        </View>
+      </ScrollView>
+    </SafeAreaView>
   );
 }
+
+const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+    backgroundColor: "#f8fafc",
+  },
+  header: {
+    backgroundColor: "#2563eb",
+    paddingTop: 16,
+    paddingBottom: 24,
+    paddingHorizontal: 20,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 8,
+    elevation: 4,
+  },
+  headerTop: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 20,
+  },
+  headerLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  logoContainer: {
+    width: 48,
+    height: 48,
+    borderRadius: 12,
+    backgroundColor: '#ffffff',
+    justifyContent: 'center',
+    alignItems: 'center',
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 3,
+  },
+  headerText: {
+    gap: 4,
+  },
+  headerTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#ffffff',
+  },
+  headerSubtitle: {
+    fontSize: 14,
+    color: '#bfdbfe',
+  },
+  logoutButton: {
+    padding: 8,
+  },
+  headerBottom: {
+    gap: 4,
+  },
+  dashboardLabel: {
+    fontSize: 14,
+    color: '#bfdbfe',
+  },
+  welcomeText: {
+    fontSize: 28,
+    fontWeight: '700',
+    color: '#ffffff',
+  },
+  scrollView: {
+    flex: 1,
+  },
+  scrollContent: {
+    paddingBottom: 20,
+  },
+  contentCard: {
+    backgroundColor: '#ffffff',
+    borderRadius: 16,
+    marginTop: 16,
+    marginHorizontal: 16,
+    padding: 20,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 8,
+    elevation: 4,
+  },
+  statsGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'space-between',
+    marginBottom: 24,
+    gap: 12,
+  },
+  statCard: {
+    width: '48%',
+    borderRadius: 12,
+    padding: 16,
+    marginBottom: 12,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 4,
+    elevation: 3,
+  },
+  statCardContent: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+  },
+  statCardText: {
+    flex: 1,
+    gap: 4,
+  },
+  statCardTitle: {
+    fontSize: 12,
+    color: 'rgba(255,255,255,0.9)',
+    fontWeight: '500',
+  },
+  statCardValue: {
+    fontSize: 28,
+    fontWeight: '700',
+    color: '#ffffff',
+  },
+  statCardSubtitle: {
+    fontSize: 12,
+    color: 'rgba(255,255,255,0.8)',
+  },
+  statCardIcon: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: 'rgba(255,255,255,0.2)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  quickActionsSection: {
+    marginTop: 8,
+  },
+  quickActionsTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#111827',
+    marginBottom: 16,
+  },
+  quickActionsList: {
+    gap: 12,
+  },
+  quickActionCard: {
+    backgroundColor: '#ffffff',
+    borderRadius: 12,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.05,
+    shadowRadius: 2,
+    elevation: 1,
+  },
+  quickActionContent: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  quickActionLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+    gap: 12,
+  },
+  quickActionIcon: {
+    width: 48,
+    height: 48,
+    borderRadius: 12,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  quickActionText: {
+    flex: 1,
+    gap: 4,
+  },
+  quickActionTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#111827',
+  },
+  quickActionSubtitle: {
+    fontSize: 13,
+    color: '#6b7280',
+  },
+});

@@ -1,37 +1,18 @@
 import React, { useState, useEffect } from 'react';
-import { createClient } from '@supabase/supabase-js';
+import { NavigationContainer } from '@react-navigation/native';
+import { GluestackUIProvider } from '@/components/ui/gluestack-ui-provider';
 import { projectId, publicAnonKey } from './utils/supabase/info';
-import { LoginScreen } from './components/LoginScreen';
-import { ModernContractorDashboard } from './components/ModernContractorDashboard';
-import { ForemanDashboard } from './components/ForemanDashboard';
-import { LabourDashboard } from './components/LabourDashboard';
-import { Toaster } from './components/ui/sonner';
-import { toast } from 'sonner@2.0.3';
+import { View, ActivityIndicator, Text } from 'react-native';
+import { AuthNavigator } from './navigation/AuthNavigator';
+import { AppNavigator } from './navigation/AppNavigator';
+import Toast from 'react-native-toast-message';
+import { AppContext, AppContextType, User } from './context/AppContext';
+import { createClient } from '@supabase/supabase-js';
 
 const supabase = createClient(
   `https://${projectId}.supabase.co`,
   publicAnonKey
 );
-
-export type UserRole = 'contractor' | 'foreman' | 'labour';
-
-export interface User {
-  id: string;
-  email: string;
-  role: UserRole;
-  name: string;
-  contractorId?: string;
-  workerId?: string;
-}
-
-export interface AppContextType {
-  user: User | null;
-  supabase: typeof supabase;
-  logout: () => void;
-  refreshUser: () => Promise<void>;
-}
-
-export const AppContext = React.createContext<AppContextType | null>(null);
 
 export default function App() {
   const [user, setUser] = useState<User | null>(null);
@@ -80,7 +61,11 @@ export default function App() {
       setUser(data.user);
     } catch (error: any) {
       console.error('Error fetching user profile:', error);
-      toast.error(error.message || 'Failed to load user profile');
+      Toast.show({
+        type: 'error',
+        text1: 'Error',
+        text2: error.message || 'Failed to load user profile',
+      });
     }
   };
 
@@ -99,19 +84,34 @@ export default function App() {
       if (data.session?.access_token) {
         setAccessToken(data.session.access_token);
         await fetchUserProfile(data.session.access_token);
-        toast.success('Login successful!');
+        Toast.show({
+          type: 'success',
+          text1: 'Success',
+          text2: 'Login successful!',
+        });
       }
     } catch (error: any) {
       console.error('Login error:', error);
       const errorMessage = error.message || 'Login failed';
       
-      // Provide more helpful error messages
       if (errorMessage.includes('Invalid login credentials')) {
-        toast.error('Invalid email or password. Please check your credentials.');
+        Toast.show({
+          type: 'error',
+          text1: 'Login Failed',
+          text2: 'Invalid email or password. Please check your credentials.',
+        });
       } else if (errorMessage.includes('Email not confirmed')) {
-        toast.error('Please verify your email address.');
+        Toast.show({
+          type: 'error',
+          text1: 'Email Not Verified',
+          text2: 'Please verify your email address.',
+        });
       } else {
-        toast.error(errorMessage);
+        Toast.show({
+          type: 'error',
+          text1: 'Login Failed',
+          text2: errorMessage,
+        });
       }
       throw error;
     }
@@ -119,7 +119,6 @@ export default function App() {
 
   const handleRegister = async (email: string, password: string, name: string) => {
     try {
-      // Validate password length
       if (password.length < 6) {
         throw new Error('Password must be at least 6 characters long');
       }
@@ -142,12 +141,15 @@ export default function App() {
         throw new Error(data.error || 'Registration failed');
       }
 
-      toast.success('Registration successful! You can now login with your credentials.');
+      Toast.show({
+        type: 'success',
+        text1: 'Success',
+        text2: 'Registration successful! You can now login with your credentials.',
+      });
       return data;
     } catch (error: any) {
       console.error('Registration error:', error);
       
-      // Provide more helpful error messages
       let errorMessage = error.message || 'Registration failed';
       if (errorMessage.includes('already registered')) {
         errorMessage = 'This email is already registered. Please login instead.';
@@ -155,7 +157,11 @@ export default function App() {
         errorMessage = 'Please enter a valid email address.';
       }
       
-      toast.error(errorMessage);
+      Toast.show({
+        type: 'error',
+        text1: 'Registration Failed',
+        text2: errorMessage,
+      });
       throw error;
     }
   };
@@ -165,10 +171,18 @@ export default function App() {
       await supabase.auth.signOut();
       setUser(null);
       setAccessToken(null);
-      toast.success('Logged out successfully');
+      Toast.show({
+        type: 'success',
+        text1: 'Success',
+        text2: 'Logged out successfully',
+      });
     } catch (error) {
       console.error('Logout error:', error);
-      toast.error('Logout failed');
+      Toast.show({
+        type: 'error',
+        text1: 'Error',
+        text2: 'Logout failed',
+      });
     }
   };
 
@@ -180,21 +194,12 @@ export default function App() {
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center min-h-screen bg-gray-50">
-        <div className="text-center">
-          <div className="inline-block h-8 w-8 animate-spin rounded-full border-4 border-solid border-blue-600 border-r-transparent"></div>
-          <p className="mt-2 text-gray-600">Loading...</p>
-        </div>
-      </div>
-    );
-  }
-
-  if (!user) {
-    return (
-      <>
-        <LoginScreen onLogin={handleLogin} onRegister={handleRegister} />
-        <Toaster />
-      </>
+      <GluestackUIProvider>
+        <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#f8f9fa' }}>
+          <ActivityIndicator size="large" color="#2563eb" />
+          <Text style={{ marginTop: 16, color: '#717182' }}>Loading...</Text>
+        </View>
+      </GluestackUIProvider>
     );
   }
 
@@ -203,16 +208,22 @@ export default function App() {
     supabase,
     logout,
     refreshUser,
+    handleLogin,
+    handleRegister,
   };
 
   return (
-    <AppContext.Provider value={contextValue}>
-      <div className="min-h-screen bg-gray-50">
-        {user.role === 'contractor' && <ModernContractorDashboard accessToken={accessToken!} />}
-        {user.role === 'foreman' && <ForemanDashboard accessToken={accessToken!} />}
-        {user.role === 'labour' && <LabourDashboard accessToken={accessToken!} />}
-      </div>
-      <Toaster />
-    </AppContext.Provider>
+    <GluestackUIProvider>
+      <AppContext.Provider value={contextValue}>
+        <NavigationContainer>
+          {!user ? (
+            <AuthNavigator />
+          ) : (
+            <AppNavigator role={user.role} accessToken={accessToken!} />
+          )}
+        </NavigationContainer>
+        <Toast />
+      </AppContext.Provider>
+    </GluestackUIProvider>
   );
 }

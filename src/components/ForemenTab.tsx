@@ -1,91 +1,92 @@
 import React, { useState, useEffect } from 'react';
-import { Button } from './ui/button';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from './ui/dialog';
-import { Input } from './ui/input';
-import { Label } from './ui/label';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
-import { UserCircle, Plus, Phone, MapPin, Edit, Trash2, Search } from 'lucide-react';
+import { View, StyleSheet, FlatList, ScrollView, Modal, Alert, TouchableOpacity } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import { Box } from '@/components/ui/box';
+import { Text } from '@/components/ui/text';
+import { VStack } from '@/components/ui/vstack';
+import { HStack } from '@/components/ui/hstack';
+import { Button, ButtonText } from '@/components/ui/button';
+import { Input, InputField } from '../../components/ui/input';
+import { Card } from '@/components/ui/card';
+import { Select, SelectTrigger, SelectInput, SelectIcon, SelectPortal, SelectBackdrop, SelectContent, SelectDragIndicator, SelectDragIndicatorWrapper, SelectItem, SelectItemText } from '@/components/ui/select';
+import { FormControl, FormControlLabel, FormControlLabelText } from '@/components/ui/form-control';
+import { MaterialIcons } from '@expo/vector-icons';
 import { projectId } from '../utils/supabase/info';
-import { toast } from 'sonner@2.0.3';
-
-interface ForemenTabProps {
-  accessToken: string;
-}
+import { useRoute } from '@react-navigation/native';
+import Toast from 'react-native-toast-message';
 
 interface Foreman {
   id: string;
   name: string;
+  email: string;
   phone: string;
   siteId?: string;
   siteName?: string;
-  createdAt: string;
 }
 
 interface Site {
   id: string;
   name: string;
-  location: string;
+}
+
+interface ForemenTabProps {
+  accessToken?: string;
 }
 
 export function ForemenTab({ accessToken }: ForemenTabProps) {
+  const route = useRoute();
+  const token = accessToken || (route.params as any)?.accessToken;
   const [foremen, setForemen] = useState<Foreman[]>([]);
   const [sites, setSites] = useState<Site[]>([]);
   const [loading, setLoading] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
-  const [isDialogOpen, setIsDialogOpen] = useState(false);
+  const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingForeman, setEditingForeman] = useState<Foreman | null>(null);
-
   const [formData, setFormData] = useState({
     name: '',
-    phone: '',
     email: '',
     password: '',
+    phone: '',
     siteId: '',
   });
 
   useEffect(() => {
-    fetchForemen();
-    fetchSites();
-  }, []);
+    if (token) {
+      fetchForemen();
+      fetchSites();
+    }
+  }, [token]);
 
   const fetchForemen = async () => {
+    if (!token) return;
     try {
-      setLoading(true);
       const response = await fetch(
         `https://${projectId}.supabase.co/functions/v1/make-server-689d7d60/foremen`,
         {
-          headers: {
-            'Authorization': `Bearer ${accessToken}`,
-          },
+          headers: { 'Authorization': `Bearer ${token}` },
         }
       );
-
-      if (!response.ok) throw new Error('Failed to fetch foremen');
-      
       const data = await response.json();
       setForemen(data.foremen || []);
     } catch (error) {
       console.error('Error fetching foremen:', error);
-      toast.error('Failed to load foremen');
-    } finally {
-      setLoading(false);
+      Toast.show({
+        type: 'error',
+        text1: 'Error',
+        text2: 'Failed to fetch foremen',
+      });
     }
   };
 
   const fetchSites = async () => {
+    if (!token) return;
     try {
       const response = await fetch(
         `https://${projectId}.supabase.co/functions/v1/make-server-689d7d60/sites`,
         {
-          headers: {
-            'Authorization': `Bearer ${accessToken}`,
-          },
+          headers: { 'Authorization': `Bearer ${token}` },
         }
       );
-
-      if (!response.ok) throw new Error('Failed to fetch sites');
-      
       const data = await response.json();
       setSites(data.sites || []);
     } catch (error) {
@@ -93,97 +94,148 @@ export function ForemenTab({ accessToken }: ForemenTabProps) {
     }
   };
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    
-    if (!formData.name || !formData.phone || !formData.email || !formData.password) {
-      toast.error('Please fill in all required fields');
-      return;
-    }
-
+  const handleSubmit = async () => {
+    if (!token) return;
+    setLoading(true);
     try {
-      setLoading(true);
-      const url = editingForeman
-        ? `https://${projectId}.supabase.co/functions/v1/make-server-689d7d60/foremen/${editingForeman.id}`
-        : `https://${projectId}.supabase.co/functions/v1/make-server-689d7d60/foremen`;
+      const foremanData: any = {
+        name: formData.name,
+        email: formData.email,
+        phone: formData.phone,
+        siteId: formData.siteId || null,
+      };
 
-      const response = await fetch(url, {
-        method: editingForeman ? 'PUT' : 'POST',
-        headers: {
-          'Authorization': `Bearer ${accessToken}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          name: formData.name,
-          phone: formData.phone,
-          email: formData.email,
-          password: formData.password,
-          siteId: formData.siteId && formData.siteId !== 'none' ? formData.siteId : null,
-        }),
-      });
+      if (editingForeman) {
+        if (formData.password) {
+          foremanData.password = formData.password;
+        }
+        const response = await fetch(
+          `https://${projectId}.supabase.co/functions/v1/make-server-689d7d60/foremen/${editingForeman.id}`,
+          {
+            method: 'PUT',
+            headers: {
+              'Authorization': `Bearer ${token}`,
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify(foremanData),
+          }
+        );
 
-      if (!response.ok) {
-        const error = await response.json();
-        throw new Error(error.error || 'Failed to save foreman');
+        if (!response.ok) {
+          const error = await response.json();
+          throw new Error(error.error || 'Failed to update foreman');
+        }
+
+        Toast.show({
+          type: 'success',
+          text1: 'Success',
+          text2: 'Foreman updated successfully',
+        });
+      } else {
+        if (!formData.password) {
+          throw new Error('Password is required');
+        }
+        foremanData.password = formData.password;
+
+        const response = await fetch(
+          `https://${projectId}.supabase.co/functions/v1/make-server-689d7d60/foremen`,
+          {
+            method: 'POST',
+            headers: {
+              'Authorization': `Bearer ${token}`,
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify(foremanData),
+          }
+        );
+
+        if (!response.ok) {
+          const error = await response.json();
+          throw new Error(error.error || 'Failed to create foreman');
+        }
+
+        Toast.show({
+          type: 'success',
+          text1: 'Success',
+          text2: 'Foreman created successfully',
+        });
       }
 
-      toast.success(editingForeman ? 'Foreman updated successfully' : 'Foreman created successfully');
-      setIsDialogOpen(false);
+      setIsModalOpen(false);
       resetForm();
       fetchForemen();
-    } catch (error) {
-      console.error('Error saving foreman:', error);
-      toast.error(error instanceof Error ? error.message : 'Failed to save foreman');
+    } catch (error: any) {
+      Toast.show({
+        type: 'error',
+        text1: 'Error',
+        text2: error.message || 'Failed to save foreman',
+      });
     } finally {
       setLoading(false);
     }
+  };
+
+  const handleDelete = (foreman: Foreman) => {
+    Alert.alert(
+      'Delete Foreman',
+      `Are you sure you want to delete ${foreman.name}?`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: async () => {
+            if (!token) return;
+            try {
+              const response = await fetch(
+                `https://${projectId}.supabase.co/functions/v1/make-server-689d7d60/foremen/${foreman.id}`,
+                {
+                  method: 'DELETE',
+                  headers: { 'Authorization': `Bearer ${token}` },
+                }
+              );
+
+              if (!response.ok) {
+                throw new Error('Failed to delete foreman');
+              }
+
+              Toast.show({
+                type: 'success',
+                text1: 'Success',
+                text2: 'Foreman deleted successfully',
+              });
+              fetchForemen();
+            } catch (error: any) {
+              Toast.show({
+                type: 'error',
+                text1: 'Error',
+                text2: error.message || 'Failed to delete foreman',
+              });
+            }
+          },
+        },
+      ]
+    );
   };
 
   const handleEdit = (foreman: Foreman) => {
     setEditingForeman(foreman);
     setFormData({
       name: foreman.name,
-      phone: foreman.phone,
-      email: '',
+      email: foreman.email,
       password: '',
+      phone: foreman.phone,
       siteId: foreman.siteId || '',
     });
-    setIsDialogOpen(true);
-  };
-
-  const handleDelete = async (id: string) => {
-    if (!confirm('Are you sure you want to delete this foreman?')) return;
-
-    try {
-      setLoading(true);
-      const response = await fetch(
-        `https://${projectId}.supabase.co/functions/v1/make-server-689d7d60/foremen/${id}`,
-        {
-          method: 'DELETE',
-          headers: {
-            'Authorization': `Bearer ${accessToken}`,
-          },
-        }
-      );
-
-      if (!response.ok) throw new Error('Failed to delete foreman');
-
-      toast.success('Foreman deleted successfully');
-      fetchForemen();
-    } catch (error) {
-      console.error('Error deleting foreman:', error);
-      toast.error('Failed to delete foreman');
-    } finally {
-      setLoading(false);
-    }
+    setIsModalOpen(true);
   };
 
   const resetForm = () => {
     setFormData({
       name: '',
-      phone: '',
       email: '',
       password: '',
+      phone: '',
       siteId: '',
     });
     setEditingForeman(null);
@@ -191,203 +243,340 @@ export function ForemenTab({ accessToken }: ForemenTabProps) {
 
   const filteredForemen = foremen.filter(foreman =>
     foreman.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    foreman.phone.includes(searchTerm)
+    foreman.phone.includes(searchTerm) ||
+    foreman.email.toLowerCase().includes(searchTerm.toLowerCase())
   );
 
   return (
-    <div className="space-y-4">
-      {/* Search and Add */}
-      <div className="flex gap-2">
-        <div className="relative flex-1">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
-          <Input
-            placeholder="Search foremen..."
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-            className="pl-10"
-          />
-        </div>
-        <Dialog open={isDialogOpen} onOpenChange={(open) => {
-          setIsDialogOpen(open);
-          if (!open) resetForm();
-        }}>
-          <DialogTrigger asChild>
-            <Button className="bg-purple-600 hover:bg-purple-700 shrink-0">
-              <Plus className="w-4 h-4 mr-2" />
-              Add Foreman
-            </Button>
-          </DialogTrigger>
-          <DialogContent className="max-w-md max-h-[90vh] overflow-y-auto">
-            <DialogHeader>
-              <DialogTitle>{editingForeman ? 'Edit Foreman' : 'Add New Foreman'}</DialogTitle>
-              <DialogDescription>
-                {editingForeman ? 'Update foreman details' : 'Create a new foreman account'}
-              </DialogDescription>
-            </DialogHeader>
-            <form onSubmit={handleSubmit} className="space-y-4">
-              <div>
-                <Label htmlFor="name">Full Name *</Label>
-                <Input
-                  id="name"
-                  value={formData.name}
-                  onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                  placeholder="Enter full name"
-                  required
-                />
-              </div>
+    <SafeAreaView style={styles.container} edges={['top']}>
+      <View style={styles.content}>
+        {/* Search and Add */}
+        <View style={styles.searchAddContainer}>
+          <Input size="md" variant="outline" style={styles.searchWrapper}>
+            <MaterialIcons name="search" size={20} color="#9ca3af" style={styles.searchIcon} />
+            <InputField
+              placeholder="Search foremen..."
+              value={searchTerm}
+              onChangeText={setSearchTerm}
+              style={styles.searchInput}
+              placeholderTextColor="#9ca3af"
+            />
+          </Input>
+          <Button
+            onPress={() => { resetForm(); setIsModalOpen(true); }}
+            style={styles.addButton}
+          >
+            <MaterialIcons name="add" size={20} color="#ffffff" />
+            <ButtonText style={styles.addButtonText}>Add Foreman</ButtonText>
+          </Button>
+        </View>
 
-              <div>
-                <Label htmlFor="phone">Phone Number *</Label>
-                <Input
-                  id="phone"
-                  value={formData.phone}
-                  onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
-                  placeholder="Enter phone number"
-                  required
-                />
-              </div>
+        {/* Foremen List */}
+        <FlatList
+          data={filteredForemen}
+          keyExtractor={(item) => item.id}
+          contentContainerStyle={styles.listContent}
+          renderItem={({ item }) => (
+            <View style={styles.foremanCard}>
+              <View style={styles.foremanCardContent}>
+                <View style={styles.foremanAvatar}>
+                  <MaterialIcons name="supervisor-account" size={32} color="#9333ea" />
+                </View>
+                <View style={styles.foremanInfo}>
+                  <Text style={styles.foremanName}>{item.name}</Text>
+                  <View style={styles.foremanDetailRow}>
+                    <MaterialIcons name="phone" size={16} color="#6b7280" />
+                    <Text style={styles.foremanDetail}>{item.phone}</Text>
+                  </View>
+                  {item.siteName && (
+                    <View style={styles.foremanDetailRow}>
+                      <MaterialIcons name="place" size={16} color="#6b7280" />
+                      <Text style={styles.foremanDetail}>{item.siteName}</Text>
+                    </View>
+                  )}
+                </View>
+                <View style={styles.foremanActions}>
+                  <TouchableOpacity onPress={() => handleEdit(item)} style={styles.actionButton}>
+                    <MaterialIcons name="edit" size={20} color="#2563eb" />
+                  </TouchableOpacity>
+                  <TouchableOpacity onPress={() => handleDelete(item)} style={styles.actionButton}>
+                    <MaterialIcons name="delete" size={20} color="#dc2626" />
+                  </TouchableOpacity>
+                </View>
+              </View>
+            </View>
+          )}
+          ListEmptyComponent={
+            <View style={styles.emptyState}>
+              <Text style={styles.emptyText}>No foremen found</Text>
+            </View>
+          }
+        />
+      </View>
 
-              <div>
-                <Label htmlFor="email">Email *</Label>
-                <Input
-                  id="email"
-                  type="email"
-                  value={formData.email}
-                  onChange={(e) => setFormData({ ...formData, email: e.target.value })}
-                  placeholder="Enter email address"
-                  required
-                />
-              </div>
-
-              <div>
-                <Label htmlFor="password">Password *</Label>
-                <Input
-                  id="password"
-                  type="password"
-                  value={formData.password}
-                  onChange={(e) => setFormData({ ...formData, password: e.target.value })}
-                  placeholder="Enter password"
-                  required
-                />
-              </div>
-
-              <div>
-                <Label htmlFor="site">Assign to Site (Optional)</Label>
-                <Select value={formData.siteId} onValueChange={(value) => setFormData({ ...formData, siteId: value })}>
-                  <SelectTrigger>
-                    <SelectValue placeholder="Select a site" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="none">No site assigned</SelectItem>
-                    {sites.map((site) => (
-                      <SelectItem key={site.id} value={site.id}>
-                        {site.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-
-              <div className="flex gap-2 pt-4">
-                <Button
-                  type="button"
-                  variant="outline"
-                  onClick={() => {
-                    setIsDialogOpen(false);
-                    resetForm();
+      {/* Add/Edit Modal */}
+      <Modal visible={isModalOpen} animationType="slide" transparent>
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <ScrollView>
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+                <Text style={{ fontSize: 20, fontWeight: '700', color: '#111827' }}>
+                  {editingForeman ? 'Edit Foreman' : 'Add Foreman'}
+                </Text>
+                <TouchableOpacity
+                  onPress={() => { setIsModalOpen(false); resetForm(); }}
+                  style={{
+                    padding: 8,
+                    borderRadius: 8,
+                    borderWidth: 1,
+                    borderColor: '#e5e7eb',
+                    backgroundColor: '#ffffff',
                   }}
-                  className="flex-1"
                 >
-                  Cancel
-                </Button>
-                <Button type="submit" disabled={loading} className="flex-1 bg-purple-600 hover:bg-purple-700">
-                  {loading ? 'Saving...' : editingForeman ? 'Update' : 'Create'}
-                </Button>
-              </div>
-            </form>
-          </DialogContent>
-        </Dialog>
-      </div>
+                  <MaterialIcons name="close" size={24} color="#717182" />
+                </TouchableOpacity>
+              </View>
 
-      {/* Foremen List */}
-      <div className="space-y-3">
-        {loading && foremen.length === 0 ? (
-          <Card>
-            <CardContent className="py-8 text-center text-gray-500">
-              Loading foremen...
-            </CardContent>
-          </Card>
-        ) : filteredForemen.length === 0 ? (
-          <Card>
-            <CardContent className="py-12 text-center">
-              <UserCircle className="w-12 h-12 mx-auto mb-3 text-gray-300" />
-              <p className="text-gray-500">
-                {searchTerm ? 'No foremen found matching your search' : 'No foremen added yet'}
-              </p>
-              {!searchTerm && (
-                <Button
-                  onClick={() => setIsDialogOpen(true)}
-                  variant="outline"
-                  className="mt-4"
-                >
-                  <Plus className="w-4 h-4 mr-2" />
-                  Add Your First Foreman
+              <VStack space="lg">
+                <FormControl isRequired>
+                  <FormControlLabel>
+                    <FormControlLabelText>Name</FormControlLabelText>
+                  </FormControlLabel>
+                  <Input size="md" variant="outline">
+                    <InputField
+                      value={formData.name}
+                      onChangeText={(text) => setFormData({ ...formData, name: text })}
+                      placeholder="Foreman name"
+                    />
+                  </Input>
+                </FormControl>
+
+                <FormControl isRequired>
+                  <FormControlLabel>
+                    <FormControlLabelText>Email</FormControlLabelText>
+                  </FormControlLabel>
+                  <Input size="md" variant="outline">
+                    <InputField
+                      value={formData.email}
+                      onChangeText={(text) => setFormData({ ...formData, email: text })}
+                      placeholder="foreman@example.com"
+                      keyboardType="email-address"
+                      autoCapitalize="none"
+                    />
+                  </Input>
+                </FormControl>
+
+                {!editingForeman && (
+                  <FormControl isRequired>
+                    <FormControlLabel>
+                      <FormControlLabelText>Password</FormControlLabelText>
+                    </FormControlLabel>
+                    <Input size="md" variant="outline">
+                      <InputField
+                        value={formData.password}
+                        onChangeText={(text) => setFormData({ ...formData, password: text })}
+                        placeholder="Password"
+                        secureTextEntry
+                      />
+                    </Input>
+                  </FormControl>
+                )}
+
+                {editingForeman && (
+                  <FormControl>
+                    <FormControlLabel>
+                      <FormControlLabelText>New Password (optional)</FormControlLabelText>
+                    </FormControlLabel>
+                    <Input size="md" variant="outline">
+                      <InputField
+                        value={formData.password}
+                        onChangeText={(text) => setFormData({ ...formData, password: text })}
+                        placeholder="Leave blank to keep current"
+                        secureTextEntry
+                      />
+                    </Input>
+                  </FormControl>
+                )}
+
+                <FormControl isRequired>
+                  <FormControlLabel>
+                    <FormControlLabelText>Phone</FormControlLabelText>
+                  </FormControlLabel>
+                  <Input size="md" variant="outline">
+                    <InputField
+                      value={formData.phone}
+                      onChangeText={(text) => setFormData({ ...formData, phone: text })}
+                      placeholder="Phone number"
+                      keyboardType="phone-pad"
+                    />
+                  </Input>
+                </FormControl>
+
+                <FormControl>
+                  <FormControlLabel>
+                    <FormControlLabelText>Site</FormControlLabelText>
+                  </FormControlLabel>
+                  <Select selectedValue={formData.siteId} onValueChange={(value) => setFormData({ ...formData, siteId: value })}>
+                    <SelectTrigger variant="outline" size="md">
+                      <SelectInput placeholder="Select site" />
+                      <SelectIcon />
+                    </SelectTrigger>
+                    <SelectPortal>
+                      <SelectBackdrop />
+                      <SelectContent>
+                        <SelectDragIndicatorWrapper>
+                          <SelectDragIndicator />
+                        </SelectDragIndicatorWrapper>
+                        <SelectItem label="None" value="">
+                          <SelectItemText>None</SelectItemText>
+                        </SelectItem>
+                        {sites.map((site) => (
+                          <SelectItem key={site.id} label={site.name} value={site.id}>
+                            <SelectItemText>{site.name}</SelectItemText>
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </SelectPortal>
+                  </Select>
+                </FormControl>
+
+                <Button onPress={handleSubmit} size="lg" className="mt-4" isDisabled={loading}>
+                  {loading ? (
+                    <ButtonText>Loading...</ButtonText>
+                  ) : (
+                    <ButtonText>{editingForeman ? 'Update Foreman' : 'Create Foreman'}</ButtonText>
+                  )}
                 </Button>
-              )}
-            </CardContent>
-          </Card>
-        ) : (
-          filteredForemen.map((foreman) => (
-            <Card key={foreman.id} className="overflow-hidden">
-              <CardContent className="p-4">
-                <div className="flex items-start justify-between gap-3">
-                  <div className="flex items-start gap-3 flex-1 min-w-0">
-                    <div className="w-12 h-12 rounded-full bg-purple-100 flex items-center justify-center shrink-0">
-                      <UserCircle className="w-6 h-6 text-purple-600" />
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <h3 className="text-gray-900 truncate">{foreman.name}</h3>
-                      <div className="flex items-center gap-1 text-sm text-gray-600 mt-1">
-                        <Phone className="w-3 h-3" />
-                        <span>{foreman.phone}</span>
-                      </div>
-                      {foreman.siteName && (
-                        <div className="flex items-center gap-1 text-sm text-gray-600 mt-1">
-                          <MapPin className="w-3 h-3" />
-                          <span className="truncate">{foreman.siteName}</span>
-                        </div>
-                      )}
-                      {!foreman.siteName && (
-                        <div className="text-sm text-gray-400 mt-1">
-                          No site assigned
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                  <div className="flex gap-2 shrink-0">
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      onClick={() => handleEdit(foreman)}
-                      className="h-9 w-9 p-0"
-                    >
-                      <Edit className="w-4 h-4 text-blue-600" />
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      onClick={() => handleDelete(foreman.id)}
-                      className="h-9 w-9 p-0"
-                    >
-                      <Trash2 className="w-4 h-4 text-red-600" />
-                    </Button>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-          ))
-        )}
-      </div>
-    </div>
+              </VStack>
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
+    </SafeAreaView>
   );
 }
+
+const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+    backgroundColor: '#f8fafc',
+  },
+  content: {
+    flex: 1,
+    padding: 20,
+  },
+  searchAddContainer: {
+    flexDirection: 'row',
+    gap: 12,
+    marginBottom: 20,
+  },
+  searchWrapper: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#ffffff',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
+    paddingHorizontal: 12,
+    minHeight: 44,
+  },
+  searchIcon: {
+    marginRight: 8,
+  },
+  searchInput: {
+    flex: 1,
+    fontSize: 16,
+    color: '#111827',
+    paddingVertical: 10,
+  },
+  addButton: {
+    backgroundColor: '#2563eb',
+    borderRadius: 8,
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    minHeight: 44,
+  },
+  addButtonText: {
+    color: '#ffffff',
+    fontWeight: '600',
+    fontSize: 14,
+  },
+  listContent: {
+    paddingBottom: 20,
+  },
+  foremanCard: {
+    backgroundColor: '#ffffff',
+    borderRadius: 12,
+    padding: 16,
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.05,
+    shadowRadius: 2,
+    elevation: 1,
+  },
+  foremanCardContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  foremanAvatar: {
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    backgroundColor: '#f3e8ff',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  foremanInfo: {
+    flex: 1,
+    gap: 6,
+  },
+  foremanName: {
+    fontSize: 20,
+    fontWeight: '600',
+    color: '#111827',
+  },
+  foremanDetailRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  foremanDetail: {
+    fontSize: 14,
+    color: '#6b7280',
+  },
+  foremanActions: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  actionButton: {
+    padding: 8,
+  },
+  emptyState: {
+    padding: 40,
+    alignItems: 'center',
+  },
+  emptyText: {
+    fontSize: 16,
+    color: '#9ca3af',
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'flex-end',
+  },
+  modalContent: {
+    backgroundColor: 'white',
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    padding: 20,
+    maxHeight: '90%',
+  },
+});

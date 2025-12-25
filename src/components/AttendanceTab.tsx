@@ -1,16 +1,19 @@
 import React, { useState, useEffect } from 'react';
-import { Button } from './ui/button';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from './ui/dialog';
-import { Input } from './ui/input';
-import { Label } from './ui/label';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
-import { Textarea } from './ui/textarea';
-import { Badge } from './ui/badge';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/tabs';
-import { Plus, Calendar as CalendarIcon, Clock, CheckCircle2, XCircle, MinusCircle, Timer, Coins, AlertCircle, Trash2 } from 'lucide-react';
-import { toast } from 'sonner@2.0.3';
+import { View, StyleSheet, ScrollView, FlatList, Modal, Platform } from 'react-native';
+import { Box } from '@/components/ui/box';
+import { Text } from '@/components/ui/text';
+import { VStack } from '@/components/ui/vstack';
+import { HStack } from '@/components/ui/hstack';
+import { Button, ButtonText } from '@/components/ui/button';
+import { Input, InputField } from '../../components/ui/input';
+import { Card } from '@/components/ui/card';
+import { Select, SelectTrigger, SelectInput, SelectIcon, SelectPortal, SelectBackdrop, SelectContent, SelectDragIndicator, SelectDragIndicatorWrapper, SelectItem, SelectItemText } from '@/components/ui/select';
+import { FormControl, FormControlLabel, FormControlLabelText } from '@/components/ui/form-control';
+import DateTimePicker from '@react-native-community/datetimepicker';
+import { Calendar, Clock, CheckCircle2, XCircle } from '@expo/vector-icons';
 import { projectId } from '../utils/supabase/info';
+import { useRoute } from '@react-navigation/native';
+import Toast from 'react-native-toast-message';
 
 interface Worker {
   id: string;
@@ -27,52 +30,42 @@ interface Site {
 interface Attendance {
   id: string;
   workerId: string;
-  siteId: string;
+  workerName: string;
   date: string;
-  checkIn: string | null;
-  checkOut: string | null;
-  status: string;
-  workHours: number;
-  overtime: number;
-  notes: string;
+  status: 'present' | 'absent';
+  checkIn?: string;
+  checkOut?: string;
 }
 
 interface AttendanceTabProps {
-  accessToken: string;
+  accessToken?: string;
 }
 
 export function AttendanceTab({ accessToken }: AttendanceTabProps) {
+  const route = useRoute();
+  const token = accessToken || (route.params as any)?.accessToken;
   const [workers, setWorkers] = useState<Worker[]>([]);
   const [sites, setSites] = useState<Site[]>([]);
   const [attendance, setAttendance] = useState<Attendance[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [isDialogOpen, setIsDialogOpen] = useState(false);
-  const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
+  const [selectedDate, setSelectedDate] = useState(new Date());
   const [selectedSite, setSelectedSite] = useState('');
-
+  const [showDatePicker, setShowDatePicker] = useState(false);
+  const [isModalOpen, setIsModalOpen] = useState(false);
   const [formData, setFormData] = useState({
     workerId: '',
     siteId: '',
     date: new Date().toISOString().split('T')[0],
-    status: 'present',
+    status: 'present' as 'present' | 'absent',
     checkIn: '',
     checkOut: '',
-    breakStart: '',
-    breakEnd: '',
-    notes: '',
-  });
-  
-  const [markingMode, setMarkingMode] = useState<'quick' | 'detailed'>('quick');
-  const [breakDialogOpen, setBreakDialogOpen] = useState(false);
-  const [siteBreakTime, setSiteBreakTime] = useState({
-    breakStart: '13:00',
-    breakEnd: '14:00',
   });
 
   useEffect(() => {
-    fetchWorkers();
-    fetchSites();
-  }, []);
+    if (token) {
+      fetchWorkers();
+      fetchSites();
+    }
+  }, [token]);
 
   useEffect(() => {
     if (selectedSite) {
@@ -81,11 +74,12 @@ export function AttendanceTab({ accessToken }: AttendanceTabProps) {
   }, [selectedDate, selectedSite]);
 
   const fetchWorkers = async () => {
+    if (!token) return;
     try {
       const response = await fetch(
         `https://${projectId}.supabase.co/functions/v1/make-server-689d7d60/workers`,
         {
-          headers: { 'Authorization': `Bearer ${accessToken}` },
+          headers: { 'Authorization': `Bearer ${token}` },
         }
       );
       const data = await response.json();
@@ -96,30 +90,29 @@ export function AttendanceTab({ accessToken }: AttendanceTabProps) {
   };
 
   const fetchSites = async () => {
+    if (!token) return;
     try {
       const response = await fetch(
         `https://${projectId}.supabase.co/functions/v1/make-server-689d7d60/sites`,
         {
-          headers: { 'Authorization': `Bearer ${accessToken}` },
+          headers: { 'Authorization': `Bearer ${token}` },
         }
       );
       const data = await response.json();
-      const sitesList = data.sites || [];
-      setSites(sitesList);
-      if (sitesList.length > 0 && !selectedSite) {
-        setSelectedSite(sitesList[0].id);
-      }
+      setSites(data.sites || []);
     } catch (error) {
       console.error('Error fetching sites:', error);
     }
   };
 
   const fetchAttendance = async () => {
+    if (!token || !selectedSite) return;
     try {
+      const dateStr = selectedDate.toISOString().split('T')[0];
       const response = await fetch(
-        `https://${projectId}.supabase.co/functions/v1/make-server-689d7d60/attendance?siteId=${selectedSite}&date=${selectedDate}`,
+        `https://${projectId}.supabase.co/functions/v1/make-server-689d7d60/attendance?siteId=${selectedSite}&date=${dateStr}`,
         {
-          headers: { 'Authorization': `Bearer ${accessToken}` },
+          headers: { 'Authorization': `Bearer ${token}` },
         }
       );
       const data = await response.json();
@@ -129,557 +122,294 @@ export function AttendanceTab({ accessToken }: AttendanceTabProps) {
     }
   };
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setLoading(true);
-
+  const handleSubmit = async () => {
+    if (!token) return;
     try {
       const response = await fetch(
         `https://${projectId}.supabase.co/functions/v1/make-server-689d7d60/attendance`,
         {
           method: 'POST',
           headers: {
+            'Authorization': `Bearer ${token}`,
             'Content-Type': 'application/json',
-            'Authorization': `Bearer ${accessToken}`,
           },
-          body: JSON.stringify({
-            workerId: formData.workerId,
-            siteId: formData.siteId,
-            date: formData.date,
-            status: markingMode === 'quick' ? formData.status : undefined,
-            checkIn: markingMode === 'detailed' ? formData.checkIn : null,
-            checkOut: markingMode === 'detailed' ? formData.checkOut : null,
-            breakStart: markingMode === 'detailed' ? formData.breakStart : null,
-            breakEnd: markingMode === 'detailed' ? formData.breakEnd : null,
-            notes: formData.notes,
-          }),
+          body: JSON.stringify(formData),
         }
       );
 
       if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.error || 'Failed to mark attendance');
+        const error = await response.json();
+        throw new Error(error.error || 'Failed to mark attendance');
       }
 
-      const result = await response.json();
-      toast.success(`Attendance marked successfully! Payment: ₹${result.attendance.totalPayment.toFixed(2)}`);
-      setIsDialogOpen(false);
-      resetForm();
+      Toast.show({
+        type: 'success',
+        text1: 'Success',
+        text2: 'Attendance marked successfully',
+      });
+
+      setIsModalOpen(false);
+      setFormData({
+        workerId: '',
+        siteId: '',
+        date: new Date().toISOString().split('T')[0],
+        status: 'present',
+        checkIn: '',
+        checkOut: '',
+      });
       fetchAttendance();
     } catch (error: any) {
-      console.error('Error marking attendance:', error);
-      toast.error(error.message || 'Failed to mark attendance');
-    } finally {
-      setLoading(false);
+      Toast.show({
+        type: 'error',
+        text1: 'Error',
+        text2: error.message || 'Failed to mark attendance',
+      });
     }
   };
 
-  // Calculate live preview
-  const calculatePreview = () => {
-    const worker = workers.find(w => w.id === formData.workerId);
-    if (!worker) return null;
-
-    // Assuming worker has dailyWage property
-    const dailyWage = worker.dailyWage || 500;
-
-    if (markingMode === 'quick') {
-      if (formData.status === 'present') {
-        return {
-          hours: 8,
-          overtime: 0,
-          payment: dailyWage,
-          status: 'Full Day (8 hours)'
-        };
-      } else if (formData.status === 'half-day') {
-        return {
-          hours: 4,
-          overtime: 0,
-          payment: dailyWage * 0.5,
-          status: 'Half Day (4 hours)'
-        };
-      } else {
-        return {
-          hours: 0,
-          overtime: 0,
-          payment: 0,
-          status: 'Absent'
-        };
-      }
-    } else {
-      // Detailed mode calculations
-      if (!formData.checkIn || !formData.checkOut) return null;
-      
-      const checkIn = new Date(`2000-01-01T${formData.checkIn}`);
-      const checkOut = new Date(`2000-01-01T${formData.checkOut}`);
-      let totalHours = (checkOut.getTime() - checkIn.getTime()) / (1000 * 60 * 60);
-      
-      let breakHours = 0;
-      if (formData.breakStart && formData.breakEnd) {
-        const breakStart = new Date(`2000-01-01T${formData.breakStart}`);
-        const breakEnd = new Date(`2000-01-01T${formData.breakEnd}`);
-        breakHours = (breakEnd.getTime() - breakStart.getTime()) / (1000 * 60 * 60);
-      }
-      
-      const netHours = Math.max(0, totalHours - breakHours);
-      const regularHours = Math.min(8, netHours);
-      const overtime = Math.max(0, netHours - 8);
-      
-      const hourlyRate = dailyWage / 8;
-      const overtimeRate = hourlyRate * 1.5;
-      const payment = (regularHours * hourlyRate) + (overtime * overtimeRate);
-      
-      let status = 'Absent';
-      if (netHours >= 8) status = 'Full Day';
-      else if (netHours >= 4) status = 'Half Day';
-      else if (netHours > 0) status = 'Partial';
-      
-      return {
-        hours: regularHours,
-        overtime,
-        payment,
-        status,
-        totalHours,
-        netHours,
-        breakHours
-      };
-    }
-  };
-
-  const preview = calculatePreview();
-
-  const handleApplySiteBreak = async () => {
-    if (!selectedSite || !selectedDate) {
-      toast.error('Please select a site and date');
-      return;
-    }
-
-    try {
-      setLoading(true);
-      const response = await fetch(
-        `https://${projectId}.supabase.co/functions/v1/make-server-689d7d60/attendance/apply-break`,
-        {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${accessToken}`,
-          },
-          body: JSON.stringify({
-            siteId: selectedSite,
-            date: selectedDate,
-            breakStart: siteBreakTime.breakStart,
-            breakEnd: siteBreakTime.breakEnd,
-          }),
-        }
-      );
-
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.error || 'Failed to apply break hours');
-      }
-
-      const result = await response.json();
-      toast.success(result.message || 'Break hours applied successfully');
-      setBreakDialogOpen(false);
-      fetchAttendance();
-    } catch (error: any) {
-      console.error('Error applying break hours:', error);
-      toast.error(error.message || 'Failed to apply break hours');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleClearAllAttendance = async () => {
-    if (!confirm('⚠️ WARNING: This will permanently delete ALL attendance records from the database! This action cannot be undone. Are you absolutely sure?')) {
-      return;
-    }
-
-    try {
-      setLoading(true);
-      const response = await fetch(
-        `https://${projectId}.supabase.co/functions/v1/make-server-689d7d60/attendance/clear/all`,
-        {
-          method: 'DELETE',
-          headers: {
-            'Authorization': `Bearer ${accessToken}`,
-          },
-        }
-      );
-
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.error || 'Failed to clear attendance records');
-      }
-
-      const result = await response.json();
-      toast.success(result.message || 'All attendance records cleared');
-      fetchAttendance();
-    } catch (error: any) {
-      console.error('Error clearing attendance:', error);
-      toast.error(error.message || 'Failed to clear attendance records');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const resetForm = () => {
-    setFormData({
-      workerId: '',
-      siteId: selectedSite,
-      date: selectedDate,
-      status: 'present',
-      checkIn: '',
-      checkOut: '',
-      breakStart: '',
-      breakEnd: '',
-      notes: '',
-    });
-  };
-
-  const getWorkerName = (workerId: string) => {
-    const worker = workers.find(w => w.id === workerId);
-    return worker?.name || 'Unknown';
-  };
-
-  const getStatusIcon = (status: string) => {
-    switch (status) {
-      case 'present':
-        return <CheckCircle2 className="w-4 h-4 text-green-600" />;
-      case 'absent':
-        return <XCircle className="w-4 h-4 text-red-600" />;
-      case 'half-day':
-        return <MinusCircle className="w-4 h-4 text-yellow-600" />;
-      default:
-        return null;
-    }
-  };
-
-  const getStatusBadge = (status: string) => {
-    switch (status) {
-      case 'present':
-        return <Badge className="bg-green-100 text-green-700">Present</Badge>;
-      case 'absent':
-        return <Badge className="bg-red-100 text-red-700">Absent</Badge>;
-      case 'half-day':
-        return <Badge className="bg-yellow-100 text-yellow-700">Half Day</Badge>;
-      default:
-        return <Badge variant="secondary">{status}</Badge>;
+  const onDateChange = (event: any, date?: Date) => {
+    setShowDatePicker(Platform.OS === 'ios');
+    if (date) {
+      setSelectedDate(date);
     }
   };
 
   return (
-    <div className="space-y-4">
-      <Card>
-        <CardHeader>
-          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-            <div>
-              <CardTitle>Attendance</CardTitle>
-              <CardDescription>Mark and track worker attendance</CardDescription>
-            </div>
-            <Dialog open={isDialogOpen} onOpenChange={(open) => {
-              setIsDialogOpen(open);
-              if (!open) resetForm();
-            }}>
-              <DialogTrigger asChild>
-                <Button>
-                  <Plus className="w-4 h-4 mr-2" />
-                  Mark Attendance
-                </Button>
-              </DialogTrigger>
-              <DialogContent>
-                <DialogHeader>
-                  <DialogTitle>Mark Attendance</DialogTitle>
-                  <DialogDescription>
-                    Record worker attendance for the day
-                  </DialogDescription>
-                </DialogHeader>
-                <form onSubmit={handleSubmit} className="space-y-4">
-                  <div className="space-y-2">
-                    <Label htmlFor="worker">Worker *</Label>
-                    <Select
-                      value={formData.workerId}
-                      onValueChange={(value) => setFormData({ ...formData, workerId: value })}
-                      required
-                    >
-                      <SelectTrigger>
-                        <SelectValue placeholder="Select worker" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {workers.map(worker => (
-                          <SelectItem key={worker.id} value={worker.id}>
-                            {worker.name}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-
-                  <div className="space-y-2">
-                    <Label htmlFor="site">Site *</Label>
-                    <Select
-                      value={formData.siteId}
-                      onValueChange={(value) => setFormData({ ...formData, siteId: value })}
-                      required
-                    >
-                      <SelectTrigger>
-                        <SelectValue placeholder="Select site" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {sites.map(site => (
-                          <SelectItem key={site.id} value={site.id}>
-                            {site.name}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-
-                  <div className="space-y-2">
-                    <Label htmlFor="date">Date *</Label>
-                    <Input
-                      id="date"
-                      type="date"
-                      value={formData.date}
-                      onChange={(e) => setFormData({ ...formData, date: e.target.value })}
-                      required
-                    />
-                  </div>
-
-                  <div className="space-y-2">
-                    <Label htmlFor="status">Status *</Label>
-                    <Select
-                      value={formData.status}
-                      onValueChange={(value) => setFormData({ ...formData, status: value })}
-                    >
-                      <SelectTrigger>
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="present">Present</SelectItem>
-                        <SelectItem value="absent">Absent</SelectItem>
-                        <SelectItem value="half-day">Half Day</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-
-                  <div className="grid grid-cols-2 gap-4">
-                    <div className="space-y-2">
-                      <Label htmlFor="checkIn">Check In</Label>
-                      <Input
-                        id="checkIn"
-                        type="time"
-                        value={formData.checkIn}
-                        onChange={(e) => setFormData({ ...formData, checkIn: e.target.value })}
-                      />
-                    </div>
-                    <div className="space-y-2">
-                      <Label htmlFor="checkOut">Check Out</Label>
-                      <Input
-                        id="checkOut"
-                        type="time"
-                        value={formData.checkOut}
-                        onChange={(e) => setFormData({ ...formData, checkOut: e.target.value })}
-                      />
-                    </div>
-                  </div>
-
-                  <div className="grid grid-cols-2 gap-4">
-                    <div className="space-y-2">
-                      <Label htmlFor="breakStart">Break Start</Label>
-                      <Input
-                        id="breakStart"
-                        type="time"
-                        value={formData.breakStart}
-                        onChange={(e) => setFormData({ ...formData, breakStart: e.target.value })}
-                      />
-                    </div>
-                    <div className="space-y-2">
-                      <Label htmlFor="breakEnd">Break End</Label>
-                      <Input
-                        id="breakEnd"
-                        type="time"
-                        value={formData.breakEnd}
-                        onChange={(e) => setFormData({ ...formData, breakEnd: e.target.value })}
-                      />
-                    </div>
-                  </div>
-
-                  <div className="space-y-2">
-                    <Label htmlFor="notes">Notes</Label>
-                    <Textarea
-                      id="notes"
-                      value={formData.notes}
-                      onChange={(e) => setFormData({ ...formData, notes: e.target.value })}
-                      placeholder="Optional notes..."
-                      rows={3}
-                    />
-                  </div>
-
-                  <div className="flex gap-2 justify-end">
-                    <Button
-                      type="button"
-                      variant="outline"
-                      onClick={() => {
-                        setIsDialogOpen(false);
-                        resetForm();
-                      }}
-                    >
-                      Cancel
-                    </Button>
-                    <Button type="submit" disabled={loading}>
-                      {loading ? 'Saving...' : 'Mark Attendance'}
-                    </Button>
-                  </div>
-                </form>
-              </DialogContent>
-            </Dialog>
-          </div>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div className="space-y-2">
-              <Label htmlFor="filterDate">Date</Label>
-              <Input
-                id="filterDate"
-                type="date"
-                value={selectedDate}
-                onChange={(e) => setSelectedDate(e.target.value)}
-              />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="filterSite">Site</Label>
-              <Select value={selectedSite} onValueChange={setSelectedSite}>
-                <SelectTrigger>
-                  <SelectValue placeholder="Select site" />
+    <View style={styles.container}>
+      <Box className="p-4 flex-1">
+        <VStack space="lg">
+          <HStack space="sm">
+            <Box className="flex-1">
+              <Text size="sm" className="mb-1 text-gray-600">Site</Text>
+              <Select selectedValue={selectedSite} onValueChange={setSelectedSite}>
+                <SelectTrigger variant="outline" size="md">
+                  <SelectInput placeholder="Select site" />
+                  <SelectIcon />
                 </SelectTrigger>
-                <SelectContent>
-                  {sites.map(site => (
-                    <SelectItem key={site.id} value={site.id}>
-                      {site.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
+                <SelectPortal>
+                  <SelectBackdrop />
+                  <SelectContent>
+                    <SelectDragIndicatorWrapper>
+                      <SelectDragIndicator />
+                    </SelectDragIndicatorWrapper>
+                    {sites.map((site) => (
+                      <SelectItem key={site.id} label={site.name} value={site.id}>
+                        <SelectItemText>{site.name}</SelectItemText>
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </SelectPortal>
               </Select>
-            </div>
-          </div>
+            </Box>
+            <Box className="flex-1">
+              <Text size="sm" className="mb-1 text-gray-600">Date</Text>
+              <Button variant="outline" action="secondary" onPress={() => setShowDatePicker(true)}>
+                <Calendar size={16} color="#2563eb" />
+                <ButtonText>{selectedDate.toLocaleDateString()}</ButtonText>
+              </Button>
+            </Box>
+          </HStack>
 
-          {selectedSite && attendance.length > 0 && (
-            <div className="flex justify-end">
-              <Dialog open={breakDialogOpen} onOpenChange={setBreakDialogOpen}>
-                <DialogTrigger asChild>
-                  <Button variant="outline">
-                    <Timer className="w-4 h-4 mr-2" />
-                    Apply Break to All
-                  </Button>
-                </DialogTrigger>
-                <DialogContent>
-                  <DialogHeader>
-                    <DialogTitle>Apply Break Hours to Site</DialogTitle>
-                    <DialogDescription>
-                      Set break hours for all workers on this site for {selectedDate}
-                    </DialogDescription>
-                  </DialogHeader>
-                  <div className="space-y-4">
-                    <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
-                      <p className="text-sm text-blue-800">
-                        This will update break times for all {attendance.length} attendance record(s) and recalculate payments automatically.
-                      </p>
-                    </div>
-                    
-                    <div className="grid grid-cols-2 gap-4">
-                      <div className="space-y-2">
-                        <Label htmlFor="siteBreakStart">Break Start</Label>
-                        <Input
-                          id="siteBreakStart"
-                          type="time"
-                          value={siteBreakTime.breakStart}
-                          onChange={(e) => setSiteBreakTime({...siteBreakTime, breakStart: e.target.value })}
-                        />
-                      </div>
-                      <div className="space-y-2">
-                        <Label htmlFor="siteBreakEnd">Break End</Label>
-                        <Input
-                          id="siteBreakEnd"
-                          type="time"
-                          value={siteBreakTime.breakEnd}
-                          onChange={(e) => setSiteBreakTime({ ...siteBreakTime, breakEnd: e.target.value })}
-                        />
-                      </div>
-                    </div>
-
-                    <div className="flex gap-2 justify-end pt-2">
-                      <Button
-                        type="button"
-                        variant="outline"
-                        onClick={() => setBreakDialogOpen(false)}
-                      >
-                        Cancel
-                      </Button>
-                      <Button onClick={handleApplySiteBreak} disabled={loading}>
-                        {loading ? 'Applying...' : 'Apply Break Hours'}
-                      </Button>
-                    </div>
-                  </div>
-                </DialogContent>
-              </Dialog>
-            </div>
+          {showDatePicker && (
+            <DateTimePicker
+              value={selectedDate}
+              mode="date"
+              display="default"
+              onChange={onDateChange}
+            />
           )}
 
-          {!selectedSite ? (
-            <div className="text-center py-12 text-gray-500">
-              <CalendarIcon className="w-12 h-12 mx-auto mb-3 opacity-50" />
-              <p>Select a site to view attendance</p>
-            </div>
-          ) : attendance.length === 0 ? (
-            <div className="text-center py-12 text-gray-500">
-              <CalendarIcon className="w-12 h-12 mx-auto mb-3 opacity-50" />
-              <p>No attendance records found</p>
-              <p className="text-sm">Mark attendance to get started</p>
-            </div>
-          ) : (
-            <div className="space-y-2">
-              {attendance.map(record => (
-                <Card key={record.id}>
-                  <CardContent className="p-4">
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-3">
-                        {getStatusIcon(record.status)}
-                        <div>
-                          <p>{getWorkerName(record.workerId)}</p>
-                          {record.checkIn && record.checkOut && (
-                            <p className="text-sm text-gray-600 flex items-center gap-1">
-                              <Clock className="w-3 h-3" />
-                              {record.checkIn} - {record.checkOut}
-                              {record.workHours > 0 && ` (${record.workHours.toFixed(1)}h)`}
-                              {record.overtime > 0 && ` +${record.overtime.toFixed(1)}h OT`}
-                            </p>
-                          )}
-                          {record.notes && (
-                            <p className="text-sm text-gray-500 mt-1">{record.notes}</p>
-                          )}
-                        </div>
-                      </div>
-                      {getStatusBadge(record.status)}
-                    </div>
-                  </CardContent>
+          <Button onPress={() => setIsModalOpen(true)}>
+            <ButtonText>Mark Attendance</ButtonText>
+          </Button>
+
+          {selectedSite && (
+            <FlatList
+              data={attendance}
+              keyExtractor={(item) => item.id}
+              renderItem={({ item }) => (
+                <Card className="p-4 mb-2">
+                  <HStack className="justify-between items-center">
+                    <VStack className="flex-1">
+                      <Text size="md" className="font-medium">{item.workerName}</Text>
+                      <HStack className="items-center mt-1" space="sm">
+                        {item.status === 'present' ? (
+                          <CheckCircle2 size={16} color="#22c55e" />
+                        ) : (
+                          <XCircle size={16} color="#ef4444" />
+                        )}
+                        <Text size="sm" className={item.status === 'present' ? 'text-green-600' : 'text-red-600'}>
+                          {item.status}
+                        </Text>
+                      </HStack>
+                      {item.checkIn && (
+                        <HStack className="items-center mt-1" space="xs">
+                          <Clock size={12} color="#717182" />
+                          <Text size="xs" className="text-gray-500">
+                            In: {item.checkIn} {item.checkOut && `Out: ${item.checkOut}`}
+                          </Text>
+                        </HStack>
+                      )}
+                    </VStack>
+                  </HStack>
                 </Card>
-              ))}
-            </div>
+              )}
+              ListEmptyComponent={
+                <Box className="p-8 items-center">
+                  <Text className="text-gray-400">No attendance records for this date</Text>
+                </Box>
+              }
+            />
           )}
+        </VStack>
+      </Box>
 
-          {/* Clear All Attendance Button (for testing) */}
-          <div className="flex justify-center pt-6 border-t">
-            <Button 
-              variant="destructive" 
-              onClick={handleClearAllAttendance}
-              disabled={loading}
-            >
-              <Trash2 className="w-4 h-4 mr-2" />
-              Clear All Attendance (Testing)
-            </Button>
-          </div>
-        </CardContent>
-      </Card>
-    </div>
+      {/* Mark Attendance Modal */}
+      <Modal visible={isModalOpen} animationType="slide" transparent>
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <ScrollView>
+              <VStack space="lg">
+                <Text size="xl" bold>Mark Attendance</Text>
+
+                <FormControl isRequired>
+                  <FormControlLabel>
+                    <FormControlLabelText>Worker</FormControlLabelText>
+                  </FormControlLabel>
+                  <Select selectedValue={formData.workerId} onValueChange={(value) => setFormData({ ...formData, workerId: value })}>
+                    <SelectTrigger variant="outline" size="md">
+                      <SelectInput placeholder="Select worker" />
+                      <SelectIcon />
+                    </SelectTrigger>
+                    <SelectPortal>
+                      <SelectBackdrop />
+                      <SelectContent>
+                        <SelectDragIndicatorWrapper>
+                          <SelectDragIndicator />
+                        </SelectDragIndicatorWrapper>
+                        {workers.map((worker) => (
+                          <SelectItem key={worker.id} label={worker.name} value={worker.id}>
+                            <SelectItemText>{worker.name}</SelectItemText>
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </SelectPortal>
+                  </Select>
+                </FormControl>
+
+                <FormControl isRequired>
+                  <FormControlLabel>
+                    <FormControlLabelText>Site</FormControlLabelText>
+                  </FormControlLabel>
+                  <Select selectedValue={formData.siteId} onValueChange={(value) => setFormData({ ...formData, siteId: value })}>
+                    <SelectTrigger variant="outline" size="md">
+                      <SelectInput placeholder="Select site" />
+                      <SelectIcon />
+                    </SelectTrigger>
+                    <SelectPortal>
+                      <SelectBackdrop />
+                      <SelectContent>
+                        <SelectDragIndicatorWrapper>
+                          <SelectDragIndicator />
+                        </SelectDragIndicatorWrapper>
+                        {sites.map((site) => (
+                          <SelectItem key={site.id} label={site.name} value={site.id}>
+                            <SelectItemText>{site.name}</SelectItemText>
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </SelectPortal>
+                  </Select>
+                </FormControl>
+
+                <FormControl isRequired>
+                  <FormControlLabel>
+                    <FormControlLabelText>Status</FormControlLabelText>
+                  </FormControlLabel>
+                  <Select selectedValue={formData.status} onValueChange={(value: 'present' | 'absent') => setFormData({ ...formData, status: value })}>
+                    <SelectTrigger variant="outline" size="md">
+                      <SelectInput placeholder="Select status" />
+                      <SelectIcon />
+                    </SelectTrigger>
+                    <SelectPortal>
+                      <SelectBackdrop />
+                      <SelectContent>
+                        <SelectDragIndicatorWrapper>
+                          <SelectDragIndicator />
+                        </SelectDragIndicatorWrapper>
+                        <SelectItem label="Present" value="present">
+                          <SelectItemText>Present</SelectItemText>
+                        </SelectItem>
+                        <SelectItem label="Absent" value="absent">
+                          <SelectItemText>Absent</SelectItemText>
+                        </SelectItem>
+                      </SelectContent>
+                    </SelectPortal>
+                  </Select>
+                </FormControl>
+
+                {formData.status === 'present' && (
+                  <>
+                    <FormControl>
+                      <FormControlLabel>
+                        <FormControlLabelText>Check In Time</FormControlLabelText>
+                      </FormControlLabel>
+                      <Input size="md" variant="outline">
+                        <InputField
+                          value={formData.checkIn}
+                          onChangeText={(text) => setFormData({ ...formData, checkIn: text })}
+                          placeholder="HH:MM (e.g., 09:00)"
+                        />
+                      </Input>
+                    </FormControl>
+
+                    <FormControl>
+                      <FormControlLabel>
+                        <FormControlLabelText>Check Out Time</FormControlLabelText>
+                      </FormControlLabel>
+                      <Input size="md" variant="outline">
+                        <InputField
+                          value={formData.checkOut}
+                          onChangeText={(text) => setFormData({ ...formData, checkOut: text })}
+                          placeholder="HH:MM (e.g., 18:00)"
+                        />
+                      </Input>
+                    </FormControl>
+                  </>
+                )}
+
+                <HStack space="sm">
+                  <Button className="flex-1" variant="outline" action="secondary" onPress={() => setIsModalOpen(false)}>
+                    <ButtonText>Cancel</ButtonText>
+                  </Button>
+                  <Button className="flex-1" onPress={handleSubmit}>
+                    <ButtonText>Submit</ButtonText>
+                  </Button>
+                </HStack>
+              </VStack>
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
+    </View>
   );
 }
+
+const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+    backgroundColor: '#f8f9fa',
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'flex-end',
+  },
+  modalContent: {
+    backgroundColor: 'white',
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    padding: 20,
+    maxHeight: '90%',
+  },
+});

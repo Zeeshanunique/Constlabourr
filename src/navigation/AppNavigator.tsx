@@ -1,10 +1,10 @@
 import React from 'react';
 import { createStackNavigator } from '@react-navigation/stack';
 import { ContractorNavigator } from './ContractorNavigator';
-import { ForemanDashboard } from '../components/ForemanDashboard';
-import { LabourDashboard } from '../components/LabourDashboard';
-import { ReportsTab } from '../components/ReportsTab';
-import { AgreementTab } from '../components/AgreementTab';
+import { ForemanNavigator } from './ForemanNavigator';
+import { LabourNavigator } from './LabourNavigator';
+import { ReportsTab } from '../features/reports/ReportsTab';
+import { AgreementTab } from '../features/agreements/AgreementTab';
 import { UserRole } from '../context/AppContext';
 
 export type AppStackParamList = {
@@ -28,10 +28,10 @@ export function AppNavigator({ role, accessToken }: { role: UserRole; accessToke
         </>
       )}
       {role === 'foreman' && (
-        <Stack.Screen name="Foreman" component={ForemanDashboard} initialParams={{ accessToken }} />
+        <Stack.Screen name="Foreman" component={ForemanNavigator} initialParams={{ accessToken }} />
       )}
       {role === 'labour' && (
-        <Stack.Screen name="Labour" component={LabourDashboard} initialParams={{ accessToken }} />
+        <Stack.Screen name="Labour" component={LabourNavigator} initialParams={{ accessToken }} />
       )}
     </Stack.Navigator>
   );

@@ -8,11 +8,10 @@ module.exports = function (api) {
       [
         'module-resolver',
         {
-          root: ['./'],
-
+          root: ['./src'],
+          extensions: ['.ios.js', '.android.js', '.js', '.jsx', '.json', '.tsx', '.ts'],
           alias: {
-            '@': './',
-            'tailwind.config': './tailwind.config.js',
+            '@': './src',
           },
         },
       ],

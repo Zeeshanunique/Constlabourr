@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { NavigationContainer } from '@react-navigation/native';
-import { GluestackUIProvider } from '@/components/ui/gluestack-ui-provider';
+import { GluestackUIProvider } from './components/ui/gluestack-ui-provider';
 import { projectId, publicAnonKey } from './utils/supabase/info';
 import { View, ActivityIndicator, Text } from 'react-native';
 import { AuthNavigator } from './navigation/AuthNavigator';

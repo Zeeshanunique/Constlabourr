@@ -1,14 +1,11 @@
 import React from 'react';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
-import { ModernContractorDashboard } from '../components/ModernContractorDashboard';
-import { WorkersTab } from '../components/WorkersTab';
-import { ForemenTab } from '../components/ForemenTab';
-import { SitesTab } from '../components/SitesTab';
-import { ForemanAttendanceTab } from '../components/ForemanAttendanceTab';
-import { BulkAttendanceTab } from '../components/BulkAttendanceTab';
-import { PayrollTab } from '../components/PayrollTab';
-import { ReportsTab } from '../components/ReportsTab';
-import { AgreementTab } from '../components/AgreementTab';
+import { ModernContractorDashboard } from '../screens/ContractorDashboard';
+import { WorkersTab } from '../features/workers/WorkersTab';
+import { ForemenTab } from '../features/workers/ForemenTab';
+import { SitesTab } from '../features/sites/SitesTab';
+import { BulkAttendanceTab } from '../features/attendance/BulkAttendanceTab';
+import { PayrollTab } from '../features/payroll/PayrollTab';
 import { MaterialIcons, FontAwesome5, Ionicons, Feather } from '@expo/vector-icons';
 
 export type ContractorTabParamList = {
@@ -22,7 +19,9 @@ export type ContractorTabParamList = {
 
 const Tab = createBottomTabNavigator<ContractorTabParamList>();
 
-export function ContractorNavigator({ accessToken }: { accessToken: string }) {
+export function ContractorNavigator({ route }: { route: any }) {
+  const accessToken = route.params?.accessToken;
+  
   return (
     <Tab.Navigator
       screenOptions={{
@@ -37,53 +36,53 @@ export function ContractorNavigator({ accessToken }: { accessToken: string }) {
     >
       <Tab.Screen
         name="Home"
-        component={ModernContractorDashboard}
-        initialParams={{ accessToken }}
         options={{
           tabBarIcon: ({ color, size }) => <MaterialIcons name="home" size={size} color={color} />,
         }}
-      />
+      >
+        {(props) => <ModernContractorDashboard {...props} accessToken={accessToken} />}
+      </Tab.Screen>
       <Tab.Screen
         name="Workers"
-        component={WorkersTab}
-        initialParams={{ accessToken }}
         options={{
           tabBarIcon: ({ color, size }) => <MaterialIcons name="people" size={size} color={color} />,
         }}
-      />
+      >
+        {(props) => <WorkersTab {...props} accessToken={accessToken} />}
+      </Tab.Screen>
       <Tab.Screen
         name="Foremen"
-        component={ForemenTab}
-        initialParams={{ accessToken }}
         options={{
           tabBarIcon: ({ color, size }) => <MaterialIcons name="supervisor-account" size={size} color={color} />,
         }}
-      />
+      >
+        {(props) => <ForemenTab {...props} accessToken={accessToken} />}
+      </Tab.Screen>
       <Tab.Screen
         name="Sites"
-        component={SitesTab}
-        initialParams={{ accessToken }}
         options={{
           tabBarIcon: ({ color, size }) => <MaterialIcons name="place" size={size} color={color} />,
         }}
-      />
+      >
+        {(props) => <SitesTab {...props} accessToken={accessToken} />}
+      </Tab.Screen>
       <Tab.Screen
         name="Attendance"
-        component={BulkAttendanceTab}
-        initialParams={{ accessToken }}
         options={{
           tabBarLabel: 'Attend',
-          tabBarIcon: ({ color, size }) => <MaterialIcons name="check-box" size={size} color={color} />,
+          tabBarIcon: ({ color, size}) => <MaterialIcons name="check-box" size={size} color={color} />,
         }}
-      />
+      >
+        {(props) => <BulkAttendanceTab {...props} accessToken={accessToken} />}
+      </Tab.Screen>
       <Tab.Screen
         name="Payroll"
-        component={PayrollTab}
-        initialParams={{ accessToken }}
         options={{
           tabBarIcon: ({ color, size }) => <MaterialIcons name="attach-money" size={size} color={color} />,
         }}
-      />
+      >
+        {(props) => <PayrollTab {...props} accessToken={accessToken} />}
+      </Tab.Screen>
     </Tab.Navigator>
   );
 }

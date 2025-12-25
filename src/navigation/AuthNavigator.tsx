@@ -1,6 +1,6 @@
 import React from 'react';
 import { createStackNavigator } from '@react-navigation/stack';
-import { LoginScreen } from '../components/LoginScreen';
+import { LoginScreen } from '../screens/LoginScreen';
 
 export type AuthStackParamList = {
   Login: undefined;

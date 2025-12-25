@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { TextInput, StyleSheet, Platform } from 'react-native';
-import { Box } from '@/components/ui/box';
+import { Box } from './box';
 
 interface RNInputProps {
   placeholder?: string;

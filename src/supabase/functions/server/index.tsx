@@ -11,6 +11,25 @@ const supabase = createClient(
   Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,
 );
 
+// Helper function to get or create user profile
+async function getUserProfile(userId: string, userEmail: string, userMetadata: any) {
+  let userProfile = await kv.get(`user:${userId}`);
+  
+  if (!userProfile) {
+    console.log(`User profile not found for ${userId}, creating from auth metadata`);
+    userProfile = {
+      id: userId,
+      email: userEmail,
+      name: userMetadata?.name || userEmail,
+      role: userMetadata?.role || 'contractor',
+      createdAt: new Date().toISOString(),
+    };
+    await kv.set(`user:${userId}`, userProfile);
+  }
+  
+  return userProfile;
+}
+
 // Enable logger
 app.use('*', logger(console.log));
 
@@ -188,7 +207,7 @@ app.get("/make-server-689d7d60/workers", async (c) => {
     const { data: { user }, error } = await supabase.auth.getUser(accessToken);
     if (error || !user) return c.json({ error: 'Unauthorized' }, 401);
 
-    const userProfile = await kv.get(`user:${user.id}`);
+    const userProfile = await getUserProfile(user.id, user.email!, user.user_metadata);
     const contractorId = userProfile.role === 'contractor' ? user.id : userProfile.contractorId;
 
     const workers = await kv.getByPrefix(`user:`);
@@ -350,7 +369,7 @@ app.get("/make-server-689d7d60/foremen", async (c) => {
     const { data: { user }, error } = await supabase.auth.getUser(accessToken);
     if (error || !user) return c.json({ error: 'Unauthorized' }, 401);
 
-    const userProfile = await kv.get(`user:${user.id}`);
+    const userProfile = await getUserProfile(user.id, user.email!, user.user_metadata);
     const contractorId = userProfile.role === 'contractor' ? user.id : userProfile.contractorId;
 
     // Get all users and filter foremen
@@ -460,7 +479,7 @@ app.post("/make-server-689d7d60/sites", async (c) => {
     const { data: { user }, error } = await supabase.auth.getUser(accessToken);
     if (error || !user) return c.json({ error: 'Unauthorized' }, 401);
 
-    const userProfile = await kv.get(`user:${user.id}`);
+    const userProfile = await getUserProfile(user.id, user.email!, user.user_metadata);
     const contractorId = userProfile.role === 'contractor' ? user.id : userProfile.contractorId;
 
     const body = await c.req.json();
@@ -498,7 +517,7 @@ app.get("/make-server-689d7d60/sites", async (c) => {
     const { data: { user }, error } = await supabase.auth.getUser(accessToken);
     if (error || !user) return c.json({ error: 'Unauthorized' }, 401);
 
-    const userProfile = await kv.get(`user:${user.id}`);
+    const userProfile = await getUserProfile(user.id, user.email!, user.user_metadata);
     const contractorId = userProfile.role === 'contractor' ? user.id : userProfile.contractorId;
 
     const sites = await kv.getByPrefix(`site:`);
@@ -1427,6 +1446,175 @@ app.get("/make-server-689d7d60/dashboard/stats", async (c) => {
     });
   } catch (error: any) {
     console.error('Dashboard stats error:', error);
+    return c.json({ error: error.message }, 500);
+  }
+});
+
+// Get foreman dashboard stats
+app.get("/make-server-689d7d60/foreman/stats", async (c) => {
+  try {
+    const accessToken = c.req.header('Authorization')?.split(' ')[1];
+    if (!accessToken) return c.json({ error: 'Unauthorized' }, 401);
+
+    const { data: { user }, error } = await supabase.auth.getUser(accessToken);
+    if (error || !user) return c.json({ error: 'Unauthorized' }, 401);
+
+    const userProfile = await getUserProfile(user.id, user.email!, user.user_metadata);
+    
+    // Verify user is a foreman
+    if (userProfile.role !== 'foreman') {
+      return c.json({ error: 'Access denied. Foreman role required.' }, 403);
+    }
+
+    // Get sites assigned to this foreman
+    const allSites = await kv.getByPrefix(`site:`);
+    const foremanSites = allSites.filter((s: any) => s.foremanId === user.id);
+    const siteIds = foremanSites.map((s: any) => s.id);
+
+    // Get workers assigned to foreman's sites
+    const allWorkers = await kv.getByPrefix(`user:`);
+    const foremanWorkers = allWorkers.filter((w: any) => 
+      w.role === 'labour' && siteIds.includes(w.siteId)
+    );
+    
+    // Get today's attendance for foreman's workers
+    const today = new Date().toISOString().split('T')[0];
+    const allAttendance = await kv.getByPrefix(`attendance:`);
+    const workerIds = foremanWorkers.map((w: any) => w.id);
+    const todayAttendance = allAttendance.filter((a: any) => 
+      a.date === today && workerIds.includes(a.workerId)
+    );
+
+    const presentToday = todayAttendance.filter((a: any) => a.status === 'present').length;
+    const absentToday = todayAttendance.filter((a: any) => a.status === 'absent').length;
+
+    return c.json({ 
+      stats: {
+        assignedWorkers: foremanWorkers.length,
+        assignedSites: foremanSites.length,
+        presentToday,
+        absentToday,
+      }
+    });
+  } catch (error: any) {
+    console.error('Foreman stats error:', error);
+    return c.json({ error: error.message }, 500);
+  }
+});
+
+// Get worker dashboard stats
+app.get("/make-server-689d7d60/worker/stats", async (c) => {
+  try {
+    const accessToken = c.req.header('Authorization')?.split(' ')[1];
+    if (!accessToken) return c.json({ error: 'Unauthorized' }, 401);
+
+    const { data: { user }, error } = await supabase.auth.getUser(accessToken);
+    if (error || !user) return c.json({ error: 'Unauthorized' }, 401);
+
+    const userProfile = await getUserProfile(user.id, user.email!, user.user_metadata);
+    
+    // Verify user is a worker
+    if (userProfile.role !== 'labour') {
+      return c.json({ error: 'Access denied. Worker role required.' }, 403);
+    }
+
+    // Get worker's attendance records
+    const allAttendance = await kv.getByPrefix(`attendance:`);
+    const workerAttendance = allAttendance.filter((a: any) => a.workerId === user.id);
+    
+    // Calculate stats
+    const presentDays = workerAttendance.filter((a: any) => a.status === 'present').length;
+    const absentDays = workerAttendance.filter((a: any) => a.status === 'absent').length;
+    const totalDaysWorked = presentDays + absentDays;
+    
+    // Calculate earnings (daily wage * present days)
+    const dailyWage = userProfile.dailyWage || 0;
+    const messCharge = userProfile.messCharge || 0;
+    const totalEarnings = presentDays * (dailyWage - messCharge);
+    
+    // Calculate this month's earnings
+    const today = new Date();
+    const currentMonth = today.getMonth();
+    const currentYear = today.getFullYear();
+    const thisMonthAttendance = workerAttendance.filter((a: any) => {
+      const date = new Date(a.date);
+      return date.getMonth() === currentMonth && date.getFullYear() === currentYear && a.status === 'present';
+    });
+    const thisMonthEarnings = thisMonthAttendance.length * (dailyWage - messCharge);
+    
+    // Get pending advances
+    const allAdvances = await kv.getByPrefix(`advance:`);
+    const workerAdvances = allAdvances.filter((a: any) => a.workerId === user.id && a.status === 'pending');
+    const pendingAdvances = workerAdvances.reduce((sum: number, a: any) => sum + (a.amount || 0), 0);
+
+    return c.json({ 
+      stats: {
+        totalDaysWorked,
+        presentDays,
+        absentDays,
+        totalEarnings,
+        thisMonthEarnings,
+        pendingAdvances,
+      }
+    });
+  } catch (error: any) {
+    console.error('Worker stats error:', error);
+    return c.json({ error: error.message }, 500);
+  }
+});
+
+// Get worker attendance history
+app.get("/make-server-689d7d60/worker/attendance", async (c) => {
+  try {
+    const accessToken = c.req.header('Authorization')?.split(' ')[1];
+    if (!accessToken) return c.json({ error: 'Unauthorized' }, 401);
+
+    const { data: { user }, error } = await supabase.auth.getUser(accessToken);
+    if (error || !user) return c.json({ error: 'Unauthorized' }, 401);
+
+    const userProfile = await getUserProfile(user.id, user.email!, user.user_metadata);
+    
+    // Verify user is a worker
+    if (userProfile.role !== 'labour') {
+      return c.json({ error: 'Access denied. Worker role required.' }, 403);
+    }
+
+    // Get query parameters
+    const year = c.req.query('year');
+    const month = c.req.query('month');
+
+    // Get all attendance for this worker
+    const allAttendance = await kv.getByPrefix(`attendance:`);
+    let workerAttendance = allAttendance.filter((a: any) => a.workerId === user.id);
+
+    // Filter by year and month if provided
+    if (year && month) {
+      const targetYear = parseInt(year);
+      const targetMonth = parseInt(month) - 1; // JavaScript months are 0-indexed
+      workerAttendance = workerAttendance.filter((a: any) => {
+        const date = new Date(a.date);
+        return date.getFullYear() === targetYear && date.getMonth() === targetMonth;
+      });
+    }
+
+    // Sort by date (newest first)
+    workerAttendance.sort((a: any, b: any) => {
+      return new Date(b.date).getTime() - new Date(a.date).getTime();
+    });
+
+    // Get site names
+    const allSites = await kv.getByPrefix(`site:`);
+    const attendance = workerAttendance.map((a: any) => {
+      const site = allSites.find((s: any) => s.id === a.siteId);
+      return {
+        ...a,
+        siteName: site?.name,
+      };
+    });
+
+    return c.json({ attendance });
+  } catch (error: any) {
+    console.error('Worker attendance error:', error);
     return c.json({ error: error.message }, 500);
   }
 });

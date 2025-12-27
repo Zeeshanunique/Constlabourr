@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { View, StyleSheet, ScrollView, FlatList, Platform, TouchableOpacity } from 'react-native';
+import { View, StyleSheet, ScrollView, FlatList, Platform, TouchableOpacity, Modal } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Box } from '@/components/ui/box';
 import { Text } from '@/components/ui/text';
@@ -7,13 +7,20 @@ import { VStack } from '@/components/ui/vstack';
 import { HStack } from '@/components/ui/hstack';
 import { Button, ButtonText } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
-import { Select, SelectTrigger, SelectInput, SelectIcon, SelectPortal, SelectBackdrop, SelectContent, SelectDragIndicator, SelectDragIndicatorWrapper, SelectItem, SelectItemText } from '@/components/ui/select';
 import { Input, InputField } from '@/components/ui/input';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import { MaterialIcons } from '@expo/vector-icons';
 import { projectId } from '@/utils/supabase/info';
 import { useRoute } from '@react-navigation/native';
 import Toast from 'react-native-toast-message';
+import { FormField } from '@/components/shared/FormField';
+
+interface Worker {
+  id: string;
+  name: string;
+  phone: string;
+  role: string;
+}
 
 interface PayrollEntry {
   id: string;
@@ -42,10 +49,20 @@ export function PayrollTab({ accessToken }: PayrollTabProps) {
   const [showStartPicker, setShowStartPicker] = useState(false);
   const [showEndPicker, setShowEndPicker] = useState(false);
   const [loading, setLoading] = useState(false);
+  
+  // Give Advance modal state
+  const [showAdvanceModal, setShowAdvanceModal] = useState(false);
+  const [workers, setWorkers] = useState<Worker[]>([]);
+  const [selectedWorker, setSelectedWorker] = useState('');
+  const [advanceAmount, setAdvanceAmount] = useState('');
+  const [advanceReason, setAdvanceReason] = useState('');
+  const [advanceDate, setAdvanceDate] = useState(new Date());
+  const [submittingAdvance, setSubmittingAdvance] = useState(false);
 
   useEffect(() => {
     if (token) {
       fetchPayroll();
+      fetchWorkers();
     }
   }, [token, startDate, endDate]);
 
@@ -55,35 +72,137 @@ export function PayrollTab({ accessToken }: PayrollTabProps) {
     try {
       const startStr = startDate.toISOString().split('T')[0];
       const endStr = endDate.toISOString().split('T')[0];
+      const url = `https://${projectId}.supabase.co/functions/v1/make-server-689d7d60/payroll?startDate=${startStr}&endDate=${endStr}`;
+      
       const response = await fetch(
-        `https://${projectId}.supabase.co/functions/v1/make-server-689d7d60/payroll?startDate=${startStr}&endDate=${endStr}`,
+        url,
         {
           headers: { 'Authorization': `Bearer ${token}` },
         }
       );
+
+      if (!response.ok) {
+        throw new Error(`Failed to fetch payroll: ${response.status}`);
+      }
+
+      const contentType = response.headers.get('content-type');
+      if (!contentType || !contentType.includes('application/json')) {
+        throw new Error('Invalid response format');
+      }
+
       const data = await response.json();
       setPayrollEntries(data.payroll || []);
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error fetching payroll:', error);
-      // Mock data for demonstration
-      setPayrollEntries([
-        {
-          id: '1',
-          workerId: '1',
-          workerName: 'John Doe',
-          period: '2024-01-01 to 2024-01-07',
-          daysWorked: 6,
-          dailyWage: 500,
-          totalWage: 3000,
-          advances: 500,
-          deductions: 0,
-          netPay: 2500,
-          status: 'pending',
-        },
-      ]);
+      setPayrollEntries([]);
+      Toast.show({
+        type: 'error',
+        text1: 'Error',
+        text2: error.message || 'Failed to fetch payroll data',
+      });
     } finally {
       setLoading(false);
     }
+  };
+
+  const fetchWorkers = async () => {
+    if (!token) return;
+    try {
+      const response = await fetch(
+        `https://${projectId}.supabase.co/functions/v1/make-server-689d7d60/workers`,
+        {
+          headers: { 'Authorization': `Bearer ${token}` },
+        }
+      );
+
+      if (!response.ok) {
+        throw new Error('Failed to fetch workers');
+      }
+
+      const data = await response.json();
+      setWorkers(data.workers || []);
+    } catch (error: any) {
+      console.error('Error fetching workers:', error);
+    }
+  };
+
+  const handleGiveAdvance = async () => {
+    if (!selectedWorker || !advanceAmount) {
+      Toast.show({
+        type: 'error',
+        text1: 'Validation Error',
+        text2: 'Please select a worker and enter amount',
+      });
+      return;
+    }
+
+    const amount = parseFloat(advanceAmount);
+    if (isNaN(amount) || amount <= 0) {
+      Toast.show({
+        type: 'error',
+        text1: 'Validation Error',
+        text2: 'Please enter a valid amount',
+      });
+      return;
+    }
+
+    setSubmittingAdvance(true);
+    try {
+      const response = await fetch(
+        `https://${projectId}.supabase.co/functions/v1/make-server-689d7d60/advances`,
+        {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${token}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            workerId: selectedWorker,
+            amount: amount,
+            date: advanceDate.toISOString().split('T')[0],
+            reason: advanceReason,
+          }),
+        }
+      );
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || 'Failed to give advance');
+      }
+
+      Toast.show({
+        type: 'success',
+        text1: 'Success',
+        text2: 'Advance given successfully',
+      });
+
+      // Reset form and close modal
+      resetAdvanceForm();
+      setShowAdvanceModal(false);
+      
+      // Refresh payroll data
+      fetchPayroll();
+    } catch (error: any) {
+      Toast.show({
+        type: 'error',
+        text1: 'Error',
+        text2: error.message || 'Failed to give advance',
+      });
+    } finally {
+      setSubmittingAdvance(false);
+    }
+  };
+
+  const resetAdvanceForm = () => {
+    setSelectedWorker('');
+    setAdvanceAmount('');
+    setAdvanceReason('');
+    setAdvanceDate(new Date());
+  };
+
+  const handleCancelAdvance = () => {
+    resetAdvanceForm();
+    setShowAdvanceModal(false);
   };
 
   const handleProcessPayroll = async () => {
@@ -173,10 +292,10 @@ export function PayrollTab({ accessToken }: PayrollTabProps) {
           </View>
           <View style={styles.headerButtons}>
             <Button
-              onPress={() => {}}
+              onPress={() => setShowAdvanceModal(true)}
               style={styles.actionButton}
             >
-              <MaterialIcons name="account-balance-wallet" size={20} color="#ffffff" />
+              <MaterialIcons name="account-balance-wallet" size={20} color="#111827" />
               <ButtonText style={styles.actionButtonText}>Give Advance</ButtonText>
             </Button>
             <Button
@@ -303,6 +422,97 @@ export function PayrollTab({ accessToken }: PayrollTabProps) {
           </View>
         )}
       </ScrollView>
+
+      {/* Give Advance Modal */}
+      <Modal
+        visible={showAdvanceModal}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowAdvanceModal(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>Give Advance</Text>
+              <TouchableOpacity onPress={() => setShowAdvanceModal(false)}>
+                <MaterialIcons name="close" size={24} color="#6b7280" />
+              </TouchableOpacity>
+            </View>
+
+            <ScrollView style={styles.modalBody} showsVerticalScrollIndicator={false}>
+              {/* Worker Selection */}
+              <FormField
+                label="Select Worker"
+                value={selectedWorker}
+                onValueChange={(value) => setSelectedWorker(value)}
+                placeholder="Choose a worker"
+                required
+                type="select"
+                selectOptions={[
+                  { label: 'Select a worker', value: '' },
+                  ...workers.map((worker) => ({ label: worker.name, value: worker.id }))
+                ]}
+              />
+
+              {/* Amount */}
+              <View style={styles.formGroup}>
+                <Text style={styles.label}>Amount (₹) *</Text>
+                <Input style={styles.input}>
+                  <InputField
+                    placeholder="Enter amount"
+                    value={advanceAmount}
+                    onChangeText={setAdvanceAmount}
+                    keyboardType="numeric"
+                    style={styles.inputField}
+                  />
+                </Input>
+              </View>
+
+              {/* Date */}
+              <FormField
+                label="Date"
+                value={advanceDate.toISOString().split('T')[0]}
+                onChangeText={(dateStr) => setAdvanceDate(new Date(dateStr))}
+                placeholder="Select date"
+                type="date"
+              />
+
+              {/* Reason */}
+              <View style={styles.formGroup}>
+                <Text style={styles.label}>Reason (Optional)</Text>
+                <Input style={[styles.input, styles.textArea]}>
+                  <InputField
+                    placeholder="Enter reason for advance"
+                    value={advanceReason}
+                    onChangeText={setAdvanceReason}
+                    multiline
+                    numberOfLines={3}
+                    style={[styles.inputField, styles.textAreaField]}
+                  />
+                </Input>
+              </View>
+            </ScrollView>
+
+            <View style={styles.modalFooter}>
+              <Button
+                onPress={handleCancelAdvance}
+                style={styles.cancelButton}
+              >
+                <ButtonText style={styles.cancelButtonText}>Cancel</ButtonText>
+              </Button>
+              <Button
+                onPress={handleGiveAdvance}
+                isDisabled={submittingAdvance || !selectedWorker || !advanceAmount}
+                style={styles.submitButton}
+              >
+                <ButtonText style={styles.submitButtonText}>
+                  {submittingAdvance ? 'Processing...' : 'Give Advance'}
+                </ButtonText>
+              </Button>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -524,5 +734,102 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: '#6b7280',
     textAlign: 'center',
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 20,
+  },
+  modalContent: {
+    backgroundColor: '#ffffff',
+    borderRadius: 16,
+    width: '100%',
+    maxWidth: 500,
+    maxHeight: '80%',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.15,
+    shadowRadius: 12,
+    elevation: 8,
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: 20,
+    borderBottomWidth: 1,
+    borderBottomColor: '#e5e7eb',
+  },
+  modalTitle: {
+    fontSize: 20,
+    fontWeight: '700',
+    color: '#111827',
+  },
+  modalBody: {
+    padding: 20,
+    maxHeight: 400,
+  },
+  modalFooter: {
+    flexDirection: 'row',
+    gap: 12,
+    padding: 20,
+    borderTopWidth: 1,
+    borderTopColor: '#e5e7eb',
+  },
+  formGroup: {
+    marginBottom: 20,
+  },
+  label: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#374151',
+    marginBottom: 8,
+  },
+  input: {
+    borderWidth: 1,
+    borderColor: '#d1d5db',
+    borderRadius: 8,
+    minHeight: 48,
+  },
+  inputField: {
+    fontSize: 16,
+    color: '#111827',
+  },
+  textArea: {
+    minHeight: 100,
+  },
+  textAreaField: {
+    textAlignVertical: 'top',
+    paddingTop: 12,
+  },
+  cancelButton: {
+    flex: 1,
+    backgroundColor: '#ffffff',
+    borderWidth: 1,
+    borderColor: '#d1d5db',
+    borderRadius: 8,
+    minHeight: 44,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  cancelButtonText: {
+    color: '#374151',
+    fontWeight: '600',
+    fontSize: 16,
+  },
+  submitButton: {
+    flex: 1,
+    backgroundColor: '#2563eb',
+    borderRadius: 8,
+    minHeight: 44,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  submitButtonText: {
+    color: '#ffffff',
+    fontWeight: '600',
+    fontSize: 16,
   },
 });

@@ -125,7 +125,31 @@ app.get("/make-server-689d7d60/auth/profile", async (c) => {
     }
 
     const userProfile = await kv.get(`user:${user.id}`);
-    return c.json({ user: userProfile || { id: user.id, email: user.email, role: 'contractor', name: user.email } });
+    
+    if (!userProfile) {
+      return c.json({ user: { id: user.id, email: user.email, role: 'contractor', name: user.email } });
+    }
+
+    // Enrich profile with site and contractor names
+    let enrichedProfile = { ...userProfile };
+    
+    // Add site name if siteId exists
+    if (userProfile.siteId) {
+      const site = await kv.get(`site:${userProfile.siteId}`);
+      if (site) {
+        enrichedProfile.siteName = site.name;
+      }
+    }
+    
+    // Add contractor name if contractorId exists
+    if (userProfile.contractorId) {
+      const contractor = await kv.get(`user:${userProfile.contractorId}`);
+      if (contractor) {
+        enrichedProfile.contractorName = contractor.name;
+      }
+    }
+
+    return c.json({ profile: enrichedProfile });
   } catch (error: any) {
     console.error('Profile fetch error:', error);
     return c.json({ error: error.message }, 500);
@@ -1325,6 +1349,279 @@ app.post("/make-server-689d7d60/payroll", async (c) => {
   }
 });
 
+// Get payroll records
+app.get("/make-server-689d7d60/payroll", async (c) => {
+  try {
+    const accessToken = c.req.header('Authorization')?.split(' ')[1];
+    if (!accessToken) return c.json({ error: 'Unauthorized' }, 401);
+
+    const { data: { user }, error } = await supabase.auth.getUser(accessToken);
+    if (error || !user) return c.json({ error: 'Unauthorized' }, 401);
+
+    const userProfile = await getUserProfile(user.id, user.email!, user.user_metadata);
+    const contractorId = userProfile.role === 'contractor' ? user.id : userProfile.contractorId;
+
+    // Get query parameters
+    const startDate = c.req.query('startDate');
+    const endDate = c.req.query('endDate');
+
+    // Fetch all payroll records
+    const allPayroll = await kv.getByPrefix('payroll:');
+
+    // Filter by contractor and date range
+    let filteredPayroll = allPayroll.filter((p: any) => {
+      // Only show payrolls created by this contractor
+      if (p.createdBy !== contractorId) return false;
+      
+      // Filter by date range if provided
+      if (startDate && p.startDate < startDate) return false;
+      if (endDate && p.endDate > endDate) return false;
+      
+      return true;
+    });
+
+    // Transform payroll records into PayrollEntry format
+    const payrollEntries: any[] = [];
+    
+    for (const payroll of filteredPayroll) {
+      if (!payroll.items || !Array.isArray(payroll.items)) continue;
+      
+      for (const item of payroll.items) {
+        // Get worker details
+        const worker = await kv.get(`user:${item.workerId}`);
+        if (!worker) continue;
+
+        // Format period string
+        const period = `${payroll.startDate} to ${payroll.endDate}`;
+
+        payrollEntries.push({
+          id: `${payroll.id}-${item.workerId}`,
+          workerId: item.workerId,
+          workerName: item.workerName || worker.name,
+          period: period,
+          daysWorked: item.daysWorked || 0,
+          dailyWage: item.dailyWage || 0,
+          totalWage: item.dailyWageAmount || item.grossPay || 0,
+          advances: item.advances || 0,
+          deductions: 0, // Not tracked separately, included in advances
+          netPay: item.netPay || 0,
+          status: payroll.status || 'paid',
+        });
+      }
+    }
+
+    return c.json({ payroll: payrollEntries });
+  } catch (error: any) {
+    console.error('Payroll fetch error:', error);
+    return c.json({ error: error.message }, 500);
+  }
+});
+
+// Process payroll (calculate and create payroll records for all sites/workers)
+app.post("/make-server-689d7d60/payroll/process", async (c) => {
+  try {
+    const accessToken = c.req.header('Authorization')?.split(' ')[1];
+    if (!accessToken) return c.json({ error: 'Unauthorized' }, 401);
+
+    const { data: { user }, error } = await supabase.auth.getUser(accessToken);
+    if (error || !user) return c.json({ error: 'Unauthorized' }, 401);
+
+    const userProfile = await getUserProfile(user.id, user.email!, user.user_metadata);
+    const contractorId = userProfile.role === 'contractor' ? user.id : userProfile.contractorId;
+
+    const { startDate, endDate } = await c.req.json();
+
+    // Get all sites for this contractor
+    const allSites = await kv.getByPrefix('site:');
+    const contractorSites = allSites.filter((s: any) => s.contractorId === contractorId);
+
+    if (contractorSites.length === 0) {
+      return c.json({ error: 'No sites found for this contractor' }, 404);
+    }
+
+    // Get all workers for these sites
+    const allWorkers = await kv.getByPrefix('user:');
+    const siteIds = contractorSites.map((s: any) => s.id);
+    const relevantWorkers = allWorkers.filter((w: any) => 
+      w.role === 'labour' && 
+      w.contractorId === contractorId &&
+      w.siteId && siteIds.includes(w.siteId)
+    );
+
+    if (relevantWorkers.length === 0) {
+      return c.json({ error: 'No workers found for this contractor' }, 404);
+    }
+
+    // Fetch attendance for date range
+    const allAttendance = await kv.getByPrefix(`attendance:`);
+    const relevantAttendance = allAttendance.filter((a: any) => 
+      siteIds.includes(a.siteId) && 
+      a.date >= startDate && 
+      a.date <= endDate
+    );
+
+    // Group by worker
+    const workerAttendance = relevantAttendance.reduce((acc: any, a: any) => {
+      if (!acc[a.workerId]) acc[a.workerId] = [];
+      acc[a.workerId].push(a);
+      return acc;
+    }, {});
+
+    const payrollItems = [];
+
+    for (const worker of relevantWorkers) {
+      const attendance = workerAttendance[worker.id] || [];
+      
+      // Calculate days worked
+      let daysWorked = 0;
+      let totalHours = 0;
+      let overtimeHours = 0;
+
+      attendance.forEach((a: any) => {
+        if (a.status === 'present') daysWorked += 1;
+        else if (a.status === 'half-day') daysWorked += 0.5;
+        
+        totalHours += a.workHours || 0;
+        overtimeHours += a.overtime || 0;
+      });
+
+      // Fetch production records
+      const allProduction = await kv.getByPrefix(`production:`);
+      const workerProduction = allProduction.filter((p: any) => 
+        p.workerId === worker.id && 
+        p.date >= startDate && 
+        p.date <= endDate
+      );
+
+      const pieceRateEarnings = workerProduction.reduce((sum: number, p: any) => 
+        sum + (p.units * p.ratePerUnit), 0
+      );
+
+      // Fetch pending advances
+      const allAdvances = await kv.getByPrefix(`advance:`);
+      const pendingAdvances = allAdvances.filter((a: any) => 
+        a.workerId === worker.id && a.status === 'pending'
+      );
+
+      const totalAdvances = pendingAdvances.reduce((sum: number, a: any) => sum + a.amount, 0);
+
+      // Calculate pay
+      const dailyWageAmount = daysWorked * worker.dailyWage;
+      const overtimePay = overtimeHours * (worker.dailyWage / 8) * 1.5; // 1.5x for overtime
+      const grossPay = dailyWageAmount + overtimePay + pieceRateEarnings;
+      const netPay = grossPay - totalAdvances;
+
+      payrollItems.push({
+        workerId: worker.id,
+        workerName: worker.name,
+        daysWorked,
+        totalHours,
+        overtimeHours,
+        dailyWage: worker.dailyWage,
+        dailyWageAmount,
+        overtimePay,
+        pieceRateEarnings,
+        grossPay,
+        advances: totalAdvances,
+        netPay,
+        pendingAdvances: pendingAdvances.map((a: any) => a.id),
+      });
+    }
+
+    // Create payroll records grouped by site
+    const payrollBySite: any = {};
+    
+    for (const item of payrollItems) {
+      const worker = await kv.get(`user:${item.workerId}`);
+      if (!worker || !worker.siteId) continue;
+      
+      if (!payrollBySite[worker.siteId]) {
+        payrollBySite[worker.siteId] = [];
+      }
+      payrollBySite[worker.siteId].push(item);
+    }
+
+    const createdPayrolls = [];
+    
+    for (const siteId in payrollBySite) {
+      const siteItems = payrollBySite[siteId];
+      const payrollId = crypto.randomUUID();
+      
+      const payroll = {
+        id: payrollId,
+        siteId: siteId,
+        startDate: startDate,
+        endDate: endDate,
+        items: siteItems,
+        totalGross: siteItems.reduce((sum: number, i: any) => sum + i.grossPay, 0),
+        totalNet: siteItems.reduce((sum: number, i: any) => sum + i.netPay, 0),
+        status: 'pending',
+        createdBy: contractorId,
+        createdAt: new Date().toISOString(),
+      };
+
+      await kv.set(`payroll:${payrollId}`, payroll);
+
+      // Mark advances as deducted
+      for (const item of siteItems) {
+        if (item.pendingAdvances) {
+          for (const advanceId of item.pendingAdvances) {
+            const advance = await kv.get(`advance:${advanceId}`);
+            if (advance) {
+              await kv.set(`advance:${advanceId}`, { ...advance, status: 'deducted', deductedAt: new Date().toISOString() });
+            }
+          }
+        }
+      }
+
+      createdPayrolls.push(payroll);
+    }
+
+    return c.json({ success: true, payrolls: createdPayrolls });
+  } catch (error: any) {
+    console.error('Payroll process error:', error);
+    return c.json({ error: error.message }, 500);
+  }
+});
+
+// Mark payroll entry as paid
+app.post("/make-server-689d7d60/payroll/:entryId/mark-paid", async (c) => {
+  try {
+    const accessToken = c.req.header('Authorization')?.split(' ')[1];
+    if (!accessToken) return c.json({ error: 'Unauthorized' }, 401);
+
+    const { data: { user }, error } = await supabase.auth.getUser(accessToken);
+    if (error || !user) return c.json({ error: 'Unauthorized' }, 401);
+
+    const userProfile = await getUserProfile(user.id, user.email!, user.user_metadata);
+    const contractorId = userProfile.role === 'contractor' ? user.id : userProfile.contractorId;
+
+    const entryId = c.req.param('entryId');
+    // entryId format: `${payroll.id}-${item.workerId}`
+    const [payrollId] = entryId.split('-');
+
+    // Fetch the payroll record
+    const payroll = await kv.get(`payroll:${payrollId}`);
+    if (!payroll) {
+      return c.json({ error: 'Payroll not found' }, 404);
+    }
+
+    // Verify ownership
+    if (payroll.createdBy !== contractorId) {
+      return c.json({ error: 'Unauthorized' }, 403);
+    }
+
+    // Update status to paid
+    payroll.status = 'paid';
+    await kv.set(`payroll:${payrollId}`, payroll);
+
+    return c.json({ success: true, payroll });
+  } catch (error: any) {
+    console.error('Mark paid error:', error);
+    return c.json({ error: error.message }, 500);
+  }
+});
+
 // ============================================
 // PAYMENT ROUTES
 // ============================================
@@ -1467,8 +1764,11 @@ app.get("/make-server-689d7d60/foreman/stats", async (c) => {
     }
 
     // Get sites assigned to this foreman
+    // Check both: sites where foremanId matches OR foreman's siteId property
     const allSites = await kv.getByPrefix(`site:`);
-    const foremanSites = allSites.filter((s: any) => s.foremanId === user.id);
+    const foremanSites = allSites.filter((s: any) => 
+      s.foremanId === user.id || (userProfile.siteId && s.id === userProfile.siteId)
+    );
     const siteIds = foremanSites.map((s: any) => s.id);
 
     // Get workers assigned to foreman's sites

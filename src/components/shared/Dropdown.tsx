@@ -1,5 +1,5 @@
-import React, { useRef, useEffect } from 'react';
-import { Modal, TouchableOpacity, StyleSheet, ScrollView, View, Dimensions } from 'react-native';
+import React, { useRef, useEffect, useState } from 'react';
+import { Modal, TouchableOpacity, StyleSheet, ScrollView, View, Dimensions, TextInput } from 'react-native';
 import { Text } from '@/components/ui/text';
 import { VStack } from '@/components/ui/vstack';
 import { MaterialIcons } from '@expo/vector-icons';
@@ -26,12 +26,28 @@ export const Dropdown: React.FC<DropdownProps> = ({
   onSelect,
   triggerLayout,
 }) => {
+  const [searchQuery, setSearchQuery] = useState('');
+  
   const handleSelect = (value: string) => {
     onSelect(value);
+    setSearchQuery('');
     onClose();
   };
 
+  useEffect(() => {
+    if (!visible) {
+      setSearchQuery('');
+    }
+  }, [visible]);
+
   if (!visible || !triggerLayout) return null;
+
+  // Filter options based on search query
+  const filteredOptions = searchQuery
+    ? options.filter(option => 
+        option.label.toLowerCase().includes(searchQuery.toLowerCase())
+      )
+    : options;
 
   const screenHeight = Dimensions.get('window').height;
   const dropdownMaxHeight = 250;
@@ -68,42 +84,68 @@ export const Dropdown: React.FC<DropdownProps> = ({
         onPress={onClose}
       >
         <View style={[styles.dropdown, dropdownStyle]}>
+          {/* Search Input - only show if more than 5 options */}
+          {options.length > 5 && (
+            <View style={styles.searchContainer}>
+              <MaterialIcons name="search" size={20} color="#9CA3AF" style={styles.searchIcon} />
+              <TextInput
+                style={styles.searchInput}
+                placeholder="Search..."
+                value={searchQuery}
+                onChangeText={setSearchQuery}
+                autoFocus={false}
+                placeholderTextColor="#9CA3AF"
+              />
+              {searchQuery.length > 0 && (
+                <TouchableOpacity onPress={() => setSearchQuery('')} style={styles.clearButton}>
+                  <MaterialIcons name="close" size={18} color="#9CA3AF" />
+                </TouchableOpacity>
+              )}
+            </View>
+          )}
+          
           <ScrollView 
             style={styles.scrollView}
             showsVerticalScrollIndicator={true}
             nestedScrollEnabled
           >
             <VStack>
-              {options.map((option, index) => {
-                const isSelected = option.value === selectedValue;
-                const isFirst = index === 0;
-                const isLast = index === options.length - 1;
-                
-                return (
-                  <TouchableOpacity
-                    key={option.value}
-                    style={[
-                      styles.option,
-                      isSelected && styles.optionSelected,
-                      isFirst && styles.optionFirst,
-                      isLast && styles.optionLast,
-                    ]}
-                    onPress={() => handleSelect(option.value)}
-                  >
-                    <Text
+              {filteredOptions.length > 0 ? (
+                filteredOptions.map((option, index) => {
+                  const isSelected = option.value === selectedValue;
+                  const isFirst = index === 0;
+                  const isLast = index === filteredOptions.length - 1;
+                  
+                  return (
+                    <TouchableOpacity
+                      key={option.value}
                       style={[
-                        styles.optionText,
-                        isSelected && styles.optionTextSelected,
+                        styles.option,
+                        isSelected && styles.optionSelected,
+                        isFirst && options.length <= 5 && styles.optionFirst,
+                        isLast && styles.optionLast,
                       ]}
+                      onPress={() => handleSelect(option.value)}
                     >
-                      {option.label}
-                    </Text>
-                    {isSelected && (
-                      <MaterialIcons name="check" size={18} color="#007AFF" />
-                    )}
-                  </TouchableOpacity>
-                );
-              })}
+                      <Text
+                        style={[
+                          styles.optionText,
+                          isSelected && styles.optionTextSelected,
+                        ]}
+                      >
+                        {option.label}
+                      </Text>
+                      {isSelected && (
+                        <MaterialIcons name="check" size={18} color="#007AFF" />
+                      )}
+                    </TouchableOpacity>
+                  );
+                })
+              ) : (
+                <View style={styles.noResults}>
+                  <Text style={styles.noResultsText}>No results found</Text>
+                </View>
+              )}
             </VStack>
           </ScrollView>
         </View>
@@ -129,6 +171,27 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#E5E7EB',
     overflow: 'hidden',
+  },
+  searchContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F3F4F6',
+    backgroundColor: '#F9FAFB',
+  },
+  searchIcon: {
+    marginRight: 8,
+  },
+  searchInput: {
+    flex: 1,
+    fontSize: 15,
+    color: '#111827',
+    paddingVertical: 6,
+  },
+  clearButton: {
+    padding: 4,
   },
   scrollView: {
     flexGrow: 0,
@@ -163,6 +226,15 @@ const styles = StyleSheet.create({
   optionTextSelected: {
     color: '#007AFF',
     fontWeight: '500',
+  },
+  noResults: {
+    paddingVertical: 24,
+    paddingHorizontal: 16,
+    alignItems: 'center',
+  },
+  noResultsText: {
+    fontSize: 14,
+    color: '#9CA3AF',
   },
 });
 

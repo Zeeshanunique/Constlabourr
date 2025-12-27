@@ -185,6 +185,9 @@ export function FormField({
               if (onValueChange) {
                 onValueChange(selectedValue);
               }
+              if (onChangeText) {
+                onChangeText(selectedValue);
+              }
             }}
             triggerLayout={triggerLayout}
           />

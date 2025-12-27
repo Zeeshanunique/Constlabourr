@@ -335,8 +335,8 @@ export function SitesTab({ accessToken }: SitesTabProps) {
       >
         <FormField
           label="Site Name"
-          value={formData.name}
-          onChangeText={(text) => setFormData({ ...formData, name: text })}
+                      value={formData.name}
+                      onChangeText={(text) => setFormData({ ...formData, name: text })}
           placeholder="e.g., Sunrise Apartments"
           required
           type="text"
@@ -344,8 +344,8 @@ export function SitesTab({ accessToken }: SitesTabProps) {
 
         <FormField
           label="Address"
-          value={formData.address}
-          onChangeText={(text) => setFormData({ ...formData, address: text })}
+                      value={formData.address}
+                      onChangeText={(text) => setFormData({ ...formData, address: text })}
           placeholder="Full site address"
           required
           type="text"

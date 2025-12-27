@@ -1,20 +1,13 @@
 import React, { useState, useEffect } from 'react';
 import { View, StyleSheet, ScrollView, FlatList, Platform, TouchableOpacity } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { Box } from '../../components/ui/box';
 import { Text } from '../../components/ui/text';
-import { VStack } from '../../components/ui/vstack';
-import { HStack } from '../../components/ui/hstack';
 import { Button, ButtonText } from '../../components/ui/button';
-import { Card } from '../../components/ui/card';
-import { Select, SelectTrigger, SelectInput, SelectIcon, SelectPortal, SelectBackdrop, SelectContent, SelectDragIndicator, SelectDragIndicatorWrapper, SelectItem, SelectItemText } from '../../components/ui/select';
-import { Checkbox, CheckboxIndicator, CheckboxIcon, CheckboxLabel } from '../../components/ui/checkbox';
-import { Input, InputField } from '../../components/ui/input';
-import DateTimePicker from '@react-native-community/datetimepicker';
 import { MaterialIcons } from '@expo/vector-icons';
 import { projectId } from '../../utils/supabase/info';
 import { useRoute } from '@react-navigation/native';
 import Toast from 'react-native-toast-message';
+import { FormField } from '../../components/shared/FormField';
 
 interface Worker {
   id: string;
@@ -39,22 +32,18 @@ export function BulkAttendanceTab({ accessToken }: BulkAttendanceTabProps) {
   const [workers, setWorkers] = useState<Worker[]>([]);
   const [sites, setSites] = useState<Site[]>([]);
   const [selectedSite, setSelectedSite] = useState('');
-  const [selectedDate, setSelectedDate] = useState(new Date());
-  const [showDatePicker, setShowDatePicker] = useState(false);
+  const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
   const [selectedWorkers, setSelectedWorkers] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(false);
+  const [activeTab, setActiveTab] = useState<'checkin' | 'checkout'>('checkin');
+  const [currentTime, setCurrentTime] = useState(new Date());
 
   useEffect(() => {
-    if (token) {
-    fetchSites();
-    }
-  }, [token]);
-
-  useEffect(() => {
-    if (selectedSite && token) {
-      fetchWorkers();
-    }
-  }, [selectedSite, token]);
+    const timer = setInterval(() => {
+      setCurrentTime(new Date());
+    }, 1000);
+    return () => clearInterval(timer);
+  }, []);
 
   const fetchSites = async () => {
     if (!token) return;
@@ -168,16 +157,6 @@ export function BulkAttendanceTab({ accessToken }: BulkAttendanceTabProps) {
   const filteredWorkers = selectedSite
     ? workers.filter(w => !w.siteId || w.siteId === selectedSite)
     : workers;
-
-  const [activeTab, setActiveTab] = useState<'checkin' | 'checkout'>('checkin');
-  const [currentTime, setCurrentTime] = useState(new Date());
-
-  useEffect(() => {
-    const timer = setInterval(() => {
-      setCurrentTime(new Date());
-    }, 1000);
-    return () => clearInterval(timer);
-  }, []);
 
   const pendingCount = filteredWorkers.length;
   const workingCount = 0; // This would come from actual attendance data

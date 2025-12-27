@@ -57,8 +57,8 @@ export default function App() {
       }
 
       const data = await response.json();
-      console.log('User profile fetched successfully:', data.user);
-      setUser(data.user);
+      console.log('User profile fetched successfully:', data.profile);
+      setUser(data.profile);
     } catch (error: any) {
       console.error('Error fetching user profile:', error);
       Toast.show({

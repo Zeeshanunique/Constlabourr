@@ -15,10 +15,19 @@ import DateTimePicker from '@react-native-community/datetimepicker';
 interface AttendanceRecord {
   id: string;
   date: string;
-  status: 'present' | 'absent';
+  status: 'present' | 'absent' | 'half-day';
   checkIn?: string;
   checkOut?: string;
   siteName?: string;
+  siteId?: string;
+  totalHours?: number;
+  regularHours?: number;
+  overtimeHours?: number;
+  breakHours?: number;
+  dailyPayment?: number;
+  overtimePayment?: number;
+  totalPayment?: number;
+  messCharge?: number;
 }
 
 interface WorkerAttendanceTabProps {
@@ -84,8 +93,11 @@ export function WorkerAttendanceTab({ accessToken }: WorkerAttendanceTabProps) {
 
   const getMonthStats = () => {
     const present = attendance.filter(a => a.status === 'present').length;
+    const halfDay = attendance.filter(a => a.status === 'half-day').length;
     const absent = attendance.filter(a => a.status === 'absent').length;
-    return { present, absent, total: present + absent };
+    const totalEarnings = attendance.reduce((sum, a) => sum + (a.totalPayment || 0), 0);
+    const totalHours = attendance.reduce((sum, a) => sum + (a.totalHours || 0), 0);
+    return { present, halfDay, absent, total: present + halfDay + absent, totalEarnings, totalHours };
   };
 
   const stats = getMonthStats();
@@ -122,21 +134,45 @@ export function WorkerAttendanceTab({ accessToken }: WorkerAttendanceTabProps) {
         )}
 
         {/* Month Stats */}
-        <View style={styles.statsRow}>
-          <View style={[styles.statBox, { backgroundColor: '#dcfce7' }]}>
-            <MaterialIcons name="check-circle" size={24} color="#16a34a" />
-            <Text style={styles.statValue}>{stats.present}</Text>
-            <Text style={styles.statLabel}>Present</Text>
+        <View style={styles.statsContainer}>
+          <View style={styles.statsRow}>
+            <View style={[styles.statBox, { backgroundColor: '#dcfce7' }]}>
+              <MaterialIcons name="check-circle" size={24} color="#16a34a" />
+              <Text style={styles.statValue}>{stats.present}</Text>
+              <Text style={styles.statLabel}>Present</Text>
+            </View>
+            {stats.halfDay > 0 && (
+              <View style={[styles.statBox, { backgroundColor: '#fef3c7' }]}>
+                <MaterialIcons name="access-time" size={24} color="#f59e0b" />
+                <Text style={styles.statValue}>{stats.halfDay}</Text>
+                <Text style={styles.statLabel}>Half Day</Text>
+              </View>
+            )}
+            <View style={[styles.statBox, { backgroundColor: '#fee2e2' }]}>
+              <MaterialIcons name="cancel" size={24} color="#dc2626" />
+              <Text style={styles.statValue}>{stats.absent}</Text>
+              <Text style={styles.statLabel}>Absent</Text>
+            </View>
+            <View style={[styles.statBox, { backgroundColor: '#e0e7ff' }]}>
+              <MaterialIcons name="calendar-month" size={24} color="#4f46e5" />
+              <Text style={styles.statValue}>{stats.total}</Text>
+              <Text style={styles.statLabel}>Total</Text>
+            </View>
           </View>
-          <View style={[styles.statBox, { backgroundColor: '#fee2e2' }]}>
-            <MaterialIcons name="cancel" size={24} color="#dc2626" />
-            <Text style={styles.statValue}>{stats.absent}</Text>
-            <Text style={styles.statLabel}>Absent</Text>
-          </View>
-          <View style={[styles.statBox, { backgroundColor: '#e0e7ff' }]}>
-            <MaterialIcons name="calendar-month" size={24} color="#4f46e5" />
-            <Text style={styles.statValue}>{stats.total}</Text>
-            <Text style={styles.statLabel}>Total Days</Text>
+          
+          {/* Earnings Summary */}
+          <View style={styles.earningsSummary}>
+            <View style={styles.summaryItem}>
+              <MaterialIcons name="attach-money" size={20} color="#16a34a" />
+              <Text style={styles.summaryLabel}>Total Earnings</Text>
+              <Text style={styles.summaryValue}>₹{stats.totalEarnings.toFixed(0)}</Text>
+            </View>
+            <View style={styles.summaryDivider} />
+            <View style={styles.summaryItem}>
+              <MaterialIcons name="schedule" size={20} color="#3b82f6" />
+              <Text style={styles.summaryLabel}>Total Hours</Text>
+              <Text style={styles.summaryValue}>{stats.totalHours.toFixed(1)} hrs</Text>
+            </View>
           </View>
         </View>
 
@@ -149,9 +185,17 @@ export function WorkerAttendanceTab({ accessToken }: WorkerAttendanceTabProps) {
               <View style={styles.cardHeader}>
                 <View style={styles.dateSection}>
                   <MaterialIcons 
-                    name={item.status === 'present' ? 'check-circle' : 'cancel'} 
+                    name={
+                      item.status === 'present' ? 'check-circle' : 
+                      item.status === 'half-day' ? 'access-time' : 
+                      'cancel'
+                    } 
                     size={24} 
-                    color={item.status === 'present' ? '#16a34a' : '#dc2626'} 
+                    color={
+                      item.status === 'present' ? '#16a34a' : 
+                      item.status === 'half-day' ? '#f59e0b' : 
+                      '#dc2626'
+                    } 
                   />
                   <View style={styles.dateInfo}>
                     <Text style={styles.dateText}>{formatDate(item.date)}</Text>
@@ -165,32 +209,83 @@ export function WorkerAttendanceTab({ accessToken }: WorkerAttendanceTabProps) {
                 </View>
                 <View style={[
                   styles.statusBadge, 
-                  { backgroundColor: item.status === 'present' ? '#dcfce7' : '#fee2e2' }
+                  { backgroundColor: 
+                    item.status === 'present' ? '#dcfce7' : 
+                    item.status === 'half-day' ? '#fef3c7' : 
+                    '#fee2e2' 
+                  }
                 ]}>
                   <Text style={[
                     styles.statusText,
-                    { color: item.status === 'present' ? '#16a34a' : '#dc2626' }
+                    { color: 
+                      item.status === 'present' ? '#16a34a' : 
+                      item.status === 'half-day' ? '#f59e0b' : 
+                      '#dc2626' 
+                    }
                   ]}>
                     {item.status}
                   </Text>
                 </View>
               </View>
               
-              {item.status === 'present' && (item.checkIn || item.checkOut) && (
-                <View style={styles.timeRow}>
-                  {item.checkIn && (
-                    <View style={styles.timeInfo}>
-                      <MaterialIcons name="login" size={16} color="#6b7280" />
-                      <Text style={styles.timeText}>In: {item.checkIn}</Text>
+              {(item.status === 'present' || item.status === 'half-day') && (
+                <>
+                  {/* Time Information */}
+                  {(item.checkIn || item.checkOut) && (
+                    <View style={styles.timeRow}>
+                      {item.checkIn && (
+                        <View style={styles.timeInfo}>
+                          <MaterialIcons name="login" size={16} color="#6b7280" />
+                          <Text style={styles.timeText}>In: {item.checkIn}</Text>
+                        </View>
+                      )}
+                      {item.checkOut && (
+                        <View style={styles.timeInfo}>
+                          <MaterialIcons name="logout" size={16} color="#6b7280" />
+                          <Text style={styles.timeText}>Out: {item.checkOut}</Text>
+                        </View>
+                      )}
+                      {item.totalHours !== undefined && item.totalHours > 0 && (
+                        <View style={styles.timeInfo}>
+                          <MaterialIcons name="schedule" size={16} color="#6b7280" />
+                          <Text style={styles.timeText}>{item.totalHours.toFixed(1)} hrs</Text>
+                        </View>
+                      )}
                     </View>
                   )}
-                  {item.checkOut && (
-                    <View style={styles.timeInfo}>
-                      <MaterialIcons name="logout" size={16} color="#6b7280" />
-                      <Text style={styles.timeText}>Out: {item.checkOut}</Text>
+                  
+                  {/* Payment Information */}
+                  {item.totalPayment !== undefined && item.totalPayment > 0 && (
+                    <View style={styles.paymentRow}>
+                      <View style={styles.paymentItem}>
+                        <Text style={styles.paymentLabel}>Daily Payment</Text>
+                        <Text style={styles.paymentValue}>₹{item.dailyPayment?.toFixed(0) || 0}</Text>
+                      </View>
+                      {item.overtimePayment !== undefined && item.overtimePayment > 0 && (
+                        <View style={styles.paymentItem}>
+                          <Text style={styles.paymentLabel}>Overtime</Text>
+                          <Text style={[styles.paymentValue, { color: '#16a34a' }]}>
+                            +₹{item.overtimePayment.toFixed(0)}
+                          </Text>
+                        </View>
+                      )}
+                      {item.messCharge !== undefined && item.messCharge > 0 && (
+                        <View style={styles.paymentItem}>
+                          <Text style={styles.paymentLabel}>Mess</Text>
+                          <Text style={[styles.paymentValue, { color: '#dc2626' }]}>
+                            -₹{item.messCharge.toFixed(0)}
+                          </Text>
+                        </View>
+                      )}
+                      <View style={[styles.paymentItem, styles.totalPayment]}>
+                        <Text style={[styles.paymentLabel, { fontWeight: '700' }]}>Total</Text>
+                        <Text style={[styles.paymentValue, { fontSize: 16, fontWeight: '700', color: '#16a34a' }]}>
+                          ₹{item.totalPayment.toFixed(0)}
+                        </Text>
+                      </View>
                     </View>
                   )}
-                </View>
+                </>
               )}
             </Card>
           )}
@@ -258,28 +353,66 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: '#16a34a',
   },
+  statsContainer: {
+    marginBottom: 16,
+  },
   statsRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    marginBottom: 16,
+    marginBottom: 12,
     gap: 8,
   },
   statBox: {
     flex: 1,
     alignItems: 'center',
-    padding: 16,
+    padding: 12,
     borderRadius: 12,
   },
   statValue: {
-    fontSize: 24,
+    fontSize: 20,
     fontWeight: '700',
     color: '#111827',
-    marginTop: 8,
+    marginTop: 6,
   },
   statLabel: {
-    fontSize: 12,
+    fontSize: 11,
     color: '#6b7280',
-    marginTop: 4,
+    marginTop: 2,
+  },
+  earningsSummary: {
+    flexDirection: 'row',
+    backgroundColor: '#ffffff',
+    borderRadius: 12,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.05,
+    shadowRadius: 2,
+    elevation: 1,
+  },
+  summaryItem: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+  },
+  summaryDivider: {
+    width: 1,
+    backgroundColor: '#e5e7eb',
+    marginHorizontal: 12,
+  },
+  summaryLabel: {
+    fontSize: 13,
+    color: '#6b7280',
+    fontWeight: '500',
+  },
+  summaryValue: {
+    fontSize: 15,
+    color: '#111827',
+    fontWeight: '700',
   },
   listContent: {
     paddingBottom: 16,
@@ -353,6 +486,34 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: '#6b7280',
   },
+  paymentRow: {
+    marginTop: 12,
+    paddingTop: 12,
+    borderTopWidth: 1,
+    borderTopColor: '#f3f4f6',
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 12,
+  },
+  paymentItem: {
+    flexDirection: 'column',
+    alignItems: 'flex-start',
+  },
+  totalPayment: {
+    marginLeft: 'auto',
+    alignItems: 'flex-end',
+  },
+  paymentLabel: {
+    fontSize: 11,
+    color: '#6b7280',
+    fontWeight: '500',
+    marginBottom: 2,
+  },
+  paymentValue: {
+    fontSize: 14,
+    color: '#111827',
+    fontWeight: '600',
+  },
   emptyState: {
     alignItems: 'center',
     justifyContent: 'center',
@@ -370,4 +531,5 @@ const styles = StyleSheet.create({
     marginTop: 4,
   },
 });
+
 

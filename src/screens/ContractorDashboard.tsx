@@ -10,7 +10,7 @@ import { Card } from "../components/ui/card";
 import { AppContext } from "../context/AppContext";
 import { MaterialIcons, FontAwesome5, Ionicons } from "@expo/vector-icons";
 import { projectId } from "../utils/supabase/info";
-import { useNavigation, useRoute, NavigationProp } from "@react-navigation/native";
+import { useNavigation, useRoute, NavigationProp, useFocusEffect } from "@react-navigation/native";
 import type { ContractorTabParamList } from "../navigation/ContractorNavigator";
 import type { AppStackParamList } from "../navigation/AppNavigator";
 
@@ -39,6 +39,15 @@ export function ModernContractorDashboard({ accessToken }: ContractorDashboardPr
       fetchStats();
     }
   }, [token]);
+
+  // Refresh stats when dashboard comes into focus
+  useFocusEffect(
+    React.useCallback(() => {
+      if (token) {
+        fetchStats();
+      }
+    }, [token])
+  );
 
   const fetchStats = async () => {
     if (!token) return;

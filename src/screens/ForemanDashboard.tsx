@@ -1,11 +1,11 @@
-import React, { useState, useEffect, useContext } from "react";
+import React, { useState, useEffect, useContext, useCallback } from "react";
 import { View, ScrollView, StyleSheet, TouchableOpacity } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Text } from "../components/ui/text";
 import { AppContext } from "../context/AppContext";
 import { MaterialIcons } from "@expo/vector-icons";
 import { projectId } from "../utils/supabase/info";
-import { useNavigation, useRoute, NavigationProp } from "@react-navigation/native";
+import { useNavigation, useRoute, NavigationProp, useFocusEffect } from "@react-navigation/native";
 import type { ForemanTabParamList } from "../navigation/ForemanNavigator";
 
 interface ForemanDashboardProps {
@@ -32,6 +32,15 @@ export function ModernForemanDashboard({ accessToken }: ForemanDashboardProps) {
     }
   }, [token]);
 
+  // Refresh stats when dashboard comes into focus
+  useFocusEffect(
+    useCallback(() => {
+      if (token) {
+        fetchStats();
+      }
+    }, [token])
+  );
+
   const fetchStats = async () => {
     if (!token) return;
     try {
@@ -44,10 +53,12 @@ export function ModernForemanDashboard({ accessToken }: ForemanDashboardProps) {
         }
       );
 
-      if (!response.ok) throw new Error("Failed to fetch stats");
+      if (!response.ok) {
+        throw new Error("Failed to fetch stats");
+      }
 
       const data = await response.json();
-      setStats(data.stats);
+      setStats(data.stats || null);
     } catch (error) {
       console.error("Error fetching foreman stats:", error);
     }

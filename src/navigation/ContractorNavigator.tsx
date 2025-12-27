@@ -4,7 +4,7 @@ import { ModernContractorDashboard } from '../screens/ContractorDashboard';
 import { WorkersTab } from '../features/workers/WorkersTab';
 import { ForemenTab } from '../features/workers/ForemenTab';
 import { SitesTab } from '../features/sites/SitesTab';
-import { BulkAttendanceTab } from '../features/attendance/BulkAttendanceTab';
+import { AttendanceTab } from '../features/attendance/AttendanceTab';
 import { PayrollTab } from '../features/payroll/PayrollTab';
 import { MaterialIcons, FontAwesome5, Ionicons, Feather } from '@expo/vector-icons';
 
@@ -73,7 +73,7 @@ export function ContractorNavigator({ route }: { route: any }) {
           tabBarIcon: ({ color, size}) => <MaterialIcons name="check-box" size={size} color={color} />,
         }}
       >
-        {(props) => <BulkAttendanceTab {...props} accessToken={accessToken} />}
+        {(props) => <AttendanceTab {...props} accessToken={accessToken} />}
       </Tab.Screen>
       <Tab.Screen
         name="Payroll"

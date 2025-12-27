@@ -19,7 +19,12 @@ interface WorkerProfile {
   messCharge?: number;
   status: string;
   siteName?: string;
+  siteId?: string;
   contractorName?: string;
+  contractorId?: string;
+  aadhaarHash?: string;
+  createdAt?: string;
+  updatedAt?: string;
   bankDetails?: {
     accountNumber?: string;
     ifscCode?: string;
@@ -143,15 +148,27 @@ export function WorkerProfileTab({ accessToken }: WorkerProfileTabProps) {
           </View>
           <View style={styles.infoGrid}>
             <View style={styles.infoRow}>
+              <Text style={styles.infoLabel}>Skill Level</Text>
+              <View style={[styles.skillBadge, { backgroundColor: getSkillLevelColor(profile?.skillLevel || 'unskilled') }]}>
+                <Text style={styles.skillBadgeText}>{profile?.skillLevel?.toUpperCase() || 'N/A'}</Text>
+              </View>
+            </View>
+            <View style={styles.infoRow}>
               <Text style={styles.infoLabel}>Daily Wage</Text>
               <Text style={styles.infoValue}>₹{profile?.dailyWage || 0}</Text>
             </View>
             {profile?.messCharge !== undefined && profile.messCharge > 0 && (
               <View style={styles.infoRow}>
-                <Text style={styles.infoLabel}>Mess Charge</Text>
+                <Text style={styles.infoLabel}>Mess Charge (per day)</Text>
                 <Text style={styles.infoValue}>₹{profile.messCharge}</Text>
               </View>
             )}
+            <View style={styles.infoRow}>
+              <Text style={styles.infoLabel}>Net Daily Earning</Text>
+              <Text style={[styles.infoValue, styles.highlightValue]}>
+                ₹{(profile?.dailyWage || 0) - (profile?.messCharge || 0)}
+              </Text>
+            </View>
             {profile?.siteName && (
               <View style={styles.infoRow}>
                 <Text style={styles.infoLabel}>Current Site</Text>
@@ -162,6 +179,24 @@ export function WorkerProfileTab({ accessToken }: WorkerProfileTabProps) {
               <View style={styles.infoRow}>
                 <Text style={styles.infoLabel}>Contractor</Text>
                 <Text style={styles.infoValue}>{profile.contractorName}</Text>
+              </View>
+            )}
+            <View style={styles.infoRow}>
+              <Text style={styles.infoLabel}>Status</Text>
+              <View style={[styles.statusBadge, { backgroundColor: getStatusColor(profile?.status || 'inactive') }]}>
+                <Text style={styles.statusBadgeText}>{profile?.status?.toUpperCase() || 'N/A'}</Text>
+              </View>
+            </View>
+            {profile?.createdAt && (
+              <View style={styles.infoRow}>
+                <Text style={styles.infoLabel}>Joined On</Text>
+                <Text style={styles.infoValue}>
+                  {new Date(profile.createdAt).toLocaleDateString('en-IN', { 
+                    day: '2-digit', 
+                    month: 'short', 
+                    year: 'numeric' 
+                  })}
+                </Text>
               </View>
             )}
           </View>
@@ -326,5 +361,31 @@ const styles = StyleSheet.create({
     color: '#111827',
     fontWeight: '600',
   },
+  highlightValue: {
+    fontSize: 16,
+    color: '#16a34a',
+    fontWeight: '700',
+  },
+  skillBadge: {
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 6,
+  },
+  skillBadgeText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#ffffff',
+  },
+  statusBadge: {
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 6,
+  },
+  statusBadgeText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#ffffff',
+  },
 });
+
 

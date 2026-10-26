@@ -43,7 +43,7 @@ export function ReportsTab({ accessToken }: ReportsTabProps) {
 
   useEffect(() => {
     if (token) {
-    fetchReportData();
+      fetchReportData();
     }
   }, [token, reportType, dateRange]);
 
@@ -61,7 +61,7 @@ export function ReportsTab({ accessToken }: ReportsTabProps) {
       if (!response.ok) {
         throw new Error('Failed to fetch report data');
       }
-      
+
       const data = await response.json();
       setReportData(data);
     } catch (error) {
@@ -198,8 +198,8 @@ export function ReportsTab({ accessToken }: ReportsTabProps) {
                       bezier
                       style={styles.chart}
                     />
-            </Card>
-          )}
+                  </Card>
+                )}
 
                 {reportType === 'payroll' && reportData.payroll && (
                   <Card className="p-4">
@@ -216,12 +216,13 @@ export function ReportsTab({ accessToken }: ReportsTabProps) {
                       width={screenWidth - 64}
                       height={220}
                       yAxisLabel="₹"
+                      yAxisSuffix=""
                       chartConfig={chartConfig}
                       style={styles.chart}
                       showValuesOnTopOfBars
                     />
-            </Card>
-          )}
+                  </Card>
+                )}
 
                 {reportType === 'workers' && reportData.workersBySkill && (
                   <Card className="p-4">
@@ -303,9 +304,9 @@ export function ReportsTab({ accessToken }: ReportsTabProps) {
                       </>
                     )}
                   </VStack>
-          </Card>
-        </>
-      )}
+                </Card>
+              </>
+            )}
           </VStack>
         </Box>
       </ScrollView>

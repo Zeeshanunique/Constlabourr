@@ -18,6 +18,7 @@ export interface User {
   name: string;
   contractorId?: string;
   workerId?: string;
+  phone?: string;
 }
 
 export interface AppContextType {

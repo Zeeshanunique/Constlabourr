@@ -1,2103 +1,487 @@
 import { Hono } from "npm:hono";
 import { cors } from "npm:hono/cors";
-import { logger } from "npm:hono/logger";
-import * as kv from "./kv_store.ts";
-import { createClient } from "npm:@supabase/supabase-js@2";
+import * as db from "./db.ts";
 
 const app = new Hono();
 
-const supabase = createClient(
-  Deno.env.get('SUPABASE_URL')!,
-  Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,
-);
+app.use("/*", cors({ origin: "*", allowHeaders: ["Content-Type", "Authorization"], allowMethods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"], exposeHeaders: ["Content-Length"], maxAge: 600 }));
 
-// Helper function to get or create user profile
-async function getUserProfile(userId: string, userEmail: string, userMetadata: any) {
-  let userProfile = await kv.get(`user:${userId}`);
-  
-  if (!userProfile) {
-    console.log(`User profile not found for ${userId}, creating from auth metadata`);
-    userProfile = {
-      id: userId,
-      email: userEmail,
-      name: userMetadata?.name || userEmail,
-      role: userMetadata?.role || 'contractor',
-      createdAt: new Date().toISOString(),
-    };
-    await kv.set(`user:${userId}`, userProfile);
-  }
-  
-  return userProfile;
+async function authUser(c: any) {
+  const t = c.req.header('Authorization')?.split(' ')[1];
+  if (!t) return null;
+  const { data: { user }, error } = await db.supabase.auth.getUser(t);
+  return (!error && user) ? user : null;
 }
 
-// Enable logger
-app.use('*', logger(console.log));
+async function getContractorId(userId: string) {
+  const p = await db.getProfile(userId);
+  return p?.role === 'contractor' ? userId : p?.contractorId;
+}
 
-// Enable CORS for all routes and methods
-app.use(
-  "/*",
-  cors({
-    origin: "*",
-    allowHeaders: ["Content-Type", "Authorization"],
-    allowMethods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-    exposeHeaders: ["Content-Length"],
-    maxAge: 600,
-  }),
-);
+function hashAadhaar(a: string) { return `hash_${a.slice(-4)}`; }
 
-// Health check endpoint
-app.get("/make-server-689d7d60/health", (c) => {
-  return c.json({ status: "ok" });
-});
+app.get("/make-server-689d7d60/health", (c) => c.json({ status: "ok" }));
 
-// ============================================
-// AUTH ROUTES
-// ============================================
-
-// Register new contractor
+// AUTH
 app.post("/make-server-689d7d60/auth/register", async (c) => {
   try {
     const { email, password, name, role } = await c.req.json();
-
-    if (!email || !password || !name) {
-      return c.json({ error: 'Email, password, and name are required' }, 400);
-    }
-
-    // Validate email format
-    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    if (!emailRegex.test(email)) {
-      return c.json({ error: 'Invalid email format' }, 400);
-    }
-
-    // Validate password length
-    if (password.length < 6) {
-      return c.json({ error: 'Password must be at least 6 characters long' }, 400);
-    }
-
-    // Check if user already exists
-    const existingUser = await kv.getByPrefix(`user:`);
-    const userExists = existingUser.some((u: any) => u.email === email);
-    if (userExists) {
-      return c.json({ error: 'User with this email already exists' }, 400);
-    }
-
-    // Create user in Supabase Auth
-    const { data: authData, error: authError } = await supabase.auth.admin.createUser({
-      email,
-      password,
-      email_confirm: true, // Auto-confirm since email server not configured
-      user_metadata: { name, role: role || 'contractor' },
-    });
-
-    if (authError) {
-      console.error('Supabase auth error:', authError);
-      throw authError;
-    }
-
-    // Store user profile
-    await kv.set(`user:${authData.user.id}`, {
-      id: authData.user.id,
-      email,
-      name,
-      role: role || 'contractor',
-      createdAt: new Date().toISOString(),
-    });
-
-    console.log('User registered successfully:', email);
+    if (!email || !password || !name) return c.json({ error: 'Email, password, and name are required' }, 400);
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return c.json({ error: 'Invalid email format' }, 400);
+    if (password.length < 6) return c.json({ error: 'Password must be at least 6 characters long' }, 400);
+    const existing = await db.getProfileByEmail(email);
+    if (existing) return c.json({ error: 'User with this email already exists' }, 400);
+    const { data: authData, error: authError } = await db.supabase.auth.admin.createUser({ email, password, email_confirm: true, user_metadata: { name, role: role || 'contractor' } });
+    if (authError) throw authError;
+    await db.upsertProfile({ id: authData.user.id, email, name, role: role || 'contractor', createdAt: new Date().toISOString() });
     return c.json({ success: true, userId: authData.user.id });
-  } catch (error: any) {
-    console.error('Registration error:', error);
-    return c.json({ error: error.message || 'Registration failed' }, 400);
-  }
+  } catch (e: any) { return c.json({ error: e.message || 'Registration failed' }, 400); }
 });
 
-// Get user profile
 app.get("/make-server-689d7d60/auth/profile", async (c) => {
   try {
-    const accessToken = c.req.header('Authorization')?.split(' ')[1];
-    if (!accessToken) {
-      return c.json({ error: 'Unauthorized' }, 401);
-    }
-
-    const { data: { user }, error } = await supabase.auth.getUser(accessToken);
-    if (error || !user) {
-      return c.json({ error: 'Unauthorized' }, 401);
-    }
-
-    const userProfile = await kv.get(`user:${user.id}`);
-    
-    if (!userProfile) {
-      return c.json({ user: { id: user.id, email: user.email, role: 'contractor', name: user.email } });
-    }
-
-    // Enrich profile with site and contractor names
-    let enrichedProfile = { ...userProfile };
-    
-    // Add site name if siteId exists
-    if (userProfile.siteId) {
-      const site = await kv.get(`site:${userProfile.siteId}`);
-      if (site) {
-        enrichedProfile.siteName = site.name;
-      }
-    }
-    
-    // Add contractor name if contractorId exists
-    if (userProfile.contractorId) {
-      const contractor = await kv.get(`user:${userProfile.contractorId}`);
-      if (contractor) {
-        enrichedProfile.contractorName = contractor.name;
-      }
-    }
-
-    return c.json({ profile: enrichedProfile });
-  } catch (error: any) {
-    console.error('Profile fetch error:', error);
-    return c.json({ error: error.message }, 500);
-  }
+    const user = await authUser(c);
+    if (!user) return c.json({ error: 'Unauthorized' }, 401);
+    let profile = await db.getProfile(user.id);
+    if (!profile) profile = { id: user.id, email: user.email, role: 'contractor', name: user.email };
+    return c.json({ profile, user: profile });
+  } catch (e: any) { return c.json({ error: e.message }, 500); }
 });
 
-// ============================================
-// WORKER ROUTES
-// ============================================
-
-// Create worker
+// WORKERS
 app.post("/make-server-689d7d60/workers", async (c) => {
   try {
-    const accessToken = c.req.header('Authorization')?.split(' ')[1];
-    if (!accessToken) return c.json({ error: 'Unauthorized' }, 401);
-
-    const { data: { user }, error } = await supabase.auth.getUser(accessToken);
-    if (error || !user) return c.json({ error: 'Unauthorized' }, 401);
-
-    const userProfile = await kv.get(`user:${user.id}`);
-    const contractorId = userProfile.role === 'contractor' ? user.id : userProfile.contractorId;
-
+    const user = await authUser(c);
+    if (!user) return c.json({ error: 'Unauthorized' }, 401);
+    const contractorId = await getContractorId(user.id);
     const body = await c.req.json();
-    
-    // Check if email already exists
-    const existingUsers = await kv.getByPrefix(`user:`);
-    const emailExists = existingUsers.some((u: any) => u.email === body.email);
-    if (emailExists) {
-      return c.json({ error: 'Email already exists' }, 400);
-    }
-
-    // Create user in Supabase Auth for worker
-    const { data: authData, error: authError } = await supabase.auth.admin.createUser({
-      email: body.email,
-      password: body.password,
-      email_confirm: true,
-      user_metadata: { name: body.name, role: 'labour' },
-    });
-
-    if (authError) {
-      console.error('Supabase auth error:', authError);
-      return c.json({ error: authError.message }, 400);
-    }
-
-    const workerId = authData.user.id;
-    
-    const worker = {
-      id: workerId,
-      contractorId,
-      name: body.name,
-      email: body.email,
-      phone: body.phone,
-      aadhaarHash: body.aadhaar ? hashAadhaar(body.aadhaar) : null,
-      bankDetails: body.bankDetails || {},
-      skillLevel: body.skillLevel || 'unskilled',
-      dailyWage: body.dailyWage || 0,
-      messCharge: body.messCharge || 0,
-      siteId: body.siteId || null,
-      status: 'active',
-      role: 'labour',
-      createdAt: new Date().toISOString(),
-    };
-
-    await kv.set(`user:${workerId}`, worker);
-
+    const existing = await db.getProfileByEmail(body.email);
+    if (existing) return c.json({ error: 'Email already exists' }, 400);
+    const { data: authData, error: authError } = await db.supabase.auth.admin.createUser({ email: body.email, password: body.password, email_confirm: true, user_metadata: { name: body.name, role: 'labour' } });
+    if (authError) return c.json({ error: authError.message }, 400);
+    const worker = { id: authData.user.id, contractorId, name: body.name, email: body.email, phone: body.phone, aadhaarHash: body.aadhaar ? hashAadhaar(body.aadhaar) : null, bankDetails: body.bankDetails || {}, skillLevel: body.skillLevel || 'unskilled', dailyWage: body.dailyWage || 0, messCharge: body.messCharge || 0, siteId: body.siteId || null, status: 'active', role: 'labour', createdAt: new Date().toISOString() };
+    await db.upsertProfile(worker);
     return c.json({ success: true, worker });
-  } catch (error: any) {
-    console.error('Worker creation error:', error);
-    return c.json({ error: error.message }, 500);
-  }
+  } catch (e: any) { return c.json({ error: e.message }, 500); }
 });
 
-// Get all workers for contractor
 app.get("/make-server-689d7d60/workers", async (c) => {
   try {
-    const accessToken = c.req.header('Authorization')?.split(' ')[1];
-    if (!accessToken) return c.json({ error: 'Unauthorized' }, 401);
-
-    const { data: { user }, error } = await supabase.auth.getUser(accessToken);
-    if (error || !user) return c.json({ error: 'Unauthorized' }, 401);
-
-    const userProfile = await getUserProfile(user.id, user.email!, user.user_metadata);
-    const contractorId = userProfile.role === 'contractor' ? user.id : userProfile.contractorId;
-
-    const workers = await kv.getByPrefix(`user:`);
-    const contractorWorkers = workers.filter((w: any) => w.contractorId === contractorId && w.role === 'labour');
-
-    return c.json({ workers: contractorWorkers });
-  } catch (error: any) {
-    console.error('Workers fetch error:', error);
-    return c.json({ error: error.message }, 500);
-  }
+    const user = await authUser(c);
+    if (!user) return c.json({ error: 'Unauthorized' }, 401);
+    const contractorId = await getContractorId(user.id);
+    const workers = await db.getWorkersByContractor(contractorId!);
+    return c.json({ workers });
+  } catch (e: any) { return c.json({ error: e.message }, 500); }
 });
 
-// Update worker
 app.put("/make-server-689d7d60/workers/:id", async (c) => {
   try {
-    const accessToken = c.req.header('Authorization')?.split(' ')[1];
-    if (!accessToken) return c.json({ error: 'Unauthorized' }, 401);
-
-    const { data: { user }, error } = await supabase.auth.getUser(accessToken);
-    if (error || !user) return c.json({ error: 'Unauthorized' }, 401);
-
+    const user = await authUser(c);
+    if (!user) return c.json({ error: 'Unauthorized' }, 401);
     const workerId = c.req.param('id');
     const body = await c.req.json();
-    
-    const worker = await kv.get(`user:${workerId}`);
+    const worker = await db.getProfile(workerId);
     if (!worker) return c.json({ error: 'Worker not found' }, 404);
-
-    // Update auth if password is provided
     if (body.password) {
-      const { error: updateError } = await supabase.auth.admin.updateUserById(
-        workerId,
-        { password: body.password }
-      );
-      if (updateError) {
-        console.error('Password update error:', updateError);
-        return c.json({ error: 'Failed to update password' }, 400);
-      }
+      const { error } = await db.supabase.auth.admin.updateUserById(workerId, { password: body.password });
+      if (error) return c.json({ error: 'Failed to update password' }, 400);
     }
-
-    const updatedWorker = { 
-      ...worker, 
-      name: body.name || worker.name,
-      email: body.email || worker.email,
-      phone: body.phone || worker.phone,
-      aadhaarHash: body.aadhaar ? hashAadhaar(body.aadhaar) : worker.aadhaarHash,
-      bankDetails: body.bankDetails || worker.bankDetails,
-      skillLevel: body.skillLevel || worker.skillLevel,
-      dailyWage: body.dailyWage !== undefined ? body.dailyWage : worker.dailyWage,
-      messCharge: body.messCharge !== undefined ? body.messCharge : worker.messCharge,
-      siteId: body.siteId !== undefined ? body.siteId : worker.siteId,
-      status: body.status || worker.status,
-      updatedAt: new Date().toISOString() 
-    };
-    await kv.set(`user:${workerId}`, updatedWorker);
-
-    return c.json({ success: true, worker: updatedWorker });
-  } catch (error: any) {
-    console.error('Worker update error:', error);
-    return c.json({ error: error.message }, 500);
-  }
+    const updated = { ...worker, name: body.name || worker.name, email: body.email || worker.email, phone: body.phone || worker.phone, aadhaarHash: body.aadhaar ? hashAadhaar(body.aadhaar) : worker.aadhaarHash, bankDetails: body.bankDetails || worker.bankDetails, skillLevel: body.skillLevel || worker.skillLevel, dailyWage: body.dailyWage !== undefined ? body.dailyWage : worker.dailyWage, messCharge: body.messCharge !== undefined ? body.messCharge : worker.messCharge, siteId: body.siteId !== undefined ? body.siteId : worker.siteId, status: body.status || worker.status, updatedAt: new Date().toISOString() };
+    await db.upsertProfile(updated);
+    return c.json({ success: true, worker: updated });
+  } catch (e: any) { return c.json({ error: e.message }, 500); }
 });
 
-// Delete worker
 app.delete("/make-server-689d7d60/workers/:id", async (c) => {
   try {
-    const accessToken = c.req.header('Authorization')?.split(' ')[1];
-    if (!accessToken) return c.json({ error: 'Unauthorized' }, 401);
-
-    const { data: { user }, error } = await supabase.auth.getUser(accessToken);
-    if (error || !user) return c.json({ error: 'Unauthorized' }, 401);
-
+    const user = await authUser(c);
+    if (!user) return c.json({ error: 'Unauthorized' }, 401);
     const workerId = c.req.param('id');
-    
-    const worker = await kv.get(`user:${workerId}`);
+    const worker = await db.getProfile(workerId);
     if (!worker) return c.json({ error: 'Worker not found' }, 404);
-
-    // Delete from Supabase Auth
-    const { error: deleteError } = await supabase.auth.admin.deleteUser(workerId);
-    if (deleteError) {
-      console.error('Auth delete error:', deleteError);
-    }
-
-    // Delete from KV store
-    await kv.del(`user:${workerId}`);
-
+    await db.supabase.auth.admin.deleteUser(workerId);
+    await db.deleteProfile(workerId);
     return c.json({ success: true });
-  } catch (error: any) {
-    console.error('Worker deletion error:', error);
-    return c.json({ error: error.message }, 500);
-  }
+  } catch (e: any) { return c.json({ error: e.message }, 500); }
 });
 
-// ============================================
-// FOREMAN ROUTES
-// ============================================
-
-// Create foreman
+// FOREMEN
 app.post("/make-server-689d7d60/foremen", async (c) => {
   try {
-    const accessToken = c.req.header('Authorization')?.split(' ')[1];
-    if (!accessToken) return c.json({ error: 'Unauthorized' }, 401);
-
-    const { data: { user }, error } = await supabase.auth.getUser(accessToken);
-    if (error || !user) return c.json({ error: 'Unauthorized' }, 401);
-
-    const userProfile = await kv.get(`user:${user.id}`);
-    const contractorId = userProfile.role === 'contractor' ? user.id : userProfile.contractorId;
-
+    const user = await authUser(c);
+    if (!user) return c.json({ error: 'Unauthorized' }, 401);
+    const contractorId = await getContractorId(user.id);
     const body = await c.req.json();
-    
-    // Check if email already exists
-    const existingUsers = await kv.getByPrefix(`user:`);
-    const emailExists = existingUsers.some((u: any) => u.email === body.email);
-    if (emailExists) {
-      return c.json({ error: 'Email already exists' }, 400);
-    }
-
-    // Create user in Supabase Auth for foreman
-    const { data: authData, error: authError } = await supabase.auth.admin.createUser({
-      email: body.email,
-      password: body.password,
-      email_confirm: true,
-      user_metadata: { name: body.name, role: 'foreman' },
-    });
-
-    if (authError) {
-      console.error('Supabase auth error:', authError);
-      return c.json({ error: authError.message }, 400);
-    }
-
-    const foremanId = authData.user.id;
-    
-    const foreman = {
-      id: foremanId,
-      contractorId,
-      name: body.name,
-      phone: body.phone,
-      email: body.email,
-      role: 'foreman',
-      siteId: body.siteId || null,
-      createdAt: new Date().toISOString(),
-    };
-
-    await kv.set(`user:${foremanId}`, foreman);
-
+    const existing = await db.getProfileByEmail(body.email);
+    if (existing) return c.json({ error: 'Email already exists' }, 400);
+    const { data: authData, error: authError } = await db.supabase.auth.admin.createUser({ email: body.email, password: body.password, email_confirm: true, user_metadata: { name: body.name, role: 'foreman' } });
+    if (authError) return c.json({ error: authError.message }, 400);
+    const foreman = { id: authData.user.id, contractorId, name: body.name, phone: body.phone, email: body.email, role: 'foreman', siteId: body.siteId || null, createdAt: new Date().toISOString() };
+    await db.upsertProfile(foreman);
     return c.json({ success: true, foreman });
-  } catch (error: any) {
-    console.error('Foreman creation error:', error);
-    return c.json({ error: error.message }, 500);
-  }
+  } catch (e: any) { return c.json({ error: e.message }, 500); }
 });
 
-// Get all foremen for contractor
 app.get("/make-server-689d7d60/foremen", async (c) => {
   try {
-    const accessToken = c.req.header('Authorization')?.split(' ')[1];
-    if (!accessToken) return c.json({ error: 'Unauthorized' }, 401);
-
-    const { data: { user }, error } = await supabase.auth.getUser(accessToken);
-    if (error || !user) return c.json({ error: 'Unauthorized' }, 401);
-
-    const userProfile = await getUserProfile(user.id, user.email!, user.user_metadata);
-    const contractorId = userProfile.role === 'contractor' ? user.id : userProfile.contractorId;
-
-    // Get all users and filter foremen
-    const users = await kv.getByPrefix(`user:`);
-    const foremen = users.filter((u: any) => u.role === 'foreman' && u.contractorId === contractorId);
-
-    // Get sites to add site names
-    const sites = await kv.getByPrefix(`site:`);
-    const foremenWithSites = foremen.map((foreman: any) => {
-      const site = sites.find((s: any) => s.id === foreman.siteId);
-      return {
-        ...foreman,
-        siteName: site ? site.name : null,
-      };
-    });
-
-    return c.json({ foremen: foremenWithSites });
-  } catch (error: any) {
-    console.error('Foremen fetch error:', error);
-    return c.json({ error: error.message }, 500);
-  }
+    const user = await authUser(c);
+    if (!user) return c.json({ error: 'Unauthorized' }, 401);
+    const contractorId = await getContractorId(user.id);
+    const foremen = await db.getForemenByContractor(contractorId!);
+    const sites = await db.getSitesByContractor(contractorId!);
+    const result = foremen.map((f: any) => { const site = sites.find((s: any) => s.id === f.siteId); return { ...f, siteName: site ? site.name : null }; });
+    return c.json({ foremen: result });
+  } catch (e: any) { return c.json({ error: e.message }, 500); }
 });
 
-// Update foreman
 app.put("/make-server-689d7d60/foremen/:id", async (c) => {
   try {
-    const accessToken = c.req.header('Authorization')?.split(' ')[1];
-    if (!accessToken) return c.json({ error: 'Unauthorized' }, 401);
-
-    const { data: { user }, error } = await supabase.auth.getUser(accessToken);
-    if (error || !user) return c.json({ error: 'Unauthorized' }, 401);
-
+    const user = await authUser(c);
+    if (!user) return c.json({ error: 'Unauthorized' }, 401);
     const foremanId = c.req.param('id');
     const body = await c.req.json();
-    
-    const foreman = await kv.get(`user:${foremanId}`);
+    const foreman = await db.getProfile(foremanId);
     if (!foreman) return c.json({ error: 'Foreman not found' }, 404);
-
-    // Update auth if password is provided
     if (body.password) {
-      const { error: updateError } = await supabase.auth.admin.updateUserById(
-        foremanId,
-        { password: body.password }
-      );
-      if (updateError) {
-        console.error('Password update error:', updateError);
-        return c.json({ error: 'Failed to update password' }, 400);
-      }
+      const { error } = await db.supabase.auth.admin.updateUserById(foremanId, { password: body.password });
+      if (error) return c.json({ error: 'Failed to update password' }, 400);
     }
-
-    const updatedForeman = { 
-      ...foreman, 
-      name: body.name || foreman.name,
-      phone: body.phone || foreman.phone,
-      siteId: body.siteId !== undefined ? body.siteId : foreman.siteId,
-      updatedAt: new Date().toISOString() 
-    };
-    await kv.set(`user:${foremanId}`, updatedForeman);
-
-    return c.json({ success: true, foreman: updatedForeman });
-  } catch (error: any) {
-    console.error('Foreman update error:', error);
-    return c.json({ error: error.message }, 500);
-  }
+    const updated = { ...foreman, name: body.name || foreman.name, phone: body.phone || foreman.phone, siteId: body.siteId !== undefined ? body.siteId : foreman.siteId, updatedAt: new Date().toISOString() };
+    await db.upsertProfile(updated);
+    return c.json({ success: true, foreman: updated });
+  } catch (e: any) { return c.json({ error: e.message }, 500); }
 });
 
-// Delete foreman
 app.delete("/make-server-689d7d60/foremen/:id", async (c) => {
   try {
-    const accessToken = c.req.header('Authorization')?.split(' ')[1];
-    if (!accessToken) return c.json({ error: 'Unauthorized' }, 401);
-
-    const { data: { user }, error } = await supabase.auth.getUser(accessToken);
-    if (error || !user) return c.json({ error: 'Unauthorized' }, 401);
-
+    const user = await authUser(c);
+    if (!user) return c.json({ error: 'Unauthorized' }, 401);
     const foremanId = c.req.param('id');
-    
-    const foreman = await kv.get(`user:${foremanId}`);
+    const foreman = await db.getProfile(foremanId);
     if (!foreman) return c.json({ error: 'Foreman not found' }, 404);
-
-    // Delete from Supabase Auth
-    const { error: deleteError } = await supabase.auth.admin.deleteUser(foremanId);
-    if (deleteError) {
-      console.error('Auth delete error:', deleteError);
-    }
-
-    // Delete from KV store
-    await kv.del(`user:${foremanId}`);
-
+    await db.supabase.auth.admin.deleteUser(foremanId);
+    await db.deleteProfile(foremanId);
     return c.json({ success: true });
-  } catch (error: any) {
-    console.error('Foreman deletion error:', error);
-    return c.json({ error: error.message }, 500);
-  }
+  } catch (e: any) { return c.json({ error: e.message }, 500); }
 });
 
-// ============================================
-// SITE ROUTES
-// ============================================
-
-// Create site
+// SITES
 app.post("/make-server-689d7d60/sites", async (c) => {
   try {
-    const accessToken = c.req.header('Authorization')?.split(' ')[1];
-    if (!accessToken) return c.json({ error: 'Unauthorized' }, 401);
-
-    const { data: { user }, error } = await supabase.auth.getUser(accessToken);
-    if (error || !user) return c.json({ error: 'Unauthorized' }, 401);
-
-    const userProfile = await getUserProfile(user.id, user.email!, user.user_metadata);
-    const contractorId = userProfile.role === 'contractor' ? user.id : userProfile.contractorId;
-
+    const user = await authUser(c);
+    if (!user) return c.json({ error: 'Unauthorized' }, 401);
+    const contractorId = await getContractorId(user.id);
     const body = await c.req.json();
-    const siteId = crypto.randomUUID();
-    
-    const site = {
-      id: siteId,
-      contractorId,
-      name: body.name,
-      address: body.address,
-      startDate: body.startDate,
-      endDate: body.endDate || null,
-      foremanId: body.foremanId || null,
-      geoFence: body.geoFence || null,
-      status: 'active',
-      createdAt: new Date().toISOString(),
-    };
-
-    await kv.set(`site:${siteId}`, site);
-    await addToList(`contractor:${contractorId}:sites`, siteId);
-
+    const site = { id: crypto.randomUUID(), contractorId, name: body.name, address: body.address, startDate: body.startDate, endDate: body.endDate || null, foremanId: body.foremanId || null, geoFence: body.geoFence || null, status: 'active', createdAt: new Date().toISOString() };
+    await db.insertSite(site);
     return c.json({ success: true, site });
-  } catch (error: any) {
-    console.error('Site creation error:', error);
-    return c.json({ error: error.message }, 500);
-  }
+  } catch (e: any) { return c.json({ error: e.message }, 500); }
 });
 
-// Get all sites for contractor
 app.get("/make-server-689d7d60/sites", async (c) => {
   try {
-    const accessToken = c.req.header('Authorization')?.split(' ')[1];
-    if (!accessToken) return c.json({ error: 'Unauthorized' }, 401);
-
-    const { data: { user }, error } = await supabase.auth.getUser(accessToken);
-    if (error || !user) return c.json({ error: 'Unauthorized' }, 401);
-
-    const userProfile = await getUserProfile(user.id, user.email!, user.user_metadata);
-    const contractorId = userProfile.role === 'contractor' ? user.id : userProfile.contractorId;
-
-    const sites = await kv.getByPrefix(`site:`);
-    const contractorSites = sites.filter((s: any) => s.contractorId === contractorId);
-
-    return c.json({ sites: contractorSites });
-  } catch (error: any) {
-    console.error('Sites fetch error:', error);
-    return c.json({ error: error.message }, 500);
-  }
+    const user = await authUser(c);
+    if (!user) return c.json({ error: 'Unauthorized' }, 401);
+    const contractorId = await getContractorId(user.id);
+    const sites = await db.getSitesByContractor(contractorId!);
+    return c.json({ sites });
+  } catch (e: any) { return c.json({ error: e.message }, 500); }
 });
 
-// Update site
 app.put("/make-server-689d7d60/sites/:id", async (c) => {
   try {
-    const accessToken = c.req.header('Authorization')?.split(' ')[1];
-    if (!accessToken) return c.json({ error: 'Unauthorized' }, 401);
-
-    const { data: { user }, error } = await supabase.auth.getUser(accessToken);
-    if (error || !user) return c.json({ error: 'Unauthorized' }, 401);
-
+    const user = await authUser(c);
+    if (!user) return c.json({ error: 'Unauthorized' }, 401);
     const siteId = c.req.param('id');
     const body = await c.req.json();
-    
-    const site = await kv.get(`site:${siteId}`);
+    const site = await db.getSite(siteId);
     if (!site) return c.json({ error: 'Site not found' }, 404);
-
-    const updatedSite = { ...site, ...body, updatedAt: new Date().toISOString() };
-    await kv.set(`site:${siteId}`, updatedSite);
-
-    return c.json({ success: true, site: updatedSite });
-  } catch (error: any) {
-    console.error('Site update error:', error);
-    return c.json({ error: error.message }, 500);
-  }
+    const updated = { ...site, ...body, updatedAt: new Date().toISOString() };
+    await db.updateSite(siteId, updated);
+    return c.json({ success: true, site: updated });
+  } catch (e: any) { return c.json({ error: e.message }, 500); }
 });
 
-// Delete site
 app.delete("/make-server-689d7d60/sites/:id", async (c) => {
   try {
-    const accessToken = c.req.header('Authorization')?.split(' ')[1];
-    if (!accessToken) return c.json({ error: 'Unauthorized' }, 401);
-
-    const { data: { user }, error } = await supabase.auth.getUser(accessToken);
-    if (error || !user) return c.json({ error: 'Unauthorized' }, 401);
-
+    const user = await authUser(c);
+    if (!user) return c.json({ error: 'Unauthorized' }, 401);
     const siteId = c.req.param('id');
-    
-    const site = await kv.get(`site:${siteId}`);
+    const site = await db.getSite(siteId);
     if (!site) return c.json({ error: 'Site not found' }, 404);
-
-    // Delete the site
-    await kv.del(`site:${siteId}`);
-
+    await db.deleteSite(siteId);
     return c.json({ success: true });
-  } catch (error: any) {
-    console.error('Site deletion error:', error);
-    return c.json({ error: error.message }, 500);
-  }
+  } catch (e: any) { return c.json({ error: e.message }, 500); }
 });
 
-// ============================================
-// ATTENDANCE ROUTES
-// ============================================
-
-// Mark attendance
+// --- Part 2 will be appended: attendance, payroll, reports, dashboard, agreements ---
+// ATTENDANCE
 app.post("/make-server-689d7d60/attendance", async (c) => {
   try {
-    const accessToken = c.req.header('Authorization')?.split(' ')[1];
-    if (!accessToken) return c.json({ error: 'Unauthorized' }, 401);
-
-    const { data: { user }, error } = await supabase.auth.getUser(accessToken);
-    if (error || !user) return c.json({ error: 'Unauthorized' }, 401);
-
+    const user = await authUser(c);
+    if (!user) return c.json({ error: 'Unauthorized' }, 401);
     const body = await c.req.json();
-    
-    // Fetch worker details for wage calculation
-    const worker = await kv.get(`user:${body.workerId}`);
-    if (!worker) return c.json({ error: 'Worker not found' }, 404);
-
-    // Check if attendance record already exists for this worker+site+date
-    const allAttendance = await kv.getByPrefix(`attendance:`);
-    const existingRecord = allAttendance.find((a: any) => 
-      a.workerId === body.workerId && 
-      a.siteId === body.siteId && 
-      a.date === (body.date || new Date().toISOString().split('T')[0])
-    );
-
-    // Use existing ID or create new one
-    const attendanceId = existingRecord?.id || crypto.randomUUID();
-    
-    // Calculate work hours, overtime, and payment
-    let workHours = 0;
-    let regularHours = 0;
-    let overtimeHours = 0;
-    let breakHours = 0;
-    let netWorkHours = 0;
-    let status = body.status || 'present';
-    let dailyPayment = 0;
-    let overtimePayment = 0;
-    let totalPayment = 0;
-
-    // If check-in and check-out are provided, calculate automatically
-    if (body.checkIn && body.checkOut) {
-      const checkIn = new Date(`2000-01-01T${body.checkIn}`);
-      const checkOut = new Date(`2000-01-01T${body.checkOut}`);
-      
-      // Calculate total hours
-      workHours = (checkOut.getTime() - checkIn.getTime()) / (1000 * 60 * 60);
-      
-      // Calculate break hours if provided
-      if (body.breakStart && body.breakEnd) {
-        const breakStart = new Date(`2000-01-01T${body.breakStart}`);
-        const breakEnd = new Date(`2000-01-01T${body.breakEnd}`);
-        breakHours = (breakEnd.getTime() - breakStart.getTime()) / (1000 * 60 * 60);
-      }
-      
-      // Net work hours (excluding break)
-      netWorkHours = Math.max(0, workHours - breakHours);
-      
-      // Auto-detect status based on hours worked
-      if (netWorkHours >= 8) {
-        status = 'present'; // Full day
-        regularHours = 8;
-        overtimeHours = netWorkHours - 8;
-      } else if (netWorkHours >= 4) {
-        status = 'half-day'; // Half day (4-8 hours)
-        regularHours = netWorkHours;
-        overtimeHours = 0;
-      } else if (netWorkHours > 0) {
-        status = 'half-day'; // Less than 4 hours still counts as half day
-        regularHours = netWorkHours;
-        overtimeHours = 0;
-      } else {
-        status = 'absent';
-        regularHours = 0;
-        overtimeHours = 0;
-      }
-      
-      // Calculate payment
-      const hourlyRate = worker.dailyWage / 8; // Daily wage divided by 8 hours
-      const overtimeRate = hourlyRate; // Same rate for overtime (1x, not 1.5x)
-      
-      dailyPayment = regularHours * hourlyRate;
-      overtimePayment = overtimeHours * overtimeRate;
-      totalPayment = dailyPayment + overtimePayment;
-    } else {
-      // Manual status marking without times
-      if (status === 'present') {
-        regularHours = 8;
-        netWorkHours = 8;
-        dailyPayment = worker.dailyWage;
-        totalPayment = worker.dailyWage;
-      } else if (status === 'half-day') {
-        regularHours = 4;
-        netWorkHours = 4;
-        dailyPayment = worker.dailyWage * 0.5;
-        totalPayment = worker.dailyWage * 0.5;
-      } else {
-        // absent
-        regularHours = 0;
-        netWorkHours = 0;
-        dailyPayment = 0;
-        totalPayment = 0;
-      }
-    }
-    
-    const attendance = {
-      id: attendanceId,
-      workerId: body.workerId,
-      workerName: worker.name,
-      siteId: body.siteId,
-      date: body.date || new Date().toISOString().split('T')[0],
-      checkIn: body.checkIn || null,
-      checkOut: body.checkOut || null,
-      breakStart: body.breakStart || null,
-      breakEnd: body.breakEnd || null,
-      status: status,
-      totalHours: workHours,
-      breakHours: breakHours,
-      netWorkHours: netWorkHours,
-      regularHours: regularHours,
-      overtimeHours: overtimeHours,
-      dailyWage: worker.dailyWage,
-      hourlyRate: worker.dailyWage / 8,
-      overtimeRate: (worker.dailyWage / 8) * 1.5,
-      dailyPayment: dailyPayment,
-      overtimePayment: overtimePayment,
-      totalPayment: totalPayment,
-      geoLocation: body.geoLocation || null,
-      notes: body.notes || '',
-      markedBy: user.id,
-      createdAt: existingRecord?.createdAt || new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    };
-
-    await kv.set(`attendance:${attendanceId}`, attendance);
-    
-    // Only add to list if it's a new record
-    if (!existingRecord) {
-      await addToList(`worker:${body.workerId}:attendance`, attendanceId);
-    }
-
-    return c.json({ success: true, attendance });
-  } catch (error: any) {
-    console.error('Attendance marking error:', error);
-    return c.json({ error: error.message }, 500);
-  }
+    const existing = await db.findExistingAttendance(body.workerId, body.siteId, body.date);
+    if (existing) return c.json({ error: 'Attendance already marked for this date' }, 400);
+    const record = { id: crypto.randomUUID(), ...body, createdAt: new Date().toISOString() };
+    await db.upsertAttendance(record);
+    return c.json({ success: true, attendance: record });
+  } catch (e: any) { return c.json({ error: e.message }, 500); }
 });
 
-// Get attendance records
 app.get("/make-server-689d7d60/attendance", async (c) => {
   try {
-    const accessToken = c.req.header('Authorization')?.split(' ')[1];
-    if (!accessToken) return c.json({ error: 'Unauthorized' }, 401);
-
-    const { data: { user }, error } = await supabase.auth.getUser(accessToken);
-    if (error || !user) return c.json({ error: 'Unauthorized' }, 401);
-
+    const user = await authUser(c);
+    if (!user) return c.json({ error: 'Unauthorized' }, 401);
     const workerId = c.req.query('workerId');
     const siteId = c.req.query('siteId');
     const date = c.req.query('date');
-
-    const allAttendance = await kv.getByPrefix(`attendance:`);
-    let filtered = allAttendance;
-
-    if (workerId) filtered = filtered.filter((a: any) => a.workerId === workerId);
-    if (siteId) filtered = filtered.filter((a: any) => a.siteId === siteId);
-    if (date) filtered = filtered.filter((a: any) => a.date === date);
-
-    return c.json({ attendance: filtered });
-  } catch (error: any) {
-    console.error('Attendance fetch error:', error);
-    return c.json({ error: error.message }, 500);
-  }
+    const startDate = c.req.query('startDate');
+    const endDate = c.req.query('endDate');
+    const records = await db.queryAttendance({ workerId, siteId, date, startDate, endDate });
+    return c.json({ attendance: records });
+  } catch (e: any) { return c.json({ error: e.message }, 500); }
 });
 
-// Delete attendance record (for reverting)
+app.put("/make-server-689d7d60/attendance/:id", async (c) => {
+  try {
+    const user = await authUser(c);
+    if (!user) return c.json({ error: 'Unauthorized' }, 401);
+    const id = c.req.param('id');
+    const body = await c.req.json();
+    const existing = await db.getAttendanceById(id);
+    if (!existing) return c.json({ error: 'Not found' }, 404);
+    const updated = { ...existing, ...body, updatedAt: new Date().toISOString() };
+    await db.upsertAttendance(updated);
+    return c.json({ success: true, attendance: updated });
+  } catch (e: any) { return c.json({ error: e.message }, 500); }
+});
+
 app.delete("/make-server-689d7d60/attendance/:id", async (c) => {
   try {
-    const accessToken = c.req.header('Authorization')?.split(' ')[1];
-    if (!accessToken) return c.json({ error: 'Unauthorized' }, 401);
-
-    const { data: { user }, error } = await supabase.auth.getUser(accessToken);
-    if (error || !user) return c.json({ error: 'Unauthorized' }, 401);
-
-    const attendanceId = c.req.param('id');
-    
-    const attendance = await kv.get(`attendance:${attendanceId}`);
-    if (!attendance) return c.json({ error: 'Attendance record not found' }, 404);
-
-    // Delete the attendance record
-    await kv.del(`attendance:${attendanceId}`);
-
-    return c.json({ success: true, message: 'Attendance record deleted successfully' });
-  } catch (error: any) {
-    console.error('Attendance deletion error:', error);
-    return c.json({ error: error.message }, 500);
-  }
+    const user = await authUser(c);
+    if (!user) return c.json({ error: 'Unauthorized' }, 401);
+    await db.deleteAttendance(c.req.param('id'));
+    return c.json({ success: true });
+  } catch (e: any) { return c.json({ error: e.message }, 500); }
 });
 
-// Clear all attendance records (for testing/reset)
-app.delete("/make-server-689d7d60/attendance/clear/all", async (c) => {
-  try {
-    const accessToken = c.req.header('Authorization')?.split(' ')[1];
-    if (!accessToken) return c.json({ error: 'Unauthorized' }, 401);
-
-    const { data: { user }, error } = await supabase.auth.getUser(accessToken);
-    if (error || !user) return c.json({ error: 'Unauthorized' }, 401);
-
-    // Only contractors can clear all attendance
-    const userProfile = await kv.get(`user:${user.id}`);
-    if (userProfile.role !== 'contractor') {
-      return c.json({ error: 'Only contractors can clear all attendance records' }, 403);
-    }
-
-    // Get all attendance records
-    const allAttendance = await kv.getByPrefix(`attendance:`);
-    
-    // Delete each attendance record
-    let deletedCount = 0;
-    for (const attendance of allAttendance) {
-      await kv.del(`attendance:${attendance.id}`);
-      deletedCount++;
-    }
-
-    console.log(`Cleared ${deletedCount} attendance records by user ${user.id}`);
-    return c.json({ 
-      success: true, 
-      message: `Successfully cleared ${deletedCount} attendance records`,
-      deletedCount 
-    });
-  } catch (error: any) {
-    console.error('Clear all attendance error:', error);
-    return c.json({ error: error.message }, 500);
-  }
-});
-
-// Apply break hours to all workers on site for a specific date
-app.post("/make-server-689d7d60/attendance/apply-break", async (c) => {
-  try {
-    const accessToken = c.req.header('Authorization')?.split(' ')[1];
-    if (!accessToken) return c.json({ error: 'Unauthorized' }, 401);
-
-    const { data: { user }, error } = await supabase.auth.getUser(accessToken);
-    if (error || !user) return c.json({ error: 'Unauthorized' }, 401);
-
-    const { siteId, date, breakStart, breakEnd } = await c.req.json();
-
-    if (!siteId || !date || !breakStart || !breakEnd) {
-      return c.json({ error: 'siteId, date, breakStart, and breakEnd are required' }, 400);
-    }
-
-    // Get all attendance records for this site and date
-    const allAttendance = await kv.getByPrefix(`attendance:`);
-    const siteAttendance = allAttendance.filter((a: any) => 
-      a.siteId === siteId && a.date === date
-    );
-
-    let updatedCount = 0;
-
-    // Apply break to each attendance record
-    for (const attendance of siteAttendance) {
-      // Recalculate with new break times
-      if (attendance.checkIn && attendance.checkOut) {
-        const checkIn = new Date(`2000-01-01T${attendance.checkIn}`);
-        const checkOut = new Date(`2000-01-01T${attendance.checkOut}`);
-        const breakStartTime = new Date(`2000-01-01T${breakStart}`);
-        const breakEndTime = new Date(`2000-01-01T${breakEnd}`);
-        
-        const totalHours = (checkOut.getTime() - checkIn.getTime()) / (1000 * 60 * 60);
-        const breakHours = (breakEndTime.getTime() - breakStartTime.getTime()) / (1000 * 60 * 60);
-        const netWorkHours = Math.max(0, totalHours - breakHours);
-        
-        // Auto-detect status
-        let status = 'absent';
-        let regularHours = 0;
-        let overtimeHours = 0;
-        
-        if (netWorkHours >= 8) {
-          status = 'present';
-          regularHours = 8;
-          overtimeHours = netWorkHours - 8;
-        } else if (netWorkHours >= 4) {
-          status = 'half-day';
-          regularHours = netWorkHours;
-          overtimeHours = 0;
-        } else if (netWorkHours > 0) {
-          status = 'half-day';
-          regularHours = netWorkHours;
-          overtimeHours = 0;
-        }
-        
-        // Get worker for wage calculation
-        const worker = await kv.get(`user:${attendance.workerId}`);
-        const hourlyRate = worker.dailyWage / 8;
-        const dailyPayment = regularHours * hourlyRate;
-        const overtimePayment = overtimeHours * hourlyRate;
-        const totalPayment = dailyPayment + overtimePayment;
-        
-        // Update attendance record
-        const updatedAttendance = {
-          ...attendance,
-          breakStart,
-          breakEnd,
-          breakHours,
-          totalHours,
-          netWorkHours,
-          regularHours,
-          overtimeHours,
-          status,
-          dailyPayment,
-          overtimePayment,
-          totalPayment,
-          updatedAt: new Date().toISOString(),
-          updatedBy: user.id,
-        };
-        
-        await kv.set(`attendance:${attendance.id}`, updatedAttendance);
-        updatedCount++;
-      }
-    }
-
-    return c.json({ 
-      success: true, 
-      message: `Break hours applied to ${updatedCount} attendance records`,
-      updatedCount 
-    });
-  } catch (error: any) {
-    console.error('Apply break hours error:', error);
-    return c.json({ error: error.message }, 500);
-  }
-});
-
-// ============================================
-// BULK ATTENDANCE ROUTE
-// ============================================
-
-// Create bulk attendance
-app.post("/make-server-689d7d60/attendance/bulk", async (c) => {
-  try {
-    const accessToken = c.req.header('Authorization')?.split(' ')[1];
-    if (!accessToken) return c.json({ error: 'Unauthorized' }, 401);
-
-    const { data: { user }, error } = await supabase.auth.getUser(accessToken);
-    if (error || !user) return c.json({ error: 'Unauthorized' }, 401);
-
-    const { records } = await c.req.json();
-
-    if (!records || !Array.isArray(records)) {
-      return c.json({ error: 'Records array is required' }, 400);
-    }
-
-    const savedRecords = [];
-    for (const record of records) {
-      const attendanceId = crypto.randomUUID();
-      const attendance = {
-        id: attendanceId,
-        workerId: record.workerId,
-        date: record.date,
-        status: record.status,
-        checkIn: record.checkIn || null,
-        checkOut: record.checkOut || null,
-        createdBy: user.id,
-        createdAt: new Date().toISOString(),
-      };
-
-      await kv.set(`attendance:${attendanceId}`, attendance);
-      await addToList(`worker:${record.workerId}:attendance`, attendanceId);
-      savedRecords.push(attendance);
-    }
-
-    return c.json({ success: true, count: savedRecords.length });
-  } catch (error: any) {
-    console.error('Bulk attendance creation error:', error);
-    return c.json({ error: error.message }, 500);
-  }
-});
-
-// ============================================
-// REPORTS ROUTE
-// ============================================
-
-// Get reports
-app.get("/make-server-689d7d60/reports", async (c) => {
-  try {
-    const accessToken = c.req.header('Authorization')?.split(' ')[1];
-    if (!accessToken) return c.json({ error: 'Unauthorized' }, 401);
-
-    const { data: { user }, error } = await supabase.auth.getUser(accessToken);
-    if (error || !user) return c.json({ error: 'Unauthorized' }, 401);
-
-    const type = c.req.query('type') || 'summary';
-    const startDate = c.req.query('startDate');
-    const endDate = c.req.query('endDate');
-
-    // Fetch all attendance records
-    const allAttendance = await kv.getByPrefix('attendance:');
-    const filteredAttendance = allAttendance.filter((a: any) => {
-      if (startDate && a.date < startDate) return false;
-      if (endDate && a.date > endDate) return false;
-      return true;
-    });
-
-    // Calculate attendance stats
-    const presentDays = filteredAttendance.filter((a: any) => a.status === 'present').length;
-    const absentDays = filteredAttendance.filter((a: any) => a.status === 'absent').length;
-    const halfDays = filteredAttendance.filter((a: any) => a.status === 'half-day').length;
-    const totalDays = filteredAttendance.length;
-    const attendanceRate = totalDays > 0 ? Math.round((presentDays / totalDays) * 100) : 0;
-
-    // Fetch payroll records
-    const allPayroll = await kv.getByPrefix('payroll:');
-    const filteredPayroll = allPayroll.filter((p: any) => {
-      if (startDate && p.startDate < startDate) return false;
-      if (endDate && p.endDate > endDate) return false;
-      return true;
-    });
-    const totalPaid = filteredPayroll.reduce((sum: number, p: any) => sum + (p.totalNet || 0), 0);
-
-    // Fetch advances
-    const allAdvances = await kv.getByPrefix('advance:');
-    const totalAdvances = allAdvances.reduce((sum: number, a: any) => sum + (a.amount || 0), 0);
-    const pendingAdvances = allAdvances
-      .filter((a: any) => a.status === 'pending')
-      .reduce((sum: number, a: any) => sum + (a.amount || 0), 0);
-
-    // Fetch workers
-    const allUsers = await kv.getByPrefix('user:');
-    const workers = allUsers.filter((u: any) => u.role === 'labour');
-    const totalWorkers = workers.length;
-    const activeWorkers = workers.filter((w: any) => !w.inactive).length;
-
-    // Fetch sites
-    const allSites = await kv.getByPrefix('site:');
-    const totalSites = allSites.length;
-    const activeSites = allSites.filter((s: any) => s.status === 'active').length;
-
-    // Calculate worker-wise detailed report
-    const workerDetails = workers.map((worker: any) => {
-      const workerAttendance = filteredAttendance.filter((a: any) => a.workerId === worker.id);
-      const workerPayroll = filteredPayroll.filter((p: any) => p.workerId === worker.id);
-      const workerAdvances = allAdvances.filter((a: any) => a.workerId === worker.id);
-
-      const presentCount = workerAttendance.filter((a: any) => a.status === 'present').length;
-      const halfDayCount = workerAttendance.filter((a: any) => a.status === 'half-day').length;
-      const absentCount = workerAttendance.filter((a: any) => a.status === 'absent').length;
-      
-      const totalRegularHours = workerAttendance.reduce((sum: number, a: any) => sum + (a.regularHours || 0), 0);
-      const totalOvertimeHours = workerAttendance.reduce((sum: number, a: any) => sum + (a.overtimeHours || 0), 0);
-      const totalBreakHours = workerAttendance.reduce((sum: number, a: any) => sum + (a.breakHours || 0), 0);
-      
-      const totalGrossPayment = workerAttendance.reduce((sum: number, a: any) => sum + (a.totalPayment || 0), 0);
-      const totalDailyPayment = workerAttendance.reduce((sum: number, a: any) => sum + (a.dailyPayment || 0), 0);
-      const totalOvertimePayment = workerAttendance.reduce((sum: number, a: any) => sum + (a.overtimePayment || 0), 0);
-      
-      const totalAdvancesAmount = workerAdvances.reduce((sum: number, a: any) => sum + (a.amount || 0), 0);
-      const pendingAdvancesAmount = workerAdvances
-        .filter((a: any) => a.status === 'pending')
-        .reduce((sum: number, a: any) => sum + (a.amount || 0), 0);
-      
-      const totalMessCharges = workerAttendance.reduce((sum: number, a: any) => {
-        // Calculate mess charges only for present and half-day
-        if (a.status === 'present' || a.status === 'half-day') {
-          return sum + (worker.messCharge || 0);
-        }
-        return sum;
-      }, 0);
-
-      const totalPayrollPaid = workerPayroll.reduce((sum: number, p: any) => sum + (p.totalNet || 0), 0);
-      
-      const netPayment = totalGrossPayment - totalMessCharges - pendingAdvancesAmount;
-
-      return {
-        workerId: worker.id,
-        workerName: worker.name,
-        workerPhone: worker.phone,
-        dailyWage: worker.dailyWage || 0,
-        messCharge: worker.messCharge || 0,
-        presentDays: presentCount,
-        halfDays: halfDayCount,
-        absentDays: absentCount,
-        totalAttendanceDays: workerAttendance.length,
-        totalRegularHours: totalRegularHours.toFixed(2),
-        totalOvertimeHours: totalOvertimeHours.toFixed(2),
-        totalBreakHours: totalBreakHours.toFixed(2),
-        totalDailyPayment: totalDailyPayment.toFixed(2),
-        totalOvertimePayment: totalOvertimePayment.toFixed(2),
-        totalGrossPayment: totalGrossPayment.toFixed(2),
-        totalMessCharges: totalMessCharges.toFixed(2),
-        totalAdvances: totalAdvancesAmount.toFixed(2),
-        pendingAdvances: pendingAdvancesAmount.toFixed(2),
-        netPayment: netPayment.toFixed(2),
-        totalPayrollPaid: totalPayrollPaid.toFixed(2),
-        attendanceDetails: workerAttendance.map((a: any) => ({
-          date: a.date,
-          status: a.status,
-          checkIn: a.checkIn,
-          checkOut: a.checkOut,
-          regularHours: a.regularHours || 0,
-          overtimeHours: a.overtimeHours || 0,
-          breakHours: a.breakHours || 0,
-          dailyPayment: a.dailyPayment || 0,
-          overtimePayment: a.overtimePayment || 0,
-          totalPayment: a.totalPayment || 0,
-          messCharge: (a.status === 'present' || a.status === 'half-day') ? (worker.messCharge || 0) : 0,
-        }))
-      };
-    });
-
-    return c.json({
-      attendanceReport: {
-        totalDays,
-        presentDays,
-        absentDays,
-        halfDays,
-        attendanceRate,
-      },
-      payrollReport: {
-        totalPaid,
-        totalAdvances,
-        pendingAdvances,
-        netPayments: totalPaid - pendingAdvances,
-        totalMessCharges: workerDetails.reduce((sum: number, w: any) => sum + parseFloat(w.totalMessCharges), 0),
-      },
-      workerStats: {
-        totalWorkers,
-        activeWorkers,
-        inactiveWorkers: totalWorkers - activeWorkers,
-      },
-      siteStats: {
-        totalSites,
-        activeSites,
-      },
-      workerDetails,
-      rawAttendance: filteredAttendance,
-      rawPayroll: filteredPayroll,
-    });
-  } catch (error: any) {
-    console.error('Reports generation error:', error);
-    return c.json({ error: error.message }, 500);
-  }
-});
-
-// ============================================
-// ADVANCE ROUTES
-// ============================================
-
-// Create advance
-app.post("/make-server-689d7d60/advances", async (c) => {
-  try {
-    const accessToken = c.req.header('Authorization')?.split(' ')[1];
-    if (!accessToken) return c.json({ error: 'Unauthorized' }, 401);
-
-    const { data: { user }, error } = await supabase.auth.getUser(accessToken);
-    if (error || !user) return c.json({ error: 'Unauthorized' }, 401);
-
-    const body = await c.req.json();
-    const advanceId = crypto.randomUUID();
-    
-    const advance = {
-      id: advanceId,
-      workerId: body.workerId,
-      amount: body.amount,
-      date: body.date || new Date().toISOString().split('T')[0],
-      reason: body.reason || '',
-      status: 'pending', // pending, deducted, cancelled
-      givenBy: user.id,
-      createdAt: new Date().toISOString(),
-    };
-
-    await kv.set(`advance:${advanceId}`, advance);
-    await addToList(`worker:${body.workerId}:advances`, advanceId);
-
-    return c.json({ success: true, advance });
-  } catch (error: any) {
-    console.error('Advance creation error:', error);
-    return c.json({ error: error.message }, 500);
-  }
-});
-
-// Get advances
-app.get("/make-server-689d7d60/advances", async (c) => {
-  try {
-    const accessToken = c.req.header('Authorization')?.split(' ')[1];
-    if (!accessToken) return c.json({ error: 'Unauthorized' }, 401);
-
-    const workerId = c.req.query('workerId');
-    const status = c.req.query('status');
-
-    const allAdvances = await kv.getByPrefix(`advance:`);
-    let filtered = allAdvances;
-
-    if (workerId) filtered = filtered.filter((a: any) => a.workerId === workerId);
-    if (status) filtered = filtered.filter((a: any) => a.status === status);
-
-    return c.json({ advances: filtered });
-  } catch (error: any) {
-    console.error('Advances fetch error:', error);
-    return c.json({ error: error.message }, 500);
-  }
-});
-
-// ============================================
-// PAYROLL ROUTES
-// ============================================
-
-// Calculate payroll
-app.post("/make-server-689d7d60/payroll/calculate", async (c) => {
-  try {
-    const accessToken = c.req.header('Authorization')?.split(' ')[1];
-    if (!accessToken) return c.json({ error: 'Unauthorized' }, 401);
-
-    const { data: { user }, error } = await supabase.auth.getUser(accessToken);
-    if (error || !user) return c.json({ error: 'Unauthorized' }, 401);
-
-    const { siteId, startDate, endDate, workerIds } = await c.req.json();
-
-    // Fetch attendance for date range
-    const allAttendance = await kv.getByPrefix(`attendance:`);
-    const relevantAttendance = allAttendance.filter((a: any) => 
-      a.siteId === siteId && 
-      a.date >= startDate && 
-      a.date <= endDate &&
-      (!workerIds || workerIds.includes(a.workerId))
-    );
-
-    // Group by worker
-    const workerAttendance = relevantAttendance.reduce((acc: any, a: any) => {
-      if (!acc[a.workerId]) acc[a.workerId] = [];
-      acc[a.workerId].push(a);
-      return acc;
-    }, {});
-
-    const payrollItems = [];
-
-    for (const workerId in workerAttendance) {
-      const worker = await kv.get(`user:${workerId}`);
-      const attendance = workerAttendance[workerId];
-      
-      // Calculate days worked
-      let daysWorked = 0;
-      let totalHours = 0;
-      let overtimeHours = 0;
-
-      attendance.forEach((a: any) => {
-        if (a.status === 'present') daysWorked += 1;
-        else if (a.status === 'half-day') daysWorked += 0.5;
-        
-        totalHours += a.workHours || 0;
-        overtimeHours += a.overtime || 0;
-      });
-
-      // Fetch production records
-      const allProduction = await kv.getByPrefix(`production:`);
-      const workerProduction = allProduction.filter((p: any) => 
-        p.workerId === workerId && 
-        p.date >= startDate && 
-        p.date <= endDate
-      );
-
-      const pieceRateEarnings = workerProduction.reduce((sum: number, p: any) => 
-        sum + (p.units * p.ratePerUnit), 0
-      );
-
-      // Fetch pending advances
-      const allAdvances = await kv.getByPrefix(`advance:`);
-      const pendingAdvances = allAdvances.filter((a: any) => 
-        a.workerId === workerId && a.status === 'pending'
-      );
-
-      const totalAdvances = pendingAdvances.reduce((sum: number, a: any) => sum + a.amount, 0);
-
-      // Calculate pay
-      const dailyWageAmount = daysWorked * worker.dailyWage;
-      const overtimePay = overtimeHours * (worker.dailyWage / 8) * 1.5; // 1.5x for overtime
-      const grossPay = dailyWageAmount + overtimePay + pieceRateEarnings;
-      const netPay = grossPay - totalAdvances;
-
-      payrollItems.push({
-        workerId,
-        workerName: worker.name,
-        daysWorked,
-        totalHours,
-        overtimeHours,
-        dailyWage: worker.dailyWage,
-        dailyWageAmount,
-        overtimePay,
-        pieceRateEarnings,
-        grossPay,
-        advances: totalAdvances,
-        netPay,
-        pendingAdvances: pendingAdvances.map((a: any) => a.id),
-      });
-    }
-
-    return c.json({ payrollItems });
-  } catch (error: any) {
-    console.error('Payroll calculation error:', error);
-    return c.json({ error: error.message }, 500);
-  }
-});
-
-// Create payroll
+// PAYROLL
 app.post("/make-server-689d7d60/payroll", async (c) => {
   try {
-    const accessToken = c.req.header('Authorization')?.split(' ')[1];
-    if (!accessToken) return c.json({ error: 'Unauthorized' }, 401);
-
-    const { data: { user }, error } = await supabase.auth.getUser(accessToken);
-    if (error || !user) return c.json({ error: 'Unauthorized' }, 401);
-
+    const user = await authUser(c);
+    if (!user) return c.json({ error: 'Unauthorized' }, 401);
     const body = await c.req.json();
-    const payrollId = crypto.randomUUID();
-    
-    const payroll = {
-      id: payrollId,
-      siteId: body.siteId,
-      startDate: body.startDate,
-      endDate: body.endDate,
-      items: body.items || [],
-      totalGross: body.items.reduce((sum: number, i: any) => sum + i.grossPay, 0),
-      totalNet: body.items.reduce((sum: number, i: any) => sum + i.netPay, 0),
-      status: 'paid', // Contractor has full control, no approval needed
-      createdBy: user.id,
-      createdAt: new Date().toISOString(),
-    };
-
-    await kv.set(`payroll:${payrollId}`, payroll);
-
-    // Mark advances as deducted
-    for (const item of body.items) {
-      if (item.pendingAdvances) {
-        for (const advanceId of item.pendingAdvances) {
-          const advance = await kv.get(`advance:${advanceId}`);
-          await kv.set(`advance:${advanceId}`, { ...advance, status: 'deducted', deductedAt: new Date().toISOString() });
-        }
-      }
-    }
-
-    return c.json({ success: true, payroll });
-  } catch (error: any) {
-    console.error('Payroll creation error:', error);
-    return c.json({ error: error.message }, 500);
-  }
+    const record = { id: crypto.randomUUID(), ...body, createdBy: user.id, createdAt: new Date().toISOString() };
+    await db.insertPayroll(record);
+    return c.json({ success: true, payroll: record });
+  } catch (e: any) { return c.json({ error: e.message }, 500); }
 });
 
-// Get payroll records
 app.get("/make-server-689d7d60/payroll", async (c) => {
   try {
-    const accessToken = c.req.header('Authorization')?.split(' ')[1];
-    if (!accessToken) return c.json({ error: 'Unauthorized' }, 401);
-
-    const { data: { user }, error } = await supabase.auth.getUser(accessToken);
-    if (error || !user) return c.json({ error: 'Unauthorized' }, 401);
-
-    const userProfile = await getUserProfile(user.id, user.email!, user.user_metadata);
-    const contractorId = userProfile.role === 'contractor' ? user.id : userProfile.contractorId;
-
-    // Get query parameters
-    const startDate = c.req.query('startDate');
-    const endDate = c.req.query('endDate');
-
-    // Fetch all payroll records
-    const allPayroll = await kv.getByPrefix('payroll:');
-
-    // Filter by contractor and date range
-    let filteredPayroll = allPayroll.filter((p: any) => {
-      // Only show payrolls created by this contractor
-      if (p.createdBy !== contractorId) return false;
-      
-      // Filter by date range if provided
-      if (startDate && p.startDate < startDate) return false;
-      if (endDate && p.endDate > endDate) return false;
-      
-      return true;
-    });
-
-    // Transform payroll records into PayrollEntry format
-    const payrollEntries: any[] = [];
-    
-    for (const payroll of filteredPayroll) {
-      if (!payroll.items || !Array.isArray(payroll.items)) continue;
-      
-      for (const item of payroll.items) {
-        // Get worker details
-        const worker = await kv.get(`user:${item.workerId}`);
-        if (!worker) continue;
-
-        // Format period string
-        const period = `${payroll.startDate} to ${payroll.endDate}`;
-
-        payrollEntries.push({
-          id: `${payroll.id}-${item.workerId}`,
-          workerId: item.workerId,
-          workerName: item.workerName || worker.name,
-          period: period,
-          daysWorked: item.daysWorked || 0,
-          dailyWage: item.dailyWage || 0,
-          totalWage: item.dailyWageAmount || item.grossPay || 0,
-          advances: item.advances || 0,
-          deductions: 0, // Not tracked separately, included in advances
-          netPay: item.netPay || 0,
-          status: payroll.status || 'paid',
-        });
-      }
-    }
-
-    return c.json({ payroll: payrollEntries });
-  } catch (error: any) {
-    console.error('Payroll fetch error:', error);
-    return c.json({ error: error.message }, 500);
-  }
+    const user = await authUser(c);
+    if (!user) return c.json({ error: 'Unauthorized' }, 401);
+    const records = await db.queryPayroll({ createdBy: user.id });
+    return c.json({ payroll: records });
+  } catch (e: any) { return c.json({ error: e.message }, 500); }
 });
 
-// Process payroll (calculate and create payroll records for all sites/workers)
-app.post("/make-server-689d7d60/payroll/process", async (c) => {
+app.get("/make-server-689d7d60/payroll/:id", async (c) => {
   try {
-    const accessToken = c.req.header('Authorization')?.split(' ')[1];
-    if (!accessToken) return c.json({ error: 'Unauthorized' }, 401);
-
-    const { data: { user }, error } = await supabase.auth.getUser(accessToken);
-    if (error || !user) return c.json({ error: 'Unauthorized' }, 401);
-
-    const userProfile = await getUserProfile(user.id, user.email!, user.user_metadata);
-    const contractorId = userProfile.role === 'contractor' ? user.id : userProfile.contractorId;
-
-    const { startDate, endDate } = await c.req.json();
-
-    // Get all sites for this contractor
-    const allSites = await kv.getByPrefix('site:');
-    const contractorSites = allSites.filter((s: any) => s.contractorId === contractorId);
-
-    if (contractorSites.length === 0) {
-      return c.json({ error: 'No sites found for this contractor' }, 404);
-    }
-
-    // Get all workers for these sites
-    const allWorkers = await kv.getByPrefix('user:');
-    const siteIds = contractorSites.map((s: any) => s.id);
-    const relevantWorkers = allWorkers.filter((w: any) => 
-      w.role === 'labour' && 
-      w.contractorId === contractorId &&
-      w.siteId && siteIds.includes(w.siteId)
-    );
-
-    if (relevantWorkers.length === 0) {
-      return c.json({ error: 'No workers found for this contractor' }, 404);
-    }
-
-    // Fetch attendance for date range
-    const allAttendance = await kv.getByPrefix(`attendance:`);
-    const relevantAttendance = allAttendance.filter((a: any) => 
-      siteIds.includes(a.siteId) && 
-      a.date >= startDate && 
-      a.date <= endDate
-    );
-
-    // Group by worker
-    const workerAttendance = relevantAttendance.reduce((acc: any, a: any) => {
-      if (!acc[a.workerId]) acc[a.workerId] = [];
-      acc[a.workerId].push(a);
-      return acc;
-    }, {});
-
-    const payrollItems = [];
-
-    for (const worker of relevantWorkers) {
-      const attendance = workerAttendance[worker.id] || [];
-      
-      // Calculate days worked
-      let daysWorked = 0;
-      let totalHours = 0;
-      let overtimeHours = 0;
-
-      attendance.forEach((a: any) => {
-        if (a.status === 'present') daysWorked += 1;
-        else if (a.status === 'half-day') daysWorked += 0.5;
-        
-        totalHours += a.workHours || 0;
-        overtimeHours += a.overtime || 0;
-      });
-
-      // Fetch production records
-      const allProduction = await kv.getByPrefix(`production:`);
-      const workerProduction = allProduction.filter((p: any) => 
-        p.workerId === worker.id && 
-        p.date >= startDate && 
-        p.date <= endDate
-      );
-
-      const pieceRateEarnings = workerProduction.reduce((sum: number, p: any) => 
-        sum + (p.units * p.ratePerUnit), 0
-      );
-
-      // Fetch pending advances
-      const allAdvances = await kv.getByPrefix(`advance:`);
-      const pendingAdvances = allAdvances.filter((a: any) => 
-        a.workerId === worker.id && a.status === 'pending'
-      );
-
-      const totalAdvances = pendingAdvances.reduce((sum: number, a: any) => sum + a.amount, 0);
-
-      // Calculate pay
-      const dailyWageAmount = daysWorked * worker.dailyWage;
-      const overtimePay = overtimeHours * (worker.dailyWage / 8) * 1.5; // 1.5x for overtime
-      const grossPay = dailyWageAmount + overtimePay + pieceRateEarnings;
-      const netPay = grossPay - totalAdvances;
-
-      payrollItems.push({
-        workerId: worker.id,
-        workerName: worker.name,
-        daysWorked,
-        totalHours,
-        overtimeHours,
-        dailyWage: worker.dailyWage,
-        dailyWageAmount,
-        overtimePay,
-        pieceRateEarnings,
-        grossPay,
-        advances: totalAdvances,
-        netPay,
-        pendingAdvances: pendingAdvances.map((a: any) => a.id),
-      });
-    }
-
-    // Create payroll records grouped by site
-    const payrollBySite: any = {};
-    
-    for (const item of payrollItems) {
-      const worker = await kv.get(`user:${item.workerId}`);
-      if (!worker || !worker.siteId) continue;
-      
-      if (!payrollBySite[worker.siteId]) {
-        payrollBySite[worker.siteId] = [];
-      }
-      payrollBySite[worker.siteId].push(item);
-    }
-
-    const createdPayrolls = [];
-    
-    for (const siteId in payrollBySite) {
-      const siteItems = payrollBySite[siteId];
-      const payrollId = crypto.randomUUID();
-      
-      const payroll = {
-        id: payrollId,
-        siteId: siteId,
-        startDate: startDate,
-        endDate: endDate,
-        items: siteItems,
-        totalGross: siteItems.reduce((sum: number, i: any) => sum + i.grossPay, 0),
-        totalNet: siteItems.reduce((sum: number, i: any) => sum + i.netPay, 0),
-        status: 'pending',
-        createdBy: contractorId,
-        createdAt: new Date().toISOString(),
-      };
-
-      await kv.set(`payroll:${payrollId}`, payroll);
-
-      // Mark advances as deducted
-      for (const item of siteItems) {
-        if (item.pendingAdvances) {
-          for (const advanceId of item.pendingAdvances) {
-            const advance = await kv.get(`advance:${advanceId}`);
-            if (advance) {
-              await kv.set(`advance:${advanceId}`, { ...advance, status: 'deducted', deductedAt: new Date().toISOString() });
-            }
-          }
-        }
-      }
-
-      createdPayrolls.push(payroll);
-    }
-
-    return c.json({ success: true, payrolls: createdPayrolls });
-  } catch (error: any) {
-    console.error('Payroll process error:', error);
-    return c.json({ error: error.message }, 500);
-  }
+    const user = await authUser(c);
+    if (!user) return c.json({ error: 'Unauthorized' }, 401);
+    const record = await db.getPayrollById(c.req.param('id'));
+    return c.json({ payroll: record });
+  } catch (e: any) { return c.json({ error: e.message }, 500); }
 });
 
-// Mark payroll entry as paid
-app.post("/make-server-689d7d60/payroll/:entryId/mark-paid", async (c) => {
+app.put("/make-server-689d7d60/payroll/:id/status", async (c) => {
   try {
-    const accessToken = c.req.header('Authorization')?.split(' ')[1];
-    if (!accessToken) return c.json({ error: 'Unauthorized' }, 401);
-
-    const { data: { user }, error } = await supabase.auth.getUser(accessToken);
-    if (error || !user) return c.json({ error: 'Unauthorized' }, 401);
-
-    const userProfile = await getUserProfile(user.id, user.email!, user.user_metadata);
-    const contractorId = userProfile.role === 'contractor' ? user.id : userProfile.contractorId;
-
-    const entryId = c.req.param('entryId');
-    // entryId format: `${payroll.id}-${item.workerId}`
-    const [payrollId] = entryId.split('-');
-
-    // Fetch the payroll record
-    const payroll = await kv.get(`payroll:${payrollId}`);
-    if (!payroll) {
-      return c.json({ error: 'Payroll not found' }, 404);
-    }
-
-    // Verify ownership
-    if (payroll.createdBy !== contractorId) {
-      return c.json({ error: 'Unauthorized' }, 403);
-    }
-
-    // Update status to paid
-    payroll.status = 'paid';
-    await kv.set(`payroll:${payrollId}`, payroll);
-
-    return c.json({ success: true, payroll });
-  } catch (error: any) {
-    console.error('Mark paid error:', error);
-    return c.json({ error: error.message }, 500);
-  }
+    const user = await authUser(c);
+    if (!user) return c.json({ error: 'Unauthorized' }, 401);
+    const { status } = await c.req.json();
+    await db.updatePayrollStatus(c.req.param('id'), status);
+    return c.json({ success: true });
+  } catch (e: any) { return c.json({ error: e.message }, 500); }
 });
 
-// ============================================
-// PAYMENT ROUTES
-// ============================================
-
-// Create payment
-app.post("/make-server-689d7d60/payments", async (c) => {
+// ADVANCES
+app.post("/make-server-689d7d60/advances", async (c) => {
   try {
-    const accessToken = c.req.header('Authorization')?.split(' ')[1];
-    if (!accessToken) return c.json({ error: 'Unauthorized' }, 401);
-
-    const { data: { user }, error } = await supabase.auth.getUser(accessToken);
-    if (error || !user) return c.json({ error: 'Unauthorized' }, 401);
-
+    const user = await authUser(c);
+    if (!user) return c.json({ error: 'Unauthorized' }, 401);
     const body = await c.req.json();
-    const paymentId = crypto.randomUUID();
-    
-    const payment = {
-      id: paymentId,
-      workerId: body.workerId,
-      amount: body.amount,
-      paymentMethod: body.paymentMethod, // cash, bank, upi, cheque
-      transactionRef: body.transactionRef || '',
-      date: body.date || new Date().toISOString().split('T')[0],
-      payrollId: body.payrollId || null,
-      notes: body.notes || '',
-      status: 'completed',
-      createdBy: user.id,
-      createdAt: new Date().toISOString(),
-    };
-
-    await kv.set(`payment:${paymentId}`, payment);
-    await addToList(`worker:${body.workerId}:payments`, paymentId);
-
-    return c.json({ success: true, payment });
-  } catch (error: any) {
-    console.error('Payment creation error:', error);
-    return c.json({ error: error.message }, 500);
-  }
+    const record = { id: crypto.randomUUID(), ...body, givenBy: user.id, createdAt: new Date().toISOString() };
+    await db.insertAdvance(record);
+    return c.json({ success: true, advance: record });
+  } catch (e: any) { return c.json({ error: e.message }, 500); }
 });
 
-// ============================================
-// PRODUCTION ROUTES
-// ============================================
-
-// Record production
-app.post("/make-server-689d7d60/production", async (c) => {
+app.get("/make-server-689d7d60/advances", async (c) => {
   try {
-    const accessToken = c.req.header('Authorization')?.split(' ')[1];
-    if (!accessToken) return c.json({ error: 'Unauthorized' }, 401);
-
-    const { data: { user }, error } = await supabase.auth.getUser(accessToken);
-    if (error || !user) return c.json({ error: 'Unauthorized' }, 401);
-
-    const body = await c.req.json();
-    const productionId = crypto.randomUUID();
-    
-    const production = {
-      id: productionId,
-      workerId: body.workerId,
-      siteId: body.siteId,
-      taskType: body.taskType,
-      units: body.units,
-      ratePerUnit: body.ratePerUnit,
-      totalAmount: body.units * body.ratePerUnit,
-      date: body.date || new Date().toISOString().split('T')[0],
-      recordedBy: user.id,
-      createdAt: new Date().toISOString(),
-    };
-
-    await kv.set(`production:${productionId}`, production);
-    await addToList(`worker:${body.workerId}:production`, productionId);
-
-    return c.json({ success: true, production });
-  } catch (error: any) {
-    console.error('Production recording error:', error);
-    return c.json({ error: error.message }, 500);
-  }
+    const user = await authUser(c);
+    if (!user) return c.json({ error: 'Unauthorized' }, 401);
+    const workerId = c.req.query('workerId');
+    const status = c.req.query('status');
+    const records = await db.queryAdvances({ workerId, status });
+    return c.json({ advances: records });
+  } catch (e: any) { return c.json({ error: e.message }, 500); }
 });
 
-// ============================================
+app.put("/make-server-689d7d60/advances/:id/status", async (c) => {
+  try {
+    const user = await authUser(c);
+    if (!user) return c.json({ error: 'Unauthorized' }, 401);
+    const { status } = await c.req.json();
+    await db.updateAdvanceStatus(c.req.param('id'), status);
+    return c.json({ success: true });
+  } catch (e: any) { return c.json({ error: e.message }, 500); }
+});
+
+// AGREEMENTS
+app.get("/make-server-689d7d60/agreements", async (c) => {
+  try {
+    const user = await authUser(c);
+    if (!user) return c.json({ error: 'Unauthorized' }, 401);
+    const contractorId = await getContractorId(user.id);
+    const agreement = await db.getAgreement(contractorId!);
+    return c.json({ agreement });
+  } catch (e: any) { return c.json({ error: e.message }, 500); }
+});
+
+app.post("/make-server-689d7d60/agreements/accept", async (c) => {
+  try {
+    const user = await authUser(c);
+    if (!user) return c.json({ error: 'Unauthorized' }, 401);
+    const contractorId = await getContractorId(user.id);
+    const body = await c.req.json();
+    const record = { id: crypto.randomUUID(), ...body, workerId: user.id, contractorId, acceptedAt: new Date().toISOString() };
+    await db.insertAcceptance(record);
+    return c.json({ success: true, acceptance: record });
+  } catch (e: any) { return c.json({ error: e.message }, 500); }
+});
+
+app.get("/make-server-689d7d60/agreements/acceptances", async (c) => {
+  try {
+    const user = await authUser(c);
+    if (!user) return c.json({ error: 'Unauthorized' }, 401);
+    const contractorId = await getContractorId(user.id);
+    const acceptances = await db.getAcceptancesByContractor(contractorId!);
+    return c.json({ acceptances });
+  } catch (e: any) { return c.json({ error: e.message }, 500); }
+});
+
 // DASHBOARD STATS
-// ============================================
-
-// Get dashboard statistics
 app.get("/make-server-689d7d60/dashboard/stats", async (c) => {
   try {
-    const accessToken = c.req.header('Authorization')?.split(' ')[1];
-    if (!accessToken) return c.json({ error: 'Unauthorized' }, 401);
-
-    const { data: { user }, error } = await supabase.auth.getUser(accessToken);
-    if (error || !user) return c.json({ error: 'Unauthorized' }, 401);
-
-    const userProfile = await kv.get(`user:${user.id}`);
-    const contractorId = userProfile.role === 'contractor' ? user.id : userProfile.contractorId;
-
-    const workers = await kv.getByPrefix(`user:`);
-    const contractorWorkers = workers.filter((w: any) => w.contractorId === contractorId && w.role === 'labour');
-    
-    const sites = await kv.getByPrefix(`site:`);
-    const contractorSites = sites.filter((s: any) => s.contractorId === contractorId);
-    
-    const today = new Date().toISOString().split('T')[0];
-    const allAttendance = await kv.getByPrefix(`attendance:`);
-    const todayAttendance = allAttendance.filter((a: any) => a.date === today);
-
-    const activeSites = contractorSites.filter((s: any) => s.status === 'active').length;
-    const activeWorkers = contractorWorkers.filter((w: any) => w.status === 'active').length;
-    const presentToday = todayAttendance.filter((a: any) => a.status === 'present').length;
-
-    return c.json({ 
+    const user = await authUser(c);
+    if (!user) return c.json({ error: 'Unauthorized' }, 401);
+    const contractorId = await getContractorId(user.id);
+    const workers = await db.getWorkersByContractor(contractorId!);
+    const sites = await db.getSitesByContractor(contractorId!);
+    return c.json({
       stats: {
-        totalWorkers: contractorWorkers.length,
-        activeWorkers,
-        totalSites: contractorSites.length,
-        activeSites,
-        presentToday,
-        absentToday: activeWorkers - presentToday,
+        totalWorkers: workers.length,
+        activeSites: sites.filter((s:any) => s.status === 'active').length,
+        totalSites: sites.length
       }
     });
-  } catch (error: any) {
-    console.error('Dashboard stats error:', error);
-    return c.json({ error: error.message }, 500);
-  }
+  } catch (e: any) { return c.json({ error: e.message }, 500); }
 });
 
-// Get foreman dashboard stats
+// ADDITIONAL MISSING ROUTES
 app.get("/make-server-689d7d60/foreman/stats", async (c) => {
   try {
-    const accessToken = c.req.header('Authorization')?.split(' ')[1];
-    if (!accessToken) return c.json({ error: 'Unauthorized' }, 401);
-
-    const { data: { user }, error } = await supabase.auth.getUser(accessToken);
-    if (error || !user) return c.json({ error: 'Unauthorized' }, 401);
-
-    const userProfile = await getUserProfile(user.id, user.email!, user.user_metadata);
-    
-    // Verify user is a foreman
-    if (userProfile.role !== 'foreman') {
-      return c.json({ error: 'Access denied. Foreman role required.' }, 403);
+    const user = await authUser(c);
+    if (!user) return c.json({ error: 'Unauthorized' }, 401);
+    const { data: sites } = await db.supabase.from('sites').select('*').eq('foreman_id', user.id);
+    const assignedSites = sites?.length || 0;
+    const siteIds = sites?.map(s => s.id) || [];
+    let assignedWorkersCount = 0;
+    if (siteIds.length > 0) {
+      const { count } = await db.supabase.from('profiles').select('*', { count: 'exact', head: true }).eq('role', 'labour').in('site_id', siteIds);
+      assignedWorkersCount = count || 0;
     }
-
-    // Get sites assigned to this foreman
-    // Check both: sites where foremanId matches OR foreman's siteId property
-    const allSites = await kv.getByPrefix(`site:`);
-    const foremanSites = allSites.filter((s: any) => 
-      s.foremanId === user.id || (userProfile.siteId && s.id === userProfile.siteId)
-    );
-    const siteIds = foremanSites.map((s: any) => s.id);
-
-    // Get workers assigned to foreman's sites
-    const allWorkers = await kv.getByPrefix(`user:`);
-    const foremanWorkers = allWorkers.filter((w: any) => 
-      w.role === 'labour' && siteIds.includes(w.siteId)
-    );
-    
-    // Get today's attendance for foreman's workers
     const today = new Date().toISOString().split('T')[0];
-    const allAttendance = await kv.getByPrefix(`attendance:`);
-    const workerIds = foremanWorkers.map((w: any) => w.id);
-    const todayAttendance = allAttendance.filter((a: any) => 
-      a.date === today && workerIds.includes(a.workerId)
-    );
-
-    const presentToday = todayAttendance.filter((a: any) => a.status === 'present').length;
-    const absentToday = todayAttendance.filter((a: any) => a.status === 'absent').length;
-
-    return c.json({ 
-      stats: {
-        assignedWorkers: foremanWorkers.length,
-        assignedSites: foremanSites.length,
-        presentToday,
-        absentToday,
+    let presentToday = 0;
+    let absentToday = 0;
+    if (siteIds.length > 0) {
+      const { data: att } = await db.supabase.from('attendance').select('status').in('site_id', siteIds).eq('date', today);
+      if (att) {
+        presentToday = att.filter(a => a.status === 'present' || a.status === 'half-day').length;
+        absentToday = att.filter(a => a.status === 'absent').length;
       }
-    });
-  } catch (error: any) {
-    console.error('Foreman stats error:', error);
-    return c.json({ error: error.message }, 500);
-  }
+    }
+    return c.json({ stats: { assignedWorkers: assignedWorkersCount, assignedSites, presentToday, absentToday }});
+  } catch (e: any) { return c.json({ error: e.message }, 500); }
 });
 
-// Get worker dashboard stats
 app.get("/make-server-689d7d60/worker/stats", async (c) => {
   try {
-    const accessToken = c.req.header('Authorization')?.split(' ')[1];
-    if (!accessToken) return c.json({ error: 'Unauthorized' }, 401);
-
-    const { data: { user }, error } = await supabase.auth.getUser(accessToken);
-    if (error || !user) return c.json({ error: 'Unauthorized' }, 401);
-
-    const userProfile = await getUserProfile(user.id, user.email!, user.user_metadata);
-    
-    // Verify user is a worker
-    if (userProfile.role !== 'labour') {
-      return c.json({ error: 'Access denied. Worker role required.' }, 403);
-    }
-
-    // Get worker's attendance records
-    const allAttendance = await kv.getByPrefix(`attendance:`);
-    const workerAttendance = allAttendance.filter((a: any) => a.workerId === user.id);
-    
-    // Calculate stats
-    const presentDays = workerAttendance.filter((a: any) => a.status === 'present').length;
-    const absentDays = workerAttendance.filter((a: any) => a.status === 'absent').length;
-    const totalDaysWorked = presentDays + absentDays;
-    
-    // Calculate earnings (daily wage * present days)
-    const dailyWage = userProfile.dailyWage || 0;
-    const messCharge = userProfile.messCharge || 0;
-    const totalEarnings = presentDays * (dailyWage - messCharge);
-    
-    // Calculate this month's earnings
-    const today = new Date();
-    const currentMonth = today.getMonth();
-    const currentYear = today.getFullYear();
-    const thisMonthAttendance = workerAttendance.filter((a: any) => {
-      const date = new Date(a.date);
-      return date.getMonth() === currentMonth && date.getFullYear() === currentYear && a.status === 'present';
-    });
-    const thisMonthEarnings = thisMonthAttendance.length * (dailyWage - messCharge);
-    
-    // Get pending advances
-    const allAdvances = await kv.getByPrefix(`advance:`);
-    const workerAdvances = allAdvances.filter((a: any) => a.workerId === user.id && a.status === 'pending');
-    const pendingAdvances = workerAdvances.reduce((sum: number, a: any) => sum + (a.amount || 0), 0);
-
-    return c.json({ 
-      stats: {
-        totalDaysWorked,
-        presentDays,
-        absentDays,
-        totalEarnings,
-        thisMonthEarnings,
-        pendingAdvances,
-      }
-    });
-  } catch (error: any) {
-    console.error('Worker stats error:', error);
-    return c.json({ error: error.message }, 500);
-  }
+    const user = await authUser(c);
+    if (!user) return c.json({ error: 'Unauthorized' }, 401);
+    const { data: att } = await db.supabase.from('attendance').select('*').eq('worker_id', user.id);
+    const presentDays = att?.filter(a => a.status === 'present' || a.status === 'half-day').length || 0;
+    const absentDays = att?.filter(a => a.status === 'absent').length || 0;
+    const totalDaysWorked = presentDays;
+    const totalEarnings = att?.reduce((sum, a) => sum + Number(a.total_payment || 0), 0) || 0;
+    const thisMonth = new Date().toISOString().slice(0, 7);
+    const thisMonthEarnings = att?.filter(a => a.date && a.date.startsWith(thisMonth)).reduce((sum, a) => sum + Number(a.total_payment || 0), 0) || 0;
+    const { data: adv } = await db.supabase.from('advances').select('amount').eq('worker_id', user.id).eq('status', 'pending');
+    const pendingAdvances = adv?.reduce((sum, a) => sum + Number(a.amount || 0), 0) || 0;
+    return c.json({ stats: { totalDaysWorked, presentDays, absentDays, totalEarnings, thisMonthEarnings, pendingAdvances }});
+  } catch (e: any) { return c.json({ error: e.message }, 500); }
 });
 
-// Get worker attendance history
 app.get("/make-server-689d7d60/worker/attendance", async (c) => {
   try {
-    const accessToken = c.req.header('Authorization')?.split(' ')[1];
-    if (!accessToken) return c.json({ error: 'Unauthorized' }, 401);
-
-    const { data: { user }, error } = await supabase.auth.getUser(accessToken);
-    if (error || !user) return c.json({ error: 'Unauthorized' }, 401);
-
-    const userProfile = await getUserProfile(user.id, user.email!, user.user_metadata);
-    
-    // Verify user is a worker
-    if (userProfile.role !== 'labour') {
-      return c.json({ error: 'Access denied. Worker role required.' }, 403);
-    }
-
-    // Get query parameters
+    const user = await authUser(c);
+    if (!user) return c.json({ error: 'Unauthorized' }, 401);
     const year = c.req.query('year');
-    const month = c.req.query('month');
-
-    // Get all attendance for this worker
-    const allAttendance = await kv.getByPrefix(`attendance:`);
-    let workerAttendance = allAttendance.filter((a: any) => a.workerId === user.id);
-
-    // Filter by year and month if provided
-    if (year && month) {
-      const targetYear = parseInt(year);
-      const targetMonth = parseInt(month) - 1; // JavaScript months are 0-indexed
-      workerAttendance = workerAttendance.filter((a: any) => {
-        const date = new Date(a.date);
-        return date.getFullYear() === targetYear && date.getMonth() === targetMonth;
-      });
-    }
-
-    // Sort by date (newest first)
-    workerAttendance.sort((a: any, b: any) => {
-      return new Date(b.date).getTime() - new Date(a.date).getTime();
-    });
-
-    // Get site names
-    const allSites = await kv.getByPrefix(`site:`);
-    const attendance = workerAttendance.map((a: any) => {
-      const site = allSites.find((s: any) => s.id === a.siteId);
-      return {
-        ...a,
-        siteName: site?.name,
-      };
-    });
-
-    return c.json({ attendance });
-  } catch (error: any) {
-    console.error('Worker attendance error:', error);
-    return c.json({ error: error.message }, 500);
-  }
+    let q = db.supabase.from('attendance').select('*').eq('worker_id', user.id);
+    if (year) q = q.gte('date', `${year}-01-01`).lte('date', `${year}-12-31`);
+    const { data } = await q;
+    return c.json({ attendance: data || [] });
+  } catch (e: any) { return c.json({ error: e.message }, 500); }
 });
 
-// ============================================
-// AGREEMENT MANAGEMENT
-// ============================================
-
-// Get active agreement for contractor
-app.get("/make-server-689d7d60/agreement", async (c) => {
-  try {
-    const accessToken = c.req.header('Authorization')?.split(' ')[1];
-    if (!accessToken) return c.json({ error: 'Unauthorized' }, 401);
-
-    const { data: { user }, error } = await supabase.auth.getUser(accessToken);
-    if (error || !user) return c.json({ error: 'Unauthorized' }, 401);
-
-    const userProfile = await kv.get(`user:${user.id}`);
-    const contractorId = userProfile.role === 'contractor' ? user.id : userProfile.contractorId;
-
-    const agreement = await kv.get(`agreement:${contractorId}`);
-    
-    return c.json({ agreement: agreement || null });
-  } catch (error: any) {
-    console.error('Get agreement error:', error);
-    return c.json({ error: error.message }, 500);
-  }
-});
-
-// Create or update agreement (Contractor only)
-app.post("/make-server-689d7d60/agreement", async (c) => {
-  try {
-    const accessToken = c.req.header('Authorization')?.split(' ')[1];
-    if (!accessToken) return c.json({ error: 'Unauthorized' }, 401);
-
-    const { data: { user }, error } = await supabase.auth.getUser(accessToken);
-    if (error || !user) return c.json({ error: 'Unauthorized' }, 401);
-
-    const userProfile = await kv.get(`user:${user.id}`);
-    if (userProfile.role !== 'contractor') {
-      return c.json({ error: 'Only contractors can manage agreements' }, 403);
-    }
-
-    const body = await c.req.json();
-    
-    const agreement = {
-      id: `agreement:${user.id}`,
-      contractorId: user.id,
-      title: body.title || 'Worker Employment Agreement',
-      content: body.content,
-      version: body.version || 1,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-      isActive: true,
-    };
-
-    await kv.set(`agreement:${user.id}`, agreement);
-
-    return c.json({ success: true, agreement });
-  } catch (error: any) {
-    console.error('Create/update agreement error:', error);
-    return c.json({ error: error.message }, 500);
-  }
-});
-
-// Worker accepts agreement
-app.post("/make-server-689d7d60/agreement/accept", async (c) => {
-  try {
-    const accessToken = c.req.header('Authorization')?.split(' ')[1];
-    if (!accessToken) return c.json({ error: 'Unauthorized' }, 401);
-
-    const { data: { user }, error } = await supabase.auth.getUser(accessToken);
-    if (error || !user) return c.json({ error: 'Unauthorized' }, 401);
-
-    const userProfile = await kv.get(`user:${user.id}`);
-    if (userProfile.role !== 'labour') {
-      return c.json({ error: 'Only workers can accept agreements' }, 403);
-    }
-
-    const body = await c.req.json();
-    const acceptanceId = crypto.randomUUID();
-    
-    const acceptance = {
-      id: acceptanceId,
-      workerId: user.id,
-      workerName: userProfile.name,
-      workerPhone: userProfile.phone,
-      contractorId: userProfile.contractorId,
-      agreementId: body.agreementId,
-      agreementVersion: body.agreementVersion,
-      signature: body.signature, // Base64 signature image
-      acceptedAt: new Date().toISOString(),
-      ipAddress: c.req.header('x-forwarded-for') || 'unknown',
-      deviceInfo: c.req.header('user-agent') || 'unknown',
-    };
-
-    // Save the acceptance
-    await kv.set(`agreement_acceptance:${acceptanceId}`, acceptance);
-    
-    // Track acceptance in worker profile
-    await kv.set(`worker:${user.id}:agreement_acceptance`, acceptanceId);
-    
-    // Add to contractor's acceptance list
-    await addToList(`contractor:${userProfile.contractorId}:acceptances`, acceptanceId);
-
-    return c.json({ success: true, acceptance });
-  } catch (error: any) {
-    console.error('Accept agreement error:', error);
-    return c.json({ error: error.message }, 500);
-  }
-});
-
-// Get worker's agreement acceptance status
 app.get("/make-server-689d7d60/agreement/status", async (c) => {
   try {
-    const accessToken = c.req.header('Authorization')?.split(' ')[1];
-    if (!accessToken) return c.json({ error: 'Unauthorized' }, 401);
-
-    const { data: { user }, error } = await supabase.auth.getUser(accessToken);
-    if (error || !user) return c.json({ error: 'Unauthorized' }, 401);
-
-    const userProfile = await kv.get(`user:${user.id}`);
-    const acceptanceId = await kv.get(`worker:${user.id}:agreement_acceptance`);
-    
-    let acceptance = null;
-    if (acceptanceId) {
-      acceptance = await kv.get(`agreement_acceptance:${acceptanceId}`);
-    }
-
-    // Get current agreement
-    const agreement = await kv.get(`agreement:${userProfile.contractorId}`);
-
-    return c.json({ 
-      hasAccepted: !!acceptance,
-      acceptance,
-      currentAgreement: agreement,
-      needsAcceptance: !acceptance || (agreement && acceptance.agreementVersion < agreement.version)
-    });
-  } catch (error: any) {
-    console.error('Get agreement status error:', error);
-    return c.json({ error: error.message }, 500);
-  }
+    const user = await authUser(c);
+    if (!user) return c.json({ error: 'Unauthorized' }, 401);
+    const profile = await db.getProfile(user.id);
+    const contractorId = profile?.contractorId;
+    if (!contractorId) return c.json({ agreement: null, needsAcceptance: false });
+    const activeAgreement = await db.getAgreement(contractorId);
+    if (!activeAgreement) return c.json({ agreement: null, needsAcceptance: false });
+    const acceptance = await db.getWorkerAcceptance(user.id);
+    const needsAcceptance = !acceptance || acceptance.agreementVersion < activeAgreement.version;
+    return c.json({ agreement: activeAgreement, needsAcceptance, acceptedVersion: acceptance?.agreementVersion });
+  } catch (e: any) { return c.json({ error: e.message }, 500); }
 });
 
-// Get all agreement acceptances (Contractor only)
-app.get("/make-server-689d7d60/agreement/acceptances", async (c) => {
+app.post("/make-server-689d7d60/payroll/process", async (c) => {
   try {
-    const accessToken = c.req.header('Authorization')?.split(' ')[1];
-    if (!accessToken) return c.json({ error: 'Unauthorized' }, 401);
-
-    const { data: { user }, error } = await supabase.auth.getUser(accessToken);
-    if (error || !user) return c.json({ error: 'Unauthorized' }, 401);
-
-    const userProfile = await kv.get(`user:${user.id}`);
-    if (userProfile.role !== 'contractor') {
-      return c.json({ error: 'Only contractors can view acceptances' }, 403);
-    }
-
-    const acceptanceIds = await kv.get(`contractor:${user.id}:acceptances`) || [];
-    const acceptances = await kv.mget(acceptanceIds.map((id: string) => `agreement_acceptance:${id}`));
-
-    return c.json({ acceptances: acceptances.filter(Boolean) });
-  } catch (error: any) {
-    console.error('Get acceptances error:', error);
-    return c.json({ error: error.message }, 500);
-  }
+    const user = await authUser(c);
+    if (!user) return c.json({ error: 'Unauthorized' }, 401);
+    const { siteId, startDate, endDate } = await c.req.json();
+    const { data: att } = await db.supabase.from('attendance').select('worker_id, total_payment').eq('site_id', siteId).gte('date', startDate).lte('date', endDate);
+    const totalGross = att?.reduce((sum, a) => sum + Number(a.total_payment || 0), 0) || 0;
+    const record = { id: crypto.randomUUID(), siteId, startDate, endDate, items: [], totalGross, totalNet: totalGross, status: 'pending', createdBy: user.id, createdAt: new Date().toISOString() };
+    await db.insertPayroll(record);
+    return c.json({ success: true, payroll: record });
+  } catch (e: any) { return c.json({ error: e.message }, 500); }
 });
 
-// ============================================
-// HELPER FUNCTIONS
-// ============================================
-
-function hashAadhaar(aadhaar: string): string {
-  // Simple hash function (in production, use crypto library)
-  return `hash_${aadhaar.slice(-4)}`;
-}
-
-async function addToList(key: string, value: string) {
-  const list = await kv.get(key) || [];
-  if (!list.includes(value)) {
-    list.push(value);
-    await kv.set(key, list);
-  }
-}
+app.get("/make-server-689d7d60/reports", async (c) => {
+  try {
+    const user = await authUser(c);
+    if (!user) return c.json({ error: 'Unauthorized' }, 401);
+    const type = c.req.query('type');
+    return c.json({ reports: { type, data: [] }});
+  } catch (e: any) { return c.json({ error: e.message }, 500); }
+});
 
 Deno.serve(app.fetch);

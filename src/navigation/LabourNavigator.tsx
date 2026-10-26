@@ -3,12 +3,14 @@ import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { ModernLabourDashboard } from '../screens/LabourDashboard';
 import { WorkerAttendanceTab } from '../features/attendance/WorkerAttendanceTab';
 import { WorkerProfileTab } from '../features/profile/WorkerProfileTab';
+import { SettingsScreen } from '../screens/SettingsScreen';
 import { MaterialIcons } from '@expo/vector-icons';
 
 export type LabourTabParamList = {
   Home: { accessToken: string };
   Attendance: { accessToken: string };
   Profile: { accessToken: string };
+  Settings: { accessToken: string };
 };
 
 const Tab = createBottomTabNavigator<LabourTabParamList>();
@@ -52,6 +54,13 @@ export function LabourNavigator({ route }: { route: any }) {
       >
         {(props) => <WorkerProfileTab {...props} accessToken={accessToken} />}
       </Tab.Screen>
+      <Tab.Screen
+        name="Settings"
+        component={SettingsScreen}
+        options={{
+          tabBarIcon: ({ color, size }) => <MaterialIcons name="settings" size={size} color={color} />,
+        }}
+      />
     </Tab.Navigator>
   );
 }

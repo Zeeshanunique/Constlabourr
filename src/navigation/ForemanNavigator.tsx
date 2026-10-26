@@ -3,12 +3,14 @@ import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { ModernForemanDashboard } from '../screens/ForemanDashboard';
 import { AttendanceTab } from '../features/attendance/AttendanceTab';
 import { ForemanWorkersTab } from '../features/workers/ForemanWorkersTab';
+import { SettingsScreen } from '../screens/SettingsScreen';
 import { MaterialIcons } from '@expo/vector-icons';
 
 export type ForemanTabParamList = {
   Home: { accessToken: string };
   Attendance: { accessToken: string };
   Workers: { accessToken: string };
+  Settings: { accessToken: string };
 };
 
 const Tab = createBottomTabNavigator<ForemanTabParamList>();
@@ -52,6 +54,13 @@ export function ForemanNavigator({ route }: { route: any }) {
       >
         {(props) => <ForemanWorkersTab {...props} accessToken={accessToken} />}
       </Tab.Screen>
+      <Tab.Screen
+        name="Settings"
+        component={SettingsScreen}
+        options={{
+          tabBarIcon: ({ color, size }) => <MaterialIcons name="settings" size={size} color={color} />,
+        }}
+      />
     </Tab.Navigator>
   );
 }

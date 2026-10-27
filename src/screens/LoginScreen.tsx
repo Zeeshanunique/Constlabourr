@@ -1,59 +1,175 @@
 import React, { useState, useContext } from 'react';
-import { View, StyleSheet, KeyboardAvoidingView, Platform, ScrollView, Image } from 'react-native';
+import {
+  View,
+  Text,
+  StyleSheet,
+  Image,
+  TextInput,
+  TouchableOpacity,
+  KeyboardAvoidingView,
+  Platform,
+  ScrollView,
+  ActivityIndicator,
+  Dimensions,
+} from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { Box } from '../components/ui/box';
-import { Button, ButtonText } from '../components/ui/button';
-import { VStack } from '../components/ui/vstack';
-import { HStack } from '../components/ui/hstack';
-import { Text } from '../components/ui/text';
-import { Input, InputField } from '../components/ui/input';
-import { AppContext } from '../context/AppContext';
+import { AppContext, AppContextType } from '../context/AppContext';
+import Toast from 'react-native-toast-message';
+import { Phone, Mail, Lock, User as UserIcon, ArrowLeft } from 'lucide-react-native';
+
+const { height: screenHeight } = Dimensions.get('window');
 
 interface LoginScreenProps {
   onLogin?: (email: string, password: string) => Promise<void>;
   onRegister?: (email: string, password: string, name: string) => Promise<void>;
 }
 
+type AuthMode = 'phone' | 'otp' | 'email' | 'register';
+
 export function LoginScreen({ onLogin, onRegister }: LoginScreenProps) {
-  const [loginEmail, setLoginEmail] = useState('');
-  const [loginPassword, setLoginPassword] = useState('');
+  const [authMode, setAuthMode] = useState<AuthMode>('phone');
+  
+  // Form states
+  const [phoneNumber, setPhoneNumber] = useState('');
+  const [otpCode, setOtpCode] = useState('');
+  
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  
+  const [registerName, setRegisterName] = useState('');
   const [registerEmail, setRegisterEmail] = useState('');
   const [registerPassword, setRegisterPassword] = useState('');
-  const [registerName, setRegisterName] = useState('');
+  
   const [loading, setLoading] = useState(false);
-  const [activeTab, setActiveTab] = useState<'login' | 'register'>('login');
-  const context = useContext(AppContext);
+  const context = useContext(AppContext) as AppContextType | null;
 
-  const handleLogin = async () => {
-    const loginHandler = onLogin || context?.handleLogin;
-    if (!loginHandler) return;
+  const handleSendOTP = () => {
+    if (!phoneNumber || phoneNumber.length < 10) {
+      Toast.show({
+        type: 'error',
+        text1: 'Invalid Phone Number',
+        text2: 'Please enter a valid 10-digit mobile number.',
+      });
+      return;
+    }
+    
+    setLoading(true);
+    // Simulate sending OTP
+    setTimeout(() => {
+      setLoading(false);
+      setAuthMode('otp');
+      Toast.show({
+        type: 'success',
+        text1: 'OTP Sent',
+        text2: 'Use verification code 123456 to continue.',
+      });
+    }, 1000);
+  };
+
+  const handleVerifyOTP = async () => {
+    if (otpCode !== '123456') {
+      Toast.show({
+        type: 'error',
+        text1: 'Verification Failed',
+        text2: 'Incorrect OTP code. Try 123456.',
+      });
+      return;
+    }
 
     setLoading(true);
     try {
-      await loginHandler(loginEmail, loginPassword);
-    } catch (error) {
-      console.error('Login error:', error);
+      // Since phone auth is mock, we sign into a demo account or prompt them
+      // In a real production flow, this would connect to supabase phone auth.
+      // For this implementation, we will log in with a default demo contractor account if available
+      // or we just show a success message and guide them to use email auth for active projects.
+      const loginHandler = onLogin || context?.handleLogin;
+      if (loginHandler) {
+        // Try to log in with a demo user to let them see the app
+        await loginHandler('contractor@example.com', 'password');
+        Toast.show({
+          type: 'success',
+          text1: 'Login Successful',
+          text2: 'Welcome to ConstLabour (Demo Mode).',
+        });
+      } else {
+        throw new Error('Login handler not found');
+      }
+    } catch (error: any) {
+      console.error('Demo login error:', error);
+      Toast.show({
+        type: 'info',
+        text1: 'OTP Verified',
+        text2: 'Please use Email Login to access your specific account.',
+      });
+      setAuthMode('email');
     } finally {
       setLoading(false);
     }
   };
 
-  const handleRegister = async () => {
+  const handleEmailLogin = async () => {
+    if (!email || !password) {
+      Toast.show({
+        type: 'error',
+        text1: 'Required Fields',
+        text2: 'Please enter both email and password.',
+      });
+      return;
+    }
+
+    const loginHandler = onLogin || context?.handleLogin;
+    if (!loginHandler) return;
+
+    setLoading(true);
+    try {
+      await loginHandler(email, password);
+    } catch (error) {
+      console.error('Login error:', error);
+      // Toast shown in App.tsx
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleRegisterContractor = async () => {
+    if (!registerName || !registerEmail || !registerPassword) {
+      Toast.show({
+        type: 'error',
+        text1: 'Required Fields',
+        text2: 'Please fill in all fields.',
+      });
+      return;
+    }
+
     const registerHandler = onRegister || context?.handleRegister;
     if (!registerHandler) return;
 
     setLoading(true);
     try {
       await registerHandler(registerEmail, registerPassword, registerName);
+      // Reset registration states
+      setRegisterName('');
       setRegisterEmail('');
       setRegisterPassword('');
-      setRegisterName('');
-      setActiveTab('login');
+      // Redirect to email login
+      setEmail(registerEmail);
+      setAuthMode('email');
     } catch (error) {
-      console.error('Register error:', error);
+      console.error('Registration error:', error);
+      // Toast shown in App.tsx
     } finally {
       setLoading(false);
     }
+  };
+
+  const handleTruecallerLogin = () => {
+    Toast.show({
+      type: 'info',
+      text1: 'Truecaller Integration',
+      text2: 'Simulating login with Truecaller profile...',
+    });
+    setPhoneNumber('9876543210');
+    handleSendOTP();
   };
 
   return (
@@ -62,210 +178,293 @@ export function LoginScreen({ onLogin, onRegister }: LoginScreenProps) {
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
         style={styles.container}
       >
-        <ScrollView 
+        <ScrollView
           contentContainerStyle={styles.scrollContent}
           showsVerticalScrollIndicator={false}
           keyboardShouldPersistTaps="handled"
         >
-          <View style={styles.content}>
-            <View style={styles.header}>
-              <View style={styles.iconContainer}>
-                <Image 
-                  source={require('../../assets/icon.png')} 
-                  style={styles.logoImage}
-                  resizeMode="contain"
-                />
-              </View>
-              <Text 
-                size="2xl" 
-                bold 
-                style={{ 
-                  fontSize: 28, 
-                  fontWeight: '700', 
-                  color: '#111827', 
-                  marginTop: 16,
-                  marginBottom: 8,
-                  letterSpacing: -0.5,
-                }}
-              >
-                ConstLabour
-              </Text>
-              <Text 
-                size="sm" 
-                style={{ 
-                  fontSize: 14, 
-                  color: '#6b7280',
-                  textAlign: 'center',
-                }}
-              >
-                Construction Labour Management
-              </Text>
+          {/* Top Banner Section */}
+          <View style={styles.bannerContainer}>
+            {/* App Logo & Name Row */}
+            <View style={styles.logoRow}>
+              <Image
+                source={require('../../assets/icon.png')}
+                style={styles.logoMini}
+                resizeMode="contain"
+              />
+              <Text style={styles.appNameText}>ConstLabour</Text>
             </View>
+            
+            {/* Contractor Worker Illustration */}
+            <Image
+              source={require('../../assets/contractor_worker_clean.png')}
+              style={styles.workerImage}
+              resizeMode="contain"
+            />
+          </View>
 
-            <Box className="bg-white rounded-lg p-6 shadow-md w-full" style={[styles.card, { 
-              backgroundColor: '#ffffff',
-              borderRadius: 12,
-              padding: 24,
-              shadowColor: '#000',
-              shadowOffset: { width: 0, height: 2 },
-              shadowOpacity: 0.1,
-              shadowRadius: 8,
-              elevation: 4,
-            }]}>
-            <View style={styles.tabContainer}>
-              <View style={styles.tabWrapper}>
-                <Button
-                  onPress={() => setActiveTab('login')}
-                  style={[
-                    styles.tabButton,
-                    activeTab === 'login' && styles.tabButtonActive,
-                  ]}
-                >
-                  <ButtonText style={[
-                    styles.tabButtonText,
-                    activeTab === 'login' && styles.tabButtonTextActive,
-                  ]}>
-                    Login
-                  </ButtonText>
-                </Button>
-                <Button
-                  onPress={() => setActiveTab('register')}
-                  style={[
-                    styles.tabButton,
-                    activeTab === 'register' && styles.tabButtonActive,
-                  ]}
-                >
-                  <ButtonText style={[
-                    styles.tabButtonText,
-                    activeTab === 'register' && styles.tabButtonTextActive,
-                  ]}>
-                    Register
-                  </ButtonText>
-                </Button>
-              </View>
-            </View>
-
-            {activeTab === 'login' ? (
-              <VStack space="lg">
-                <View style={styles.formGroup}>
-                  <Text style={styles.label}>Email</Text>
-                  <Input 
-                    size="lg" 
-                    variant="outline"
-                    style={styles.inputWrapper}
+          {/* Overlapping Interactive Sheet */}
+          <View style={styles.cardSheet}>
+            {authMode === 'phone' && (
+              <View style={styles.formContainer}>
+                <Text style={styles.cardTitle}>Enter your Mobile number</Text>
+                
+                <View style={styles.phoneInputRow}>
+                  <View style={styles.phoneInputContainer}>
+                    <Text style={styles.countryCode}>+91</Text>
+                    <TextInput
+                      style={styles.phoneInput}
+                      placeholder="Mobile Number"
+                      value={phoneNumber}
+                      onChangeText={setPhoneNumber}
+                      keyboardType="phone-pad"
+                      maxLength={10}
+                      placeholderTextColor="#94a3b8"
+                    />
+                  </View>
+                  <TouchableOpacity
+                    style={styles.otpButton}
+                    onPress={handleSendOTP}
+                    disabled={loading}
+                    activeOpacity={0.8}
                   >
-                    <InputField
+                    {loading ? (
+                      <ActivityIndicator size="small" color="#ffffff" />
+                    ) : (
+                      <Text style={styles.otpButtonText}>Get OTP</Text>
+                    )}
+                  </TouchableOpacity>
+                </View>
+
+                {/* Divider */}
+                <View style={styles.dividerRow}>
+                  <View style={styles.dividerLine} />
+                  <Text style={styles.dividerText}>or continue with</Text>
+                  <View style={styles.dividerLine} />
+                </View>
+
+                {/* Truecaller button */}
+                <TouchableOpacity
+                  style={styles.truecallerButton}
+                  onPress={handleTruecallerLogin}
+                  activeOpacity={0.8}
+                >
+                  <Phone size={18} color="#2563eb" style={styles.truecallerIcon} />
+                  <Text style={styles.truecallerText}>Continue with Truecaller</Text>
+                </TouchableOpacity>
+
+                {/* Footer links */}
+                <View style={styles.footerLinks}>
+                  <TouchableOpacity
+                    style={styles.footerLinkButton}
+                    onPress={() => setAuthMode('email')}
+                  >
+                    <Text style={styles.footerLinkPrimary}>Login with Email & Password</Text>
+                  </TouchableOpacity>
+                  
+                  <TouchableOpacity
+                    style={[styles.footerLinkButton, { marginTop: 12 }]}
+                    onPress={() => setAuthMode('register')}
+                  >
+                    <Text style={styles.footerLinkSecondary}>Register as a Contractor</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            )}
+
+            {authMode === 'otp' && (
+              <View style={styles.formContainer}>
+                <TouchableOpacity
+                  style={styles.backButton}
+                  onPress={() => setAuthMode('phone')}
+                >
+                  <ArrowLeft size={20} color="#475569" />
+                  <Text style={styles.backButtonText}>Back</Text>
+                </TouchableOpacity>
+
+                <Text style={styles.cardTitle}>Verify OTP</Text>
+                <Text style={styles.otpSubtitle}>
+                  We have sent a verification code to +91 {phoneNumber}
+                </Text>
+
+                <View style={styles.inputContainer}>
+                  <Text style={styles.label}>Verification Code</Text>
+                  <TextInput
+                    style={styles.fullWidthInput}
+                    placeholder="Enter 6-digit OTP"
+                    value={otpCode}
+                    onChangeText={setOtpCode}
+                    keyboardType="number-pad"
+                    maxLength={6}
+                    placeholderTextColor="#94a3b8"
+                  />
+                </View>
+
+                <TouchableOpacity
+                  style={styles.primaryButton}
+                  onPress={handleVerifyOTP}
+                  disabled={loading}
+                  activeOpacity={0.8}
+                >
+                  {loading ? (
+                    <ActivityIndicator size="small" color="#ffffff" />
+                  ) : (
+                    <Text style={styles.primaryButtonText}>Verify & Continue</Text>
+                  )}
+                </TouchableOpacity>
+              </View>
+            )}
+
+            {authMode === 'email' && (
+              <View style={styles.formContainer}>
+                <Text style={styles.cardTitle}>Login with Email</Text>
+
+                <View style={styles.inputGroup}>
+                  <Text style={styles.label}>Email Address</Text>
+                  <View style={styles.inputIconWrapper}>
+                    <Mail size={18} color="#94a3b8" style={styles.inputIcon} />
+                    <TextInput
+                      style={styles.iconInput}
                       placeholder="contractor@example.com"
-                      value={loginEmail}
-                      onChangeText={setLoginEmail}
+                      value={email}
+                      onChangeText={setEmail}
                       keyboardType="email-address"
                       autoCapitalize="none"
-                      style={styles.input}
-                      placeholderTextColor="#9ca3af"
+                      placeholderTextColor="#94a3b8"
                     />
-                  </Input>
+                  </View>
                 </View>
-                <View style={styles.formGroup}>
+
+                <View style={styles.inputGroup}>
                   <Text style={styles.label}>Password</Text>
-                  <Input 
-                    size="lg" 
-                    variant="outline"
-                    style={styles.inputWrapper}
-                  >
-                    <InputField
+                  <View style={styles.inputIconWrapper}>
+                    <Lock size={18} color="#94a3b8" style={styles.inputIcon} />
+                    <TextInput
+                      style={styles.iconInput}
                       placeholder="Enter your password"
-                      value={loginPassword}
-                      onChangeText={setLoginPassword}
+                      value={password}
+                      onChangeText={setPassword}
                       secureTextEntry
-                      style={styles.input}
-                      placeholderTextColor="#9ca3af"
+                      placeholderTextColor="#94a3b8"
                     />
-                  </Input>
+                  </View>
                 </View>
-                <Button
-                  onPress={handleLogin}
-                  isDisabled={loading}
-                  style={[
-                    styles.submitButton,
-                    loading && styles.submitButtonDisabled,
-                  ]}
+
+                <TouchableOpacity
+                  style={styles.primaryButton}
+                  onPress={handleEmailLogin}
+                  disabled={loading}
+                  activeOpacity={0.8}
                 >
-                  <ButtonText style={styles.submitButtonText}>
-                    {loading ? 'Loading...' : 'Login'}
-                  </ButtonText>
-                </Button>
-              </VStack>
-            ) : (
-              <View>
-                <Text style={styles.registerSubtext}>
-                  Register as a Contractor to get started
-                </Text>
-                <View style={styles.formGroup}>
-                  <Text style={styles.label}>Full Name</Text>
-                  <Input 
-                    size="lg" 
-                    variant="outline"
-                    style={styles.inputWrapper}
+                  {loading ? (
+                    <ActivityIndicator size="small" color="#ffffff" />
+                  ) : (
+                    <Text style={styles.primaryButtonText}>Login</Text>
+                  )}
+                </TouchableOpacity>
+
+                {/* Footer links */}
+                <View style={styles.footerLinks}>
+                  <TouchableOpacity
+                    style={styles.footerLinkButton}
+                    onPress={() => setAuthMode('phone')}
                   >
-                    <InputField
+                    <Text style={styles.footerLinkPrimary}>Login with Mobile Number</Text>
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    style={[styles.footerLinkButton, { marginTop: 12 }]}
+                    onPress={() => setAuthMode('register')}
+                  >
+                    <Text style={styles.footerLinkSecondary}>Register as a Contractor</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            )}
+
+            {authMode === 'register' && (
+              <View style={styles.formContainer}>
+                <Text style={styles.cardTitle}>Register as Contractor</Text>
+                <Text style={styles.registerSubtext}>
+                  Create an account to manage your construction workforce.
+                </Text>
+
+                <View style={styles.inputGroup}>
+                  <Text style={styles.label}>Full Name</Text>
+                  <View style={styles.inputIconWrapper}>
+                    <UserIcon size={18} color="#94a3b8" style={styles.inputIcon} />
+                    <TextInput
+                      style={styles.iconInput}
                       placeholder="John Doe"
                       value={registerName}
                       onChangeText={setRegisterName}
-                      style={styles.input}
-                      placeholderTextColor="#9ca3af"
+                      placeholderTextColor="#94a3b8"
                     />
-                  </Input>
+                  </View>
                 </View>
-                <View style={styles.formGroup}>
-                  <Text style={styles.label}>Email</Text>
-                  <Input 
-                    size="lg" 
-                    variant="outline"
-                    style={styles.inputWrapper}
-                  >
-                    <InputField
+
+                <View style={styles.inputGroup}>
+                  <Text style={styles.label}>Email Address</Text>
+                  <View style={styles.inputIconWrapper}>
+                    <Mail size={18} color="#94a3b8" style={styles.inputIcon} />
+                    <TextInput
+                      style={styles.iconInput}
                       placeholder="contractor@example.com"
                       value={registerEmail}
                       onChangeText={setRegisterEmail}
                       keyboardType="email-address"
                       autoCapitalize="none"
-                      style={styles.input}
-                      placeholderTextColor="#9ca3af"
+                      placeholderTextColor="#94a3b8"
                     />
-                  </Input>
+                  </View>
                 </View>
-                <View style={styles.formGroup}>
+
+                <View style={styles.inputGroup}>
                   <Text style={styles.label}>Password</Text>
-                  <Input 
-                    size="lg" 
-                    variant="outline"
-                    style={styles.inputWrapper}
-                  >
-                    <InputField
+                  <View style={styles.inputIconWrapper}>
+                    <Lock size={18} color="#94a3b8" style={styles.inputIcon} />
+                    <TextInput
+                      style={styles.iconInput}
                       placeholder="Create a password"
                       value={registerPassword}
                       onChangeText={setRegisterPassword}
                       secureTextEntry
-                      style={styles.input}
-                      placeholderTextColor="#9ca3af"
+                      placeholderTextColor="#94a3b8"
                     />
-                  </Input>
+                  </View>
                 </View>
-                <Button
-                  onPress={handleRegister}
-                  isDisabled={loading}
-                  style={[
-                    styles.submitButton,
-                    loading && styles.submitButtonDisabled,
-                  ]}
+
+                <TouchableOpacity
+                  style={styles.primaryButton}
+                  onPress={handleRegisterContractor}
+                  disabled={loading}
+                  activeOpacity={0.8}
                 >
-                  <ButtonText style={styles.submitButtonText}>
-                    {loading ? 'Loading...' : 'Register'}
-                  </ButtonText>
-                </Button>
+                  {loading ? (
+                    <ActivityIndicator size="small" color="#ffffff" />
+                  ) : (
+                    <Text style={styles.primaryButtonText}>Register</Text>
+                  )}
+                </TouchableOpacity>
+
+                {/* Footer links */}
+                <View style={styles.footerLinks}>
+                  <TouchableOpacity
+                    style={styles.footerLinkButton}
+                    onPress={() => setAuthMode('email')}
+                  >
+                    <Text style={styles.footerLinkPrimary}>Already have an account? Login</Text>
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    style={[styles.footerLinkButton, { marginTop: 12 }]}
+                    onPress={() => setAuthMode('phone')}
+                  >
+                    <Text style={styles.footerLinkSecondary}>Login with Mobile Number</Text>
+                  </TouchableOpacity>
+                </View>
               </View>
             )}
-            </Box>
           </View>
         </ScrollView>
       </KeyboardAvoidingView>
@@ -276,144 +475,266 @@ export function LoginScreen({ onLogin, onRegister }: LoginScreenProps) {
 const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
-    backgroundColor: '#f8fafc',
+    backgroundColor: '#1859C1', // Match banner background color for status bars
   },
   container: {
     flex: 1,
+    backgroundColor: '#ffffff',
   },
   scrollContent: {
     flexGrow: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: 20,
-    minHeight: '100%',
-  },
-  content: {
-    width: '100%',
-    maxWidth: 400,
-    alignItems: 'center',
-  },
-  header: {
-    alignItems: 'center',
-    marginBottom: 40,
-    width: '100%',
-  },
-  iconContainer: {
-    width: 80,
-    height: 80,
-    borderRadius: 40,
     backgroundColor: '#ffffff',
-    justifyContent: 'center',
+  },
+  bannerContainer: {
+    width: '100%',
+    height: 290,
+    backgroundColor: '#1859C1',
     alignItems: 'center',
-    marginBottom: 16,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.1,
-    shadowRadius: 8,
-    elevation: 6,
-    overflow: 'hidden',
-    padding: 4,
+    justifyContent: 'center',
+    paddingTop: 30,
   },
-  logoImage: {
-    width: '100%',
-    height: '100%',
-    borderRadius: 36,
-  },
-  card: {
-    width: '100%',
-    maxWidth: 400,
-  },
-  tabContainer: {
-    marginBottom: 24,
-    width: '100%',
-  },
-  tabWrapper: {
+  logoRow: {
     flexDirection: 'row',
-    backgroundColor: '#f3f4f6',
+    alignItems: 'center',
+    gap: 10,
+    marginBottom: 15,
+  },
+  logoMini: {
+    width: 36,
+    height: 36,
     borderRadius: 8,
-    padding: 4,
-    gap: 4,
   },
-  tabButton: {
+  appNameText: {
+    fontSize: 22,
+    fontWeight: '800',
+    color: '#ffffff',
+    letterSpacing: -0.5,
+  },
+  workerImage: {
+    width: 160,
+    height: 160,
+    marginBottom: 10,
+  },
+  cardSheet: {
     flex: 1,
-    backgroundColor: 'transparent',
-    borderRadius: 6,
-    paddingVertical: 10,
-    paddingHorizontal: 16,
-    minHeight: 40,
-  },
-  tabButtonActive: {
+    marginTop: -32, // Overlaps the bottom of the banner
     backgroundColor: '#ffffff',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.1,
-    shadowRadius: 2,
-    elevation: 2,
+    borderTopLeftRadius: 32,
+    borderTopRightRadius: 32,
+    paddingTop: 32,
+    paddingHorizontal: 24,
+    paddingBottom: 40,
+    minHeight: screenHeight - 258,
+    shadowColor: '#0f172a',
+    shadowOffset: { width: 0, height: -6 },
+    shadowOpacity: 0.08,
+    shadowRadius: 16,
+    elevation: 8,
   },
-  tabButtonText: {
-    fontSize: 14,
-    fontWeight: '500',
-    color: '#6b7280',
-    textAlign: 'center',
-  },
-  tabButtonTextActive: {
-    color: '#2563eb',
-    fontWeight: '600',
-  },
-  formGroup: {
-    marginBottom: 20,
+  formContainer: {
     width: '100%',
+  },
+  cardTitle: {
+    fontSize: 24,
+    fontWeight: '800',
+    color: '#0f172a',
+    textAlign: 'center',
+    marginBottom: 24,
+    letterSpacing: -0.5,
+  },
+  otpSubtitle: {
+    fontSize: 14,
+    color: '#64748b',
+    textAlign: 'center',
+    marginBottom: 24,
+    paddingHorizontal: 20,
+  },
+  phoneInputRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    marginBottom: 24,
+  },
+  phoneInputContainer: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderWidth: 1.5,
+    borderColor: '#e2e8f0',
+    borderRadius: 12,
+    backgroundColor: '#f8fafc',
+    height: 54,
+    paddingHorizontal: 16,
+  },
+  countryCode: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#334155',
+    marginRight: 8,
+  },
+  phoneInput: {
+    flex: 1,
+    fontSize: 16,
+    color: '#0f172a',
+    fontWeight: '600',
+    height: '100%',
+    padding: 0,
+  },
+  otpButton: {
+    backgroundColor: '#2563eb',
+    borderRadius: 12,
+    height: 54,
+    paddingHorizontal: 20,
+    justifyContent: 'center',
+    alignItems: 'center',
+    shadowColor: '#2563eb',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.2,
+    shadowRadius: 6,
+    elevation: 3,
+    minWidth: 95,
+  },
+  otpButtonText: {
+    color: '#ffffff',
+    fontSize: 15,
+    fontWeight: '700',
+  },
+  dividerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginVertical: 24,
+  },
+  dividerLine: {
+    flex: 1,
+    height: 1,
+    backgroundColor: '#f1f5f9',
+  },
+  dividerText: {
+    fontSize: 14,
+    color: '#94a3b8',
+    marginHorizontal: 12,
+    fontWeight: '500',
+  },
+  truecallerButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1.5,
+    borderColor: '#2563eb',
+    borderRadius: 12,
+    height: 54,
+    backgroundColor: '#ffffff',
+    marginBottom: 32,
+  },
+  truecallerIcon: {
+    marginRight: 10,
+  },
+  truecallerText: {
+    color: '#2563eb',
+    fontSize: 16,
+    fontWeight: '700',
+  },
+  inputGroup: {
+    marginBottom: 20,
+  },
+  inputContainer: {
+    marginBottom: 24,
   },
   label: {
     fontSize: 14,
-    fontWeight: '500',
-    color: '#374151',
+    fontWeight: '600',
+    color: '#334155',
     marginBottom: 8,
   },
-  inputWrapper: {
-    borderWidth: 1,
-    borderColor: '#d1d5db',
-    borderRadius: 8,
-    backgroundColor: '#ffffff',
-    minHeight: 48,
-    justifyContent: 'center',
-  },
-  input: {
+  inputIconWrapper: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderWidth: 1.5,
+    borderColor: '#e2e8f0',
+    borderRadius: 12,
+    backgroundColor: '#f8fafc',
+    height: 54,
     paddingHorizontal: 16,
-    paddingVertical: 12,
-    fontSize: 16,
-    color: '#111827',
-    width: '100%',
   },
-  submitButton: {
+  inputIcon: {
+    marginRight: 12,
+  },
+  iconInput: {
+    flex: 1,
+    fontSize: 16,
+    color: '#0f172a',
+    height: '100%',
+    fontWeight: '500',
+  },
+  fullWidthInput: {
+    borderWidth: 1.5,
+    borderColor: '#e2e8f0',
+    borderRadius: 12,
+    backgroundColor: '#f8fafc',
+    height: 54,
+    paddingHorizontal: 16,
+    fontSize: 16,
+    color: '#0f172a',
+    fontWeight: '600',
+    textAlign: 'center',
+    letterSpacing: 4,
+  },
+  primaryButton: {
     width: '100%',
     backgroundColor: '#2563eb',
-    borderRadius: 8,
-    paddingVertical: 14,
-    paddingHorizontal: 20,
-    minHeight: 48,
-    marginTop: 8,
+    borderRadius: 12,
+    height: 54,
+    justifyContent: 'center',
+    alignItems: 'center',
     shadowColor: '#2563eb',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.25,
     shadowRadius: 8,
     elevation: 4,
+    marginTop: 8,
+    marginBottom: 24,
   },
-  submitButtonDisabled: {
-    backgroundColor: '#9ca3af',
-    shadowOpacity: 0,
-    elevation: 0,
-  },
-  submitButtonText: {
+  primaryButtonText: {
     color: '#ffffff',
-    fontWeight: '600',
     fontSize: 16,
-    textAlign: 'center',
+    fontWeight: '700',
+  },
+  footerLinks: {
+    alignItems: 'center',
+    marginTop: 8,
+  },
+  footerLinkButton: {
+    paddingVertical: 4,
+  },
+  footerLinkPrimary: {
+    color: '#2563eb',
+    fontSize: 15,
+    fontWeight: '700',
+  },
+  footerLinkSecondary: {
+    color: '#64748b',
+    fontSize: 14,
+    fontWeight: '600',
   },
   registerSubtext: {
     fontSize: 14,
-    color: '#6b7280',
-    marginBottom: 20,
+    color: '#64748b',
     textAlign: 'center',
+    marginBottom: 24,
+    paddingHorizontal: 10,
+    lineHeight: 20,
+  },
+  backButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    alignSelf: 'flex-start',
+    marginBottom: 16,
+    paddingVertical: 4,
+  },
+  backButtonText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#475569',
+    marginLeft: 6,
   },
 });

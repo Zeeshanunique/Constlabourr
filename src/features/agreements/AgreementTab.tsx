@@ -11,7 +11,7 @@ import { FormControl, FormControlLabel, FormControlLabelText } from '@/component
 import { Card } from '@/components/ui/card';
 import { Modal, ModalBackdrop, ModalContent, ModalHeader, ModalBody, ModalCloseButton, ModalFooter } from '@/components/ui/modal';
 import DateTimePicker from '@react-native-community/datetimepicker';
-import { Plus, FileText, Edit2, Trash2, X, Calendar } from '@expo/vector-icons';
+import { Plus, FileText, Edit2, Trash2, X, Calendar } from 'lucide-react-native';
 import { projectId } from '@/utils/supabase/info';
 import { useRoute } from '@react-navigation/native';
 import Toast from 'react-native-toast-message';

@@ -5,7 +5,6 @@ export default {
     version: "0.1.0",
     orientation: "portrait",
     userInterfaceStyle: "light",
-    owner: "zeeshanunique",
     icon: "./assets/icon.png",
     splash: {
       resizeMode: "contain",
@@ -27,12 +26,17 @@ export default {
       package: "com.constlabour.app"
     },
     scheme: "constlabour",
+    plugins: [
+      "@react-native-community/datetimepicker",
+      "expo-font",
+      "expo-secure-store"
+    ],
     extra: {
       eas: {
-        projectId: "8b2048c3-7b22-4df8-a1b9-fe4d1f88fce8"
+        projectId: "" // Will be set after running 'eas init'
       },
-      supabaseUrl: process.env.EXPO_PUBLIC_SUPABASE_URL || `https://quoxzaznmrtkshvrxgrl.supabase.co`,
-      supabaseAnonKey: process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY || "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InF1b3h6YXpubXJ0a3NodnJ4Z3JsIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjU2MDUzMzEsImV4cCI6MjA4MTE4MTMzMX0._I38LT6c1a7iu7CXE73Z_vATObmaRqVMl2lhrWByBo4"
+      supabaseUrl: process.env.EXPO_PUBLIC_SUPABASE_URL || `https://jkwrupxrjbrmuufxetlh.supabase.co`,
+      supabaseAnonKey: process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY || ""
     }
   }
 };

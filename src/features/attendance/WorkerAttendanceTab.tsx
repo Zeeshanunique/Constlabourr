@@ -95,8 +95,8 @@ export function WorkerAttendanceTab({ accessToken }: WorkerAttendanceTabProps) {
     const present = attendance.filter(a => a.status === 'present').length;
     const halfDay = attendance.filter(a => a.status === 'half-day').length;
     const absent = attendance.filter(a => a.status === 'absent').length;
-    const totalEarnings = attendance.reduce((sum, a) => sum + (a.totalPayment || 0), 0);
-    const totalHours = attendance.reduce((sum, a) => sum + (a.totalHours || 0), 0);
+    const totalEarnings = attendance.reduce((sum, a: any) => sum + (a.totalPayment || a.total_payment || 0), 0);
+    const totalHours = attendance.reduce((sum, a: any) => sum + (a.totalHours || a.total_hours || 0), 0);
     return { present, halfDay, absent, total: present + halfDay + absent, totalEarnings, totalHours };
   };
 

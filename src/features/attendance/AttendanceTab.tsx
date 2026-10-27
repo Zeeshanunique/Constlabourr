@@ -230,21 +230,18 @@ export function AttendanceTab({ accessToken }: AttendanceTabProps) {
   };
 
   const handleEditAttendance = async (newStatus: 'present' | 'absent' | 'half-day') => {
-    if (!editingWorker || !token || !selectedSite || !selectedDate) return;
+    if (!editingWorker || !token || !selectedSite || !selectedDate || !editingStatus) return;
     
     try {
       const response = await fetch(
-        `https://${projectId}.supabase.co/functions/v1/make-server-689d7d60/attendance`,
+        `https://${projectId}.supabase.co/functions/v1/make-server-689d7d60/attendance/${editingStatus.id}`,
         {
-          method: 'POST',
+          method: 'PUT',
           headers: {
             'Authorization': `Bearer ${token}`,
             'Content-Type': 'application/json',
           },
           body: JSON.stringify({
-            workerId: editingWorker.id,
-            siteId: selectedSite,
-            date: selectedDate,
             status: newStatus,
           }),
         }
@@ -721,8 +718,7 @@ export function AttendanceTab({ accessToken }: AttendanceTabProps) {
                     editingStatus?.status === 'half-day' && styles.statusHalfDay,
                   ]}>
                     <Text style={styles.modalCurrentStatusText}>
-                      {editingStatus?.status === 'half-day' ? 'Half Day' : 
-                       editingStatus?.status?.charAt(0).toUpperCase() + editingStatus?.status?.slice(1)}
+                      {editingStatus?.status ? (editingStatus.status === 'half-day' ? 'Half Day' : editingStatus.status.charAt(0).toUpperCase() + editingStatus.status.slice(1)) : ''}
                     </Text>
                   </View>
                 </View>

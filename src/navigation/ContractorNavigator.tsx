@@ -6,6 +6,7 @@ import { ForemenTab } from '../features/workers/ForemenTab';
 import { SitesTab } from '../features/sites/SitesTab';
 import { AttendanceTab } from '../features/attendance/AttendanceTab';
 import { PayrollTab } from '../features/payroll/PayrollTab';
+import { SettingsScreen } from '../screens/SettingsScreen';
 import { MaterialIcons, FontAwesome5, Ionicons, Feather } from '@expo/vector-icons';
 
 export type ContractorTabParamList = {
@@ -15,6 +16,7 @@ export type ContractorTabParamList = {
   Sites: { accessToken: string };
   Attendance: { accessToken: string };
   Payroll: { accessToken: string };
+  Settings: { accessToken: string };
 };
 
 const Tab = createBottomTabNavigator<ContractorTabParamList>();
@@ -83,6 +85,13 @@ export function ContractorNavigator({ route }: { route: any }) {
       >
         {(props) => <PayrollTab {...props} accessToken={accessToken} />}
       </Tab.Screen>
+      <Tab.Screen
+        name="Settings"
+        component={SettingsScreen}
+        options={{
+          tabBarIcon: ({ color, size }) => <MaterialIcons name="settings" size={size} color={color} />,
+        }}
+      />
     </Tab.Navigator>
   );
 }

@@ -321,7 +321,7 @@ const Actionsheet = React.forwardRef<
   return (
     <UIActionsheet
       className={computedClassName}
-      style={mergedStyle}
+      style={mergedStyle as any}
       ref={ref}
       {...props}
     />
@@ -348,7 +348,7 @@ const ActionsheetContent = React.forwardRef<
     <UIActionsheet.Content
       ref={ref}
       className={computedClassName}
-      style={mergedStyle}
+      style={mergedStyle as any}
       {...props}
     />
   );

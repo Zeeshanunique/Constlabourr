@@ -10,6 +10,8 @@ import { WebView } from 'react-native-webview';
 import { projectId } from '@/utils/supabase/info';
 import Toast from 'react-native-toast-message';
 
+const WebViewComponent = WebView as any;
+
 const { width } = Dimensions.get('window');
 
 interface WorkerAgreementModalProps {
@@ -21,7 +23,7 @@ export function WorkerAgreementModal({ accessToken, onAccepted }: WorkerAgreemen
   const [signature, setSignature] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [agreement, setAgreement] = useState<any>(null);
-  const webViewRef = useRef<WebView>(null);
+  const webViewRef = useRef<any>(null);
 
   React.useEffect(() => {
     fetchAgreement();
@@ -36,8 +38,9 @@ export function WorkerAgreementModal({ accessToken, onAccepted }: WorkerAgreemen
         }
       );
       const data = await response.json();
-      if (data.currentAgreement) {
-        setAgreement(data.currentAgreement);
+      const ag = data.currentAgreement || data.agreement;
+      if (ag) {
+        setAgreement(ag);
       }
     } catch (error) {
       console.error('Error fetching agreement:', error);
@@ -230,11 +233,11 @@ export function WorkerAgreementModal({ accessToken, onAccepted }: WorkerAgreemen
                   Signature
                 </Text>
                 <Box className="border-2 border-gray-200 rounded-md overflow-hidden" style={{ height: 250 }}>
-                  <WebView
+                  <WebViewComponent
                     ref={webViewRef}
                     source={{ html: signatureHTML }}
                     style={{ backgroundColor: 'transparent' }}
-                    onMessage={(event) => {
+                    onMessage={(event: any) => {
                       try {
                         const data = JSON.parse(event.nativeEvent.data);
                         if (data.type === 'signature') {

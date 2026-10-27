@@ -8,6 +8,20 @@ import { projectId } from '../../utils/supabase/info';
 import { useRoute } from '@react-navigation/native';
 import Toast from 'react-native-toast-message';
 import { FormField } from '../../components/shared/FormField';
+import DateTimePicker from '@react-native-community/datetimepicker';
+import {
+  Select,
+  SelectTrigger,
+  SelectInput,
+  SelectIcon,
+  SelectPortal,
+  SelectBackdrop,
+  SelectContent,
+  SelectDragIndicatorWrapper,
+  SelectDragIndicator,
+  SelectItem,
+  SelectItemText,
+} from '../../components/ui/select';
 
 interface Worker {
   id: string;
@@ -32,7 +46,8 @@ export function BulkAttendanceTab({ accessToken }: BulkAttendanceTabProps) {
   const [workers, setWorkers] = useState<Worker[]>([]);
   const [sites, setSites] = useState<Site[]>([]);
   const [selectedSite, setSelectedSite] = useState('');
-  const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
+  const [selectedDate, setSelectedDate] = useState(new Date());
+  const [showDatePicker, setShowDatePicker] = useState(false);
   const [selectedWorkers, setSelectedWorkers] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(false);
   const [activeTab, setActiveTab] = useState<'checkin' | 'checkout'>('checkin');
@@ -113,7 +128,7 @@ export function BulkAttendanceTab({ accessToken }: BulkAttendanceTabProps) {
           `https://${projectId}.supabase.co/functions/v1/make-server-689d7d60/attendance`,
           {
             method: 'POST',
-          headers: {
+            headers: {
               'Authorization': `Bearer ${token}`,
               'Content-Type': 'application/json',
             },
@@ -184,16 +199,16 @@ export function BulkAttendanceTab({ accessToken }: BulkAttendanceTabProps) {
               </SelectTrigger>
               <SelectPortal>
                 <SelectBackdrop />
-              <SelectContent>
+                <SelectContent>
                   <SelectDragIndicatorWrapper>
                     <SelectDragIndicator />
                   </SelectDragIndicatorWrapper>
-                {sites.map((site) => (
+                  {sites.map((site) => (
                     <SelectItem key={site.id} label={site.name} value={site.id}>
                       <SelectItemText>{site.name}</SelectItemText>
-                  </SelectItem>
-                ))}
-              </SelectContent>
+                    </SelectItem>
+                  ))}
+                </SelectContent>
               </SelectPortal>
             </Select>
           </View>
@@ -283,7 +298,7 @@ export function BulkAttendanceTab({ accessToken }: BulkAttendanceTabProps) {
               {activeTab === 'checkin' ? 'Morning Check-In:' : 'Evening Check-Out:'}
             </Text>
             <Text style={styles.sectionSubtitle}>
-              {activeTab === 'checkin' 
+              {activeTab === 'checkin'
                 ? 'Tap each worker as they arrive at the site'
                 : 'Tap each worker as they leave the site'}
             </Text>
@@ -303,7 +318,7 @@ export function BulkAttendanceTab({ accessToken }: BulkAttendanceTabProps) {
                       </View>
                     </View>
                     <View style={styles.workerActions}>
-        <Button
+                      <Button
                         onPress={() => handleBulkMark(activeTab === 'checkin' ? 'present' : 'absent')}
                         style={styles.checkButton}
                       >
@@ -311,7 +326,7 @@ export function BulkAttendanceTab({ accessToken }: BulkAttendanceTabProps) {
                         <ButtonText style={styles.checkButtonText}>
                           {activeTab === 'checkin' ? 'Check In' : 'Check Out'}
                         </ButtonText>
-        </Button>
+                      </Button>
                       <TouchableOpacity style={styles.moreButton}>
                         <MaterialIcons name="more-vert" size={20} color="#6b7280" />
                       </TouchableOpacity>

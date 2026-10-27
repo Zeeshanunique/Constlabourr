@@ -50,7 +50,7 @@ export function FormField({
   const [isDropdownVisible, setIsDropdownVisible] = useState(false);
   const [showDatePicker, setShowDatePicker] = useState(false);
   const [triggerLayout, setTriggerLayout] = useState<{ x: number; y: number; width: number; height: number } | undefined>(undefined);
-  const triggerRef = useRef<View>(null);
+  const triggerRef = useRef<any>(null);
 
   const renderInput = () => {
     if (type === 'date') {
@@ -136,7 +136,7 @@ export function FormField({
       const handlePress = () => {
         if (disabled) return;
         
-        triggerRef.current?.measure((x, y, width, height, pageX, pageY) => {
+        triggerRef.current?.measure((x: number, y: number, width: number, height: number, pageX: number, pageY: number) => {
           setTriggerLayout({ x: pageX, y: pageY, width, height });
           setIsDropdownVisible(true);
         });
@@ -199,7 +199,7 @@ export function FormField({
       return (
         <Textarea
           size="md"
-          variant="outline"
+          variant="default"
           style={[
             formStyles.formInput,
             isFocused && formStyles.formInputFocused,

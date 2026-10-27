@@ -279,7 +279,7 @@ export function PayrollTab({ accessToken }: PayrollTabProps) {
     }
   };
 
-  const totalAmount = payrollEntries.reduce((sum, entry) => sum + entry.netPay, 0);
+  const totalAmount = payrollEntries.reduce((sum, entry) => sum + (entry.netPay ?? (entry as any).totalNet ?? (entry as any).totalGross ?? 0), 0);
 
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
@@ -376,29 +376,29 @@ export function PayrollTab({ accessToken }: PayrollTabProps) {
               data={payrollEntries}
               keyExtractor={(item) => item.id}
               scrollEnabled={false}
-              renderItem={({ item }) => (
+              renderItem={({ item }: { item: any }) => (
                 <View style={styles.payrollCard}>
                   <View style={styles.payrollCardHeader}>
-                    <Text style={styles.workerName}>{item.workerName}</Text>
+                    <Text style={styles.workerName}>{item.workerName || `Payroll Batch (${item.startDate || ''} to ${item.endDate || ''})`}</Text>
                     <View style={[styles.statusBadge, item.status === 'paid' && styles.statusBadgePaid]}>
                       <Text style={[styles.statusText, item.status === 'paid' && styles.statusTextPaid]}>
                         {item.status}
                       </Text>
                     </View>
                   </View>
-                  <Text style={styles.period}>{item.period}</Text>
+                  <Text style={styles.period}>{item.period || `${item.startDate || ''} - ${item.endDate || ''}`}</Text>
                   <View style={styles.payrollDetails}>
                     <View style={styles.detailItem}>
                       <Text style={styles.detailLabel}>Days Worked</Text>
-                      <Text style={styles.detailValue}>{item.daysWorked}</Text>
+                      <Text style={styles.detailValue}>{item.daysWorked ?? '-'}</Text>
                     </View>
                     <View style={styles.detailItem}>
                       <Text style={styles.detailLabel}>Daily Wage</Text>
-                      <Text style={styles.detailValue}>₹{item.dailyWage}</Text>
+                      <Text style={styles.detailValue}>{item.dailyWage ? `₹${item.dailyWage}` : '-'}</Text>
                     </View>
                     <View style={styles.detailItem}>
                       <Text style={styles.detailLabel}>Net Pay</Text>
-                      <Text style={styles.detailValueNet}>₹{item.netPay}</Text>
+                      <Text style={styles.detailValueNet}>₹{(item.netPay ?? item.totalNet ?? item.totalGross ?? 0).toLocaleString()}</Text>
                     </View>
                   </View>
                   {item.status === 'pending' && (

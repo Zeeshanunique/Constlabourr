@@ -257,7 +257,7 @@ const SelectVirtualizedList = UISelect.VirtualizedList;
 const SelectFlatList = UISelect.FlatList;
 const SelectSectionList = UISelect.SectionList;
 const SelectSectionHeaderText = UISelect.SectionHeaderText;
-const SelectItemText = UISelect.ItemText;
+const SelectItemText = (UISelect as any).ItemText;
 
 export {
   Select,

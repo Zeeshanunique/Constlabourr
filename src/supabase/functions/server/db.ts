@@ -204,6 +204,24 @@ export async function getAgreement(contractorId: string) {
   return data ? { id: data.id, contractorId: data.contractor_id, title: data.title, content: data.content, version: data.version, isActive: data.is_active, createdAt: data.created_at, updatedAt: data.updated_at } : null;
 }
 
+export async function getAllAgreements(contractorId: string) {
+  const { data, error } = await supabase.from('agreements').select('*').eq('contractor_id', contractorId).order('version', { ascending: false });
+  if (error) throw error;
+  return data || [];
+}
+
+export async function getAgreementById(id: string) {
+  const { data, error } = await supabase.from('agreements').select('*').eq('id', id).maybeSingle();
+  if (error) throw error;
+  return data ? { id: data.id, contractorId: data.contractor_id, title: data.title, content: data.content, version: data.version, isActive: data.is_active, createdAt: data.created_at, updatedAt: data.updated_at } : null;
+}
+
+export async function activateAgreement(contractorId: string, id: string) {
+  await supabase.from('agreements').update({ is_active: false }).eq('contractor_id', contractorId);
+  const { error } = await supabase.from('agreements').update({ is_active: true }).eq('id', id);
+  if (error) throw error;
+}
+
 export async function upsertAgreement(a: any) {
   const row = { id: a.id, contractor_id: a.contractorId, title: a.title, content: a.content, version: a.version, is_active: a.isActive, created_at: a.createdAt, updated_at: a.updatedAt };
   const { error } = await supabase.from('agreements').upsert(row);
@@ -229,7 +247,7 @@ export async function getAcceptancesByContractor(contractorId: string) {
 }
 
 // ---- Mappers ----
-function mapProfile(r: any) {
+export function mapProfile(r: any) {
   return { id: r.id, email: r.email, name: r.name, role: r.role, phone: r.phone, aadhaarHash: r.aadhaar_hash, bankDetails: r.bank_details, skillLevel: r.skill_level, dailyWage: Number(r.daily_wage), messCharge: Number(r.mess_charge), contractorId: r.contractor_id, siteId: r.site_id, status: r.status, createdAt: r.created_at, updatedAt: r.updated_at };
 }
 
@@ -253,7 +271,7 @@ function unmapProfile(p: any) {
   return row;
 }
 
-function mapSite(r: any) {
+export function mapSite(r: any) {
   return { id: r.id, contractorId: r.contractor_id, name: r.name, address: r.address, startDate: r.start_date, endDate: r.end_date, foremanId: r.foreman_id, geoFence: r.geo_fence, status: r.status, createdAt: r.created_at, updatedAt: r.updated_at };
 }
 
@@ -273,7 +291,7 @@ function unmapSite(s: any) {
   return row;
 }
 
-function mapAttendance(r: any) {
+export function mapAttendance(r: any) {
   return { id: r.id, workerId: r.worker_id, workerName: r.worker_name, siteId: r.site_id, date: r.date, checkIn: r.check_in, checkOut: r.check_out, breakStart: r.break_start, breakEnd: r.break_end, status: r.status, totalHours: Number(r.total_hours), breakHours: Number(r.break_hours), netWorkHours: Number(r.net_work_hours), regularHours: Number(r.regular_hours), overtimeHours: Number(r.overtime_hours), dailyWage: Number(r.daily_wage), hourlyRate: Number(r.hourly_rate), overtimeRate: Number(r.overtime_rate), dailyPayment: Number(r.daily_payment), overtimePayment: Number(r.overtime_payment), totalPayment: Number(r.total_payment), geoLocation: r.geo_location, notes: r.notes, markedBy: r.marked_by, createdAt: r.created_at, updatedAt: r.updated_at };
 }
 
@@ -308,10 +326,10 @@ function unmapAttendance(a: any) {
   return row;
 }
 
-function mapAdvance(r: any) {
+export function mapAdvance(r: any) {
   return { id: r.id, workerId: r.worker_id, amount: Number(r.amount), date: r.date, reason: r.reason, status: r.status, givenBy: r.given_by, deductedAt: r.deducted_at, createdAt: r.created_at };
 }
 
-function mapPayroll(r: any) {
+export function mapPayroll(r: any) {
   return { id: r.id, siteId: r.site_id, startDate: r.start_date, endDate: r.end_date, items: r.items, totalGross: Number(r.total_gross), totalNet: Number(r.total_net), status: r.status, createdBy: r.created_by, createdAt: r.created_at };
 }

@@ -8,6 +8,20 @@ import { projectId } from '../../utils/supabase/info';
 import { useRoute } from '@react-navigation/native';
 import Toast from 'react-native-toast-message';
 import { FormField } from '../../components/shared/FormField';
+import DateTimePicker from '@react-native-community/datetimepicker';
+import {
+  Select,
+  SelectTrigger,
+  SelectInput,
+  SelectIcon,
+  SelectPortal,
+  SelectBackdrop,
+  SelectContent,
+  SelectDragIndicatorWrapper,
+  SelectDragIndicator,
+  SelectItem,
+  SelectItemText,
+} from '../../components/ui/select';
 
 interface Worker {
   id: string;
@@ -32,7 +46,8 @@ export function BulkAttendanceTab({ accessToken }: BulkAttendanceTabProps) {
   const [workers, setWorkers] = useState<Worker[]>([]);
   const [sites, setSites] = useState<Site[]>([]);
   const [selectedSite, setSelectedSite] = useState('');
-  const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
+  const [selectedDate, setSelectedDate] = useState(new Date());
+  const [showDatePicker, setShowDatePicker] = useState(false);
   const [selectedWorkers, setSelectedWorkers] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(false);
   const [activeTab, setActiveTab] = useState<'checkin' | 'checkout'>('checkin');

@@ -1,0 +1,37 @@
+diff --git a/node_modules/react-native/index.js b/node_modules/react-native/index.js
+index 80fb972..a9aabff 100644
+--- a/node_modules/react-native/index.js
++++ b/node_modules/react-native/index.js
+@@ -436,12 +436,26 @@ if (__DEV__) {
+   Object.defineProperty(module.exports, 'InteractionManager', {
+     configurable: true,
+     get() {
+-      invariant(
+-        false,
+-        'InteractionManager has been removed from react-native core. ' +
+-          'Please refactor long tasks into smaller ones, and use ' +
+-          "'requestIdleCallback' instead.",
+-      );
++      return {
++        Events: { interactionStart: 'interactionStart', interactionComplete: 'interactionComplete' },
++        runAfterInteractions(task) {
++          var handle;
++          var promise = new Promise(function(resolve) {
++            handle = requestAnimationFrame(function() {
++              resolve(typeof task === 'function' ? task() : undefined);
++            });
++          });
++          return {
++            then: promise.then.bind(promise),
++            done: function() { return promise.then.apply(promise, arguments); },
++            cancel: function() { cancelAnimationFrame(handle); },
++          };
++        },
++        createInteractionHandle: function() { return 1; },
++        clearInteractionHandle: function() {},
++        setDeadline: function() {},
++        addListener: function() { return { remove: function() {} }; },
++      };
+     },
+   });
+ }

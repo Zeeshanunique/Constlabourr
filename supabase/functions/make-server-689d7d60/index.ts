@@ -283,7 +283,9 @@ app.get("/make-server-689d7d60/payroll", async (c) => {
   try {
     const user = await authUser(c);
     if (!user) return c.json({ error: 'Unauthorized' }, 401);
-    const records = await db.queryPayroll({ createdBy: user.id });
+    const startDate = c.req.query('startDate');
+    const endDate = c.req.query('endDate');
+    const records = await db.queryPayroll({ createdBy: user.id, startDate, endDate });
     return c.json({ payroll: records });
   } catch (e: any) { return c.json({ error: e.message }, 500); }
 });
@@ -303,6 +305,15 @@ app.put("/make-server-689d7d60/payroll/:id/status", async (c) => {
     if (!user) return c.json({ error: 'Unauthorized' }, 401);
     const { status } = await c.req.json();
     await db.updatePayrollStatus(c.req.param('id'), status);
+    return c.json({ success: true });
+  } catch (e: any) { return c.json({ error: e.message }, 500); }
+});
+
+app.post("/make-server-689d7d60/payroll/:id/mark-paid", async (c) => {
+  try {
+    const user = await authUser(c);
+    if (!user) return c.json({ error: 'Unauthorized' }, 401);
+    await db.updatePayrollStatus(c.req.param('id'), 'paid');
     return c.json({ success: true });
   } catch (e: any) { return c.json({ error: e.message }, 500); }
 });
@@ -351,17 +362,98 @@ app.get("/make-server-689d7d60/agreements", async (c) => {
   } catch (e: any) { return c.json({ error: e.message }, 500); }
 });
 
-app.post("/make-server-689d7d60/agreements/accept", async (c) => {
+app.get("/make-server-689d7d60/agreement/list", async (c) => {
   try {
     const user = await authUser(c);
     if (!user) return c.json({ error: 'Unauthorized' }, 401);
     const contractorId = await getContractorId(user.id);
+    const agreements = await db.getAllAgreements(contractorId!);
+    const acceptances = await db.getAcceptancesByContractor(contractorId!);
+    const result = agreements.map((a: any) => ({
+      id: a.id,
+      version: a.version,
+      terms: a.content,
+      effectiveDate: a.created_at,
+      status: a.is_active ? 'active' : 'draft',
+      acceptances: acceptances.filter((acc: any) => acc.agreementId === a.id).length
+    }));
+    return c.json({ agreements: result });
+  } catch (e: any) { return c.json({ error: e.message }, 500); }
+});
+
+app.post("/make-server-689d7d60/agreement/create", async (c) => {
+  try {
+    const user = await authUser(c);
+    if (!user) return c.json({ error: 'Unauthorized' }, 401);
+    const contractorId = await getContractorId(user.id);
+    const { terms, effectiveDate } = await c.req.json();
+    const existing = await db.getAllAgreements(contractorId!);
+    const nextVersion = existing.length > 0 ? Math.max(...existing.map((a: any) => a.version)) + 1 : 1;
+    const newAgreement = {
+      id: crypto.randomUUID(),
+      contractorId: contractorId!,
+      title: 'Worker Employment Agreement',
+      content: terms || '',
+      version: nextVersion,
+      isActive: existing.length === 0,
+      createdAt: effectiveDate || new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+    await db.upsertAgreement(newAgreement);
+    return c.json({ success: true, agreement: newAgreement });
+  } catch (e: any) { return c.json({ error: e.message }, 500); }
+});
+
+app.put("/make-server-689d7d60/agreement/:id", async (c) => {
+  try {
+    const user = await authUser(c);
+    if (!user) return c.json({ error: 'Unauthorized' }, 401);
+    const id = c.req.param('id');
+    const { terms } = await c.req.json();
+    const existing = await db.getAgreementById(id);
+    if (!existing) return c.json({ error: 'Agreement not found' }, 404);
+    const updated = { ...existing, content: terms || existing.content, updatedAt: new Date().toISOString() };
+    await db.upsertAgreement(updated);
+    return c.json({ success: true, agreement: updated });
+  } catch (e: any) { return c.json({ error: e.message }, 500); }
+});
+
+app.post("/make-server-689d7d60/agreement/:id/activate", async (c) => {
+  try {
+    const user = await authUser(c);
+    if (!user) return c.json({ error: 'Unauthorized' }, 401);
+    const contractorId = await getContractorId(user.id);
+    const id = c.req.param('id');
+    await db.activateAgreement(contractorId!, id);
+    return c.json({ success: true });
+  } catch (e: any) { return c.json({ error: e.message }, 500); }
+});
+
+const handleAcceptAgreement = async (c: any) => {
+  try {
+    const user = await authUser(c);
+    if (!user) return c.json({ error: 'Unauthorized' }, 401);
     const body = await c.req.json();
-    const record = { id: crypto.randomUUID(), ...body, workerId: user.id, contractorId, acceptedAt: new Date().toISOString() };
+    const profile = await db.getProfile(user.id);
+    const contractorId = profile?.contractorId || (await getContractorId(user.id));
+    const record = {
+      id: crypto.randomUUID(),
+      agreementId: body.agreementId,
+      agreementVersion: body.agreementVersion,
+      signature: body.signature,
+      workerId: user.id,
+      contractorId,
+      ipAddress: c.req.header('x-forwarded-for') || '',
+      deviceInfo: c.req.header('user-agent') || '',
+      acceptedAt: new Date().toISOString(),
+    };
     await db.insertAcceptance(record);
     return c.json({ success: true, acceptance: record });
   } catch (e: any) { return c.json({ error: e.message }, 500); }
-});
+};
+
+app.post("/make-server-689d7d60/agreements/accept", handleAcceptAgreement);
+app.post("/make-server-689d7d60/agreement/accept", handleAcceptAgreement);
 
 app.get("/make-server-689d7d60/agreements/acceptances", async (c) => {
   try {
@@ -369,7 +461,12 @@ app.get("/make-server-689d7d60/agreements/acceptances", async (c) => {
     if (!user) return c.json({ error: 'Unauthorized' }, 401);
     const contractorId = await getContractorId(user.id);
     const acceptances = await db.getAcceptancesByContractor(contractorId!);
-    return c.json({ acceptances });
+    const workers = await db.getWorkersByContractor(contractorId!);
+    const enriched = acceptances.map((acc: any) => {
+      const w = workers.find((w: any) => w.id === acc.workerId);
+      return { ...acc, workerName: w ? w.name : 'Unknown Worker' };
+    });
+    return c.json({ acceptances: enriched });
   } catch (e: any) { return c.json({ error: e.message }, 500); }
 });
 
@@ -440,10 +537,17 @@ app.get("/make-server-689d7d60/worker/attendance", async (c) => {
     const user = await authUser(c);
     if (!user) return c.json({ error: 'Unauthorized' }, 401);
     const year = c.req.query('year');
+    const month = c.req.query('month');
     let q = db.supabase.from('attendance').select('*').eq('worker_id', user.id);
-    if (year) q = q.gte('date', `${year}-01-01`).lte('date', `${year}-12-31`);
-    const { data } = await q;
-    return c.json({ attendance: data || [] });
+    if (year && month) {
+      const mStr = String(month).padStart(2, '0');
+      q = q.gte('date', `${year}-${mStr}-01`).lte('date', `${year}-${mStr}-31`);
+    } else if (year) {
+      q = q.gte('date', `${year}-01-01`).lte('date', `${year}-12-31`);
+    }
+    const { data, error } = await q;
+    if (error) throw error;
+    return c.json({ attendance: (data || []).map(db.mapAttendance) });
   } catch (e: any) { return c.json({ error: e.message }, 500); }
 });
 
@@ -453,12 +557,17 @@ app.get("/make-server-689d7d60/agreement/status", async (c) => {
     if (!user) return c.json({ error: 'Unauthorized' }, 401);
     const profile = await db.getProfile(user.id);
     const contractorId = profile?.contractorId;
-    if (!contractorId) return c.json({ agreement: null, needsAcceptance: false });
+    if (!contractorId) return c.json({ agreement: null, currentAgreement: null, needsAcceptance: false });
     const activeAgreement = await db.getAgreement(contractorId);
-    if (!activeAgreement) return c.json({ agreement: null, needsAcceptance: false });
+    if (!activeAgreement) return c.json({ agreement: null, currentAgreement: null, needsAcceptance: false });
     const acceptance = await db.getWorkerAcceptance(user.id);
     const needsAcceptance = !acceptance || acceptance.agreementVersion < activeAgreement.version;
-    return c.json({ agreement: activeAgreement, needsAcceptance, acceptedVersion: acceptance?.agreementVersion });
+    return c.json({
+      agreement: activeAgreement,
+      currentAgreement: activeAgreement,
+      needsAcceptance,
+      acceptedVersion: acceptance?.agreementVersion
+    });
   } catch (e: any) { return c.json({ error: e.message }, 500); }
 });
 
@@ -467,9 +576,29 @@ app.post("/make-server-689d7d60/payroll/process", async (c) => {
     const user = await authUser(c);
     if (!user) return c.json({ error: 'Unauthorized' }, 401);
     const { siteId, startDate, endDate } = await c.req.json();
-    const { data: att } = await db.supabase.from('attendance').select('worker_id, total_payment').eq('site_id', siteId).gte('date', startDate).lte('date', endDate);
-    const totalGross = att?.reduce((sum, a) => sum + Number(a.total_payment || 0), 0) || 0;
-    const record = { id: crypto.randomUUID(), siteId, startDate, endDate, items: [], totalGross, totalNet: totalGross, status: 'pending', createdBy: user.id, createdAt: new Date().toISOString() };
+    let q = db.supabase.from('attendance').select('worker_id, total_payment, date').gte('date', startDate).lte('date', endDate);
+    if (siteId) {
+      q = q.eq('site_id', siteId);
+    } else {
+      const contractorId = await getContractorId(user.id);
+      const sites = await db.getSitesByContractor(contractorId!);
+      const siteIds = sites.map((s: any) => s.id);
+      if (siteIds.length > 0) q = q.in('site_id', siteIds);
+    }
+    const { data: att } = await q;
+    const totalGross = (att || []).reduce((sum: number, a: any) => sum + Number(a.total_payment || 0), 0);
+    const record = {
+      id: crypto.randomUUID(),
+      siteId: siteId || null,
+      startDate,
+      endDate,
+      items: [],
+      totalGross,
+      totalNet: totalGross,
+      status: 'pending',
+      createdBy: user.id,
+      createdAt: new Date().toISOString()
+    };
     await db.insertPayroll(record);
     return c.json({ success: true, payroll: record });
   } catch (e: any) { return c.json({ error: e.message }, 500); }
@@ -479,8 +608,67 @@ app.get("/make-server-689d7d60/reports", async (c) => {
   try {
     const user = await authUser(c);
     if (!user) return c.json({ error: 'Unauthorized' }, 401);
-    const type = c.req.query('type');
-    return c.json({ reports: { type, data: [] }});
+    const contractorId = await getContractorId(user.id);
+    const workers = await db.getWorkersByContractor(contractorId!);
+    const sites = await db.getSitesByContractor(contractorId!);
+    const siteIds = sites.map((s: any) => s.id);
+
+    // 1. Skill distribution
+    const skillCounts: Record<string, number> = { 'Unskilled': 0, 'Semi-skilled': 0, 'Skilled': 0 };
+    workers.forEach((w: any) => {
+      const level = (w.skillLevel || 'unskilled').toLowerCase();
+      if (level.includes('semi')) skillCounts['Semi-skilled'] = (skillCounts['Semi-skilled'] || 0) + 1;
+      else if (level.includes('skill')) skillCounts['Skilled'] = (skillCounts['Skilled'] || 0) + 1;
+      else skillCounts['Unskilled'] = (skillCounts['Unskilled'] || 0) + 1;
+    });
+
+    // 2. Attendance for last 7 days
+    const days: string[] = [];
+    const dayLabels: string[] = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+    const labels: string[] = [];
+    const presentCounts: number[] = [];
+    const absentCounts: number[] = [];
+
+    for (let i = 6; i >= 0; i--) {
+      const d = new Date();
+      d.setDate(d.getDate() - i);
+      const iso = d.toISOString().split('T')[0];
+      days.push(iso);
+      labels.push(dayLabels[d.getDay()]);
+    }
+
+    let attRecords: any[] = [];
+    if (siteIds.length > 0) {
+      const { data } = await db.supabase.from('attendance').select('date, status').in('site_id', siteIds).gte('date', days[0]).lte('date', days[6]);
+      attRecords = data || [];
+    }
+
+    days.forEach((day) => {
+      const onDay = attRecords.filter((a: any) => a.date === day);
+      presentCounts.push(onDay.filter((a: any) => a.status === 'present' || a.status === 'half-day').length);
+      absentCounts.push(onDay.filter((a: any) => a.status === 'absent').length);
+    });
+
+    // 3. Payroll summaries
+    const payrollRecords = await db.queryPayroll({ createdBy: user.id });
+    const payrollLabels = payrollRecords.slice(0, 4).map((p: any) => `${p.startDate?.slice(5)} to ${p.endDate?.slice(5)}`);
+    const payrollAmounts = payrollRecords.slice(0, 4).map((p: any) => p.totalGross || 0);
+
+    return c.json({
+      attendance: {
+        labels: labels.length > 0 ? labels : ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'],
+        present: presentCounts.length > 0 ? presentCounts : [0, 0, 0, 0, 0, 0, 0],
+        absent: absentCounts.length > 0 ? absentCounts : [0, 0, 0, 0, 0, 0, 0],
+      },
+      payroll: {
+        labels: payrollLabels.length > 0 ? payrollLabels : ['Week 1', 'Week 2', 'Week 3', 'Week 4'],
+        amounts: payrollAmounts.length > 0 ? payrollAmounts : [0, 0, 0, 0],
+      },
+      workersBySkill: {
+        labels: Object.keys(skillCounts),
+        values: Object.values(skillCounts),
+      },
+    });
   } catch (e: any) { return c.json({ error: e.message }, 500); }
 });
 

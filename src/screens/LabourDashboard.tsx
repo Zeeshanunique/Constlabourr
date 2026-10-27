@@ -49,7 +49,7 @@ export function ModernLabourDashboard({ accessToken }: LabourDashboardProps) {
       );
       const data = await response.json();
       
-      if (data.currentAgreement && data.needsAcceptance) {
+      if ((data.currentAgreement || data.agreement) && data.needsAcceptance) {
         setNeedsAgreementAcceptance(true);
       }
     } catch (error) {

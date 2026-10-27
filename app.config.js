@@ -26,6 +26,11 @@ export default {
       package: "com.constlabour.app"
     },
     scheme: "constlabour",
+    plugins: [
+      "@react-native-community/datetimepicker",
+      "expo-font",
+      "expo-secure-store"
+    ],
     extra: {
       eas: {
         projectId: "" // Will be set after running 'eas init'

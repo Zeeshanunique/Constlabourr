@@ -3,18 +3,17 @@ import {
   View,
   Text,
   StyleSheet,
-  Image,
   TouchableOpacity,
-  SafeAreaView,
   Dimensions,
   Animated,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import { StackNavigationProp } from '@react-navigation/stack';
 import { AuthStackParamList } from '../navigation/AuthNavigator';
 import { ChevronDown, Check, Globe } from 'lucide-react-native';
-
-const { width } = Dimensions.get('window');
+import { colors, shadows, radii } from '../styles/theme';
+import { BrandLogo } from '../components/shared/BrandLogo';
 
 interface LanguageOption {
   code: string;
@@ -40,14 +39,14 @@ export function LanguageSelectionScreen() {
     if (isOpen) {
       Animated.timing(dropdownHeight, {
         toValue: 0,
-        duration: 200,
+        duration: 180,
         useNativeDriver: false,
       }).start(() => setIsOpen(false));
     } else {
       setIsOpen(true);
       Animated.timing(dropdownHeight, {
         toValue: 240,
-        duration: 250,
+        duration: 220,
         useNativeDriver: false,
       }).start();
     }
@@ -59,39 +58,33 @@ export function LanguageSelectionScreen() {
   };
 
   const handleContinue = () => {
-    // Navigate to Login screen
     navigation.navigate('Login');
   };
 
   return (
     <SafeAreaView style={styles.container}>
       <View style={styles.content}>
-        {/* Header Section */}
+        {/* Top Header & Brand Identity */}
         <View style={styles.header}>
-          <View style={styles.logoContainer}>
-            <View style={styles.logoGlow}>
-              <Image
-                source={require('../../assets/icon.png')}
-                style={styles.logoImage}
-                resizeMode="contain"
-              />
-            </View>
-          </View>
-          <Text style={styles.appName}>ConstLabour</Text>
-          <Text style={styles.title}>Select your preferred{'\n'}language</Text>
+          <BrandLogo size={52} showText={true} subtitle="FIELD OPERATIONS OS v3.4" />
+          <Text style={styles.screenTitle}>Select Operational{'\n'}Language</Text>
+          <Text style={styles.screenSubtitle}>अपनी कार्य भाषा चुनें / Choose preferred vernacular</Text>
         </View>
 
-        {/* Dropdown Card Container */}
+        {/* Dropdown Card */}
         <View style={styles.card}>
+          <Text style={styles.inputLabel}>PRIMARY LANGUAGE</Text>
           <TouchableOpacity
             style={[styles.dropdownButton, isOpen && styles.dropdownButtonActive]}
             onPress={toggleDropdown}
             activeOpacity={0.8}
           >
-            <View style={styles.dropdownButtonLeft}>
-              <Globe size={20} color="#2563eb" style={styles.globeIcon} />
+            <View style={styles.dropdownLeft}>
+              <View style={styles.globeBox}>
+                <Globe size={18} color={colors.accent} />
+              </View>
               <Text style={styles.selectedText}>
-                {selectedLanguage.label} ({selectedLanguage.nativeLabel})
+                {selectedLanguage.nativeLabel} ({selectedLanguage.label})
               </Text>
             </View>
             <Animated.View
@@ -106,7 +99,7 @@ export function LanguageSelectionScreen() {
                 ],
               }}
             >
-              <ChevronDown size={20} color="#6b7280" />
+              <ChevronDown size={20} color={colors.textMuted} />
             </Animated.View>
           </TouchableOpacity>
 
@@ -124,12 +117,31 @@ export function LanguageSelectionScreen() {
                     <Text style={[styles.dropdownItemText, isSelected && styles.dropdownItemTextActive]}>
                       {lang.nativeLabel} <Text style={styles.dropdownItemSubText}>({lang.label})</Text>
                     </Text>
-                    {isSelected && <Check size={18} color="#2563eb" />}
+                    {isSelected && <Check size={18} color={colors.accent} />}
                   </TouchableOpacity>
                 );
               })}
             </Animated.View>
           )}
+
+          {/* Quick Language Badges Grid */}
+          <View style={styles.quickBadgeGrid}>
+            {LANGUAGES.map((lang) => {
+              const isSelected = selectedLanguage.code === lang.code;
+              return (
+                <TouchableOpacity
+                  key={lang.code}
+                  style={[styles.quickBadge, isSelected && styles.quickBadgeActive]}
+                  onPress={() => setSelectedLanguage(lang)}
+                  activeOpacity={0.8}
+                >
+                  <Text style={[styles.quickBadgeText, isSelected && styles.quickBadgeTextActive]}>
+                    {lang.nativeLabel}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
         </View>
 
         {/* Bottom Section */}
@@ -137,9 +149,10 @@ export function LanguageSelectionScreen() {
           <TouchableOpacity
             style={styles.continueButton}
             onPress={handleContinue}
-            activeOpacity={0.9}
+            activeOpacity={0.85}
           >
-            <Text style={styles.continueButtonText}>Continue</Text>
+            <Text style={styles.continueButtonText}>Continue to Portal</Text>
+            <Text style={styles.arrowIcon}>➔</Text>
           </TouchableOpacity>
         </View>
       </View>
@@ -150,155 +163,159 @@ export function LanguageSelectionScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#f8fafc',
+    backgroundColor: colors.background,
   },
   content: {
     flex: 1,
-    paddingHorizontal: 24,
+    paddingHorizontal: 20,
     justifyContent: 'space-between',
-    paddingVertical: 20,
+    paddingVertical: 16,
   },
   header: {
-    alignItems: 'center',
-    marginTop: 60,
+    paddingTop: 16,
+    alignItems: 'flex-start',
   },
-  logoContainer: {
-    width: 110,
-    height: 110,
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginBottom: 20,
-  },
-  logoGlow: {
-    width: 100,
-    height: 100,
-    borderRadius: 50,
-    backgroundColor: '#ffffff',
-    justifyContent: 'center',
-    alignItems: 'center',
-    shadowColor: '#2563eb',
-    shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.15,
-    shadowRadius: 16,
-    elevation: 8,
-    borderWidth: 2,
-    borderColor: '#f1f5f9',
-    overflow: 'hidden',
-  },
-  logoImage: {
-    width: '90%',
-    height: '90%',
-  },
-  appName: {
-    fontSize: 24,
-    fontWeight: '700',
-    color: '#0f172a',
-    letterSpacing: -0.5,
-    marginBottom: 16,
-  },
-  title: {
-    fontSize: 32,
+  screenTitle: {
+    fontSize: 26,
     fontWeight: '800',
-    color: '#0f172a',
-    textAlign: 'center',
-    lineHeight: 40,
-    letterSpacing: -0.8,
+    color: colors.text,
+    letterSpacing: -0.5,
+    marginTop: 24,
+    lineHeight: 32,
+  },
+  screenSubtitle: {
+    fontSize: 13,
+    color: colors.textMuted,
+    marginTop: 6,
   },
   card: {
-    backgroundColor: '#ffffff',
-    borderRadius: 16,
-    padding: 16,
-    shadowColor: '#0f172a',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.05,
-    shadowRadius: 12,
-    elevation: 4,
-    width: '100%',
-    marginVertical: 40,
+    backgroundColor: colors.surface,
+    borderRadius: radii.xl,
+    padding: 20,
     borderWidth: 1,
-    borderColor: '#f1f5f9',
+    borderColor: colors.border,
+    ...shadows.card,
+  },
+  inputLabel: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: colors.textMuted,
+    letterSpacing: 0.8,
+    marginBottom: 8,
   },
   dropdownButton: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
+    backgroundColor: colors.surfaceSubtle,
     borderWidth: 1.5,
-    borderColor: '#e2e8f0',
-    borderRadius: 12,
-    paddingHorizontal: 16,
-    paddingVertical: 14,
-    backgroundColor: '#f8fafc',
-    minHeight: 52,
+    borderColor: colors.borderDark,
+    borderRadius: radii.md,
+    paddingHorizontal: 12,
+    height: 52,
   },
   dropdownButtonActive: {
-    borderColor: '#3b82f6',
-    backgroundColor: '#ffffff',
+    borderColor: colors.accent,
   },
-  dropdownButtonLeft: {
+  dropdownLeft: {
     flexDirection: 'row',
     alignItems: 'center',
-    flex: 1,
   },
-  globeIcon: {
-    marginRight: 12,
+  globeBox: {
+    width: 32,
+    height: 32,
+    borderRadius: radii.sm,
+    backgroundColor: '#FFF7ED',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 10,
   },
   selectedText: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#334155',
+    fontSize: 15,
+    fontWeight: '700',
+    color: colors.text,
   },
   dropdownMenu: {
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.borderDark,
+    borderRadius: radii.md,
+    marginTop: 6,
     overflow: 'hidden',
-    marginTop: 8,
   },
   dropdownItem: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
+    paddingHorizontal: 14,
     paddingVertical: 12,
-    paddingHorizontal: 12,
-    borderRadius: 8,
-    marginVertical: 2,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.border,
   },
   dropdownItemActive: {
-    backgroundColor: '#eff6ff',
+    backgroundColor: '#FFF7ED',
   },
   dropdownItemText: {
-    fontSize: 16,
-    color: '#475569',
-    fontWeight: '500',
+    fontSize: 14,
+    fontWeight: '600',
+    color: colors.text,
   },
   dropdownItemTextActive: {
-    color: '#2563eb',
-    fontWeight: '600',
+    fontWeight: '800',
+    color: colors.accent,
   },
   dropdownItemSubText: {
-    fontSize: 14,
-    color: '#94a3b8',
-    fontWeight: '400',
+    color: colors.textMuted,
+    fontSize: 12,
+  },
+  quickBadgeGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginTop: 18,
+  },
+  quickBadge: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: radii.pill,
+    backgroundColor: colors.surfaceSubtle,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  quickBadgeActive: {
+    backgroundColor: colors.primary,
+    borderColor: colors.primary,
+  },
+  quickBadgeText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: colors.textMuted,
+  },
+  quickBadgeTextActive: {
+    color: '#FFFFFF',
   },
   footer: {
-    marginBottom: 20,
-    width: '100%',
+    paddingBottom: 12,
   },
   continueButton: {
-    width: '100%',
-    backgroundColor: '#2563eb',
-    borderRadius: 12,
-    paddingVertical: 16,
+    flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    shadowColor: '#2563eb',
-    shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.3,
-    shadowRadius: 10,
-    elevation: 6,
-    minHeight: 54,
+    backgroundColor: colors.accent,
+    height: 52,
+    borderRadius: radii.md,
+    ...shadows.hero,
   },
   continueButtonText: {
-    color: '#ffffff',
-    fontSize: 18,
-    fontWeight: '700',
-    letterSpacing: -0.3,
+    fontSize: 15,
+    fontWeight: '800',
+    color: '#FFFFFF',
+    letterSpacing: 0.3,
+  },
+  arrowIcon: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: '#FFFFFF',
+    marginLeft: 8,
   },
 });

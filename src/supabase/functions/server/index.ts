@@ -216,15 +216,93 @@ app.delete("/make-server-689d7d60/sites/:id", async (c) => {
 });
 
 // --- Part 2 will be appended: attendance, payroll, reports, dashboard, agreements ---
+function getTodayIST(): string {
+  try {
+    return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata' }).format(new Date());
+  } catch {
+    return new Date().toISOString().split('T')[0];
+  }
+}
+
+function getCurrentISTHour(): number {
+  try {
+    const formatter = new Intl.DateTimeFormat('en-US', {
+      timeZone: 'Asia/Kolkata',
+      hour: 'numeric',
+      hour12: false,
+    });
+    return parseInt(formatter.format(new Date()), 10);
+  } catch {
+    return new Date().getUTCHours() + 5.5;
+  }
+}
+
 // ATTENDANCE
 app.post("/make-server-689d7d60/attendance", async (c) => {
   try {
     const user = await authUser(c);
     if (!user) return c.json({ error: 'Unauthorized' }, 401);
     const body = await c.req.json();
-    const existing = await db.findExistingAttendance(body.workerId, body.siteId, body.date);
-    if (existing) return c.json({ error: 'Attendance already marked for this date' }, 400);
-    const record = { id: crypto.randomUUID(), ...body, createdAt: new Date().toISOString() };
+
+    const todayIST = getTodayIST();
+    if (body.date && body.date > todayIST) {
+      return c.json({ error: 'Cannot mark attendance for future dates' }, 400);
+    }
+
+    const shift = db.normalizeShift(body.shift);
+    if (body.date === todayIST && shift === 'night') {
+      const currentHour = getCurrentISTHour();
+      if (currentHour < 19) {
+        return c.json({ error: 'Night shift has not started yet for today (begins at 07:00 PM). Attendance cannot be marked in advance.' }, 400);
+      }
+    }
+    const existing = await db.findExistingAttendance(body.workerId, body.siteId, body.date, shift);
+
+    // Resolve worker wage if not supplied in body
+    let dailyWage = body.dailyWage;
+    let dailyPayment = body.dailyPayment;
+    let totalPayment = body.totalPayment;
+    if (dailyWage === undefined || dailyPayment === undefined || totalPayment === undefined) {
+      const worker = await db.getProfile(body.workerId);
+      const wage = worker?.dailyWage || 0;
+      dailyWage = dailyWage !== undefined ? dailyWage : wage;
+      if (body.status === 'present') {
+        dailyPayment = wage;
+        totalPayment = wage;
+      } else if (body.status === 'half-day') {
+        dailyPayment = wage / 2;
+        totalPayment = wage / 2;
+      } else {
+        dailyPayment = 0;
+        totalPayment = 0;
+      }
+    }
+
+    if (existing) {
+      const updated = {
+        ...existing,
+        ...body,
+        shift,
+        dailyWage,
+        dailyPayment,
+        totalPayment,
+        markedBy: user.id,
+        updatedAt: new Date().toISOString()
+      };
+      await db.upsertAttendance(updated);
+      return c.json({ success: true, attendance: updated });
+    }
+
+    const record = { 
+      id: crypto.randomUUID(), 
+      ...body, 
+      shift,
+      dailyWage,
+      dailyPayment,
+      totalPayment,
+      markedBy: user.id,
+      createdAt: new Date().toISOString() 
+    };
     await db.upsertAttendance(record);
     return c.json({ success: true, attendance: record });
   } catch (e: any) { return c.json({ error: e.message }, 500); }
@@ -237,9 +315,10 @@ app.get("/make-server-689d7d60/attendance", async (c) => {
     const workerId = c.req.query('workerId');
     const siteId = c.req.query('siteId');
     const date = c.req.query('date');
+    const shift = c.req.query('shift');
     const startDate = c.req.query('startDate');
     const endDate = c.req.query('endDate');
-    const records = await db.queryAttendance({ workerId, siteId, date, startDate, endDate });
+    const records = await db.queryAttendance({ workerId, siteId, date, shift, startDate, endDate });
     return c.json({ attendance: records });
   } catch (e: any) { return c.json({ error: e.message }, 500); }
 });
@@ -250,9 +329,49 @@ app.put("/make-server-689d7d60/attendance/:id", async (c) => {
     if (!user) return c.json({ error: 'Unauthorized' }, 401);
     const id = c.req.param('id');
     const body = await c.req.json();
+
+    const todayIST = getTodayIST();
+    if (body.date && body.date > todayIST) {
+      return c.json({ error: 'Cannot update attendance to a future date' }, 400);
+    }
+
     const existing = await db.getAttendanceById(id);
     if (!existing) return c.json({ error: 'Not found' }, 404);
-    const updated = { ...existing, ...body, updatedAt: new Date().toISOString() };
+
+    const targetDate = body.date || existing.date;
+    const shift = body.shift ? db.normalizeShift(body.shift) : (existing.shift ? db.normalizeShift(existing.shift) : 'day');
+    if (targetDate === todayIST && shift === 'night') {
+      const currentHour = getCurrentISTHour();
+      if (currentHour < 19) {
+        return c.json({ error: 'Night shift has not started yet for today (begins at 07:00 PM). Attendance cannot be updated in advance.' }, 400);
+      }
+    }
+
+    let dailyWage = body.dailyWage !== undefined ? body.dailyWage : existing.dailyWage;
+    let dailyPayment = body.dailyPayment !== undefined ? body.dailyPayment : existing.dailyPayment;
+    let totalPayment = body.totalPayment !== undefined ? body.totalPayment : existing.totalPayment;
+
+    if (body.status && body.status !== existing.status) {
+      if (body.status === 'present') {
+        dailyPayment = dailyWage;
+        totalPayment = dailyWage + (existing.overtimePayment || 0);
+      } else if (body.status === 'half-day') {
+        dailyPayment = dailyWage / 2;
+        totalPayment = (dailyWage / 2) + (existing.overtimePayment || 0);
+      } else if (body.status === 'absent') {
+        dailyPayment = 0;
+        totalPayment = 0;
+      }
+    }
+
+    const updated = { 
+      ...existing, 
+      ...body, 
+      dailyWage,
+      dailyPayment,
+      totalPayment,
+      updatedAt: new Date().toISOString() 
+    };
     await db.upsertAttendance(updated);
     return c.json({ success: true, attendance: updated });
   } catch (e: any) { return c.json({ error: e.message }, 500); }
@@ -286,7 +405,17 @@ app.get("/make-server-689d7d60/payroll", async (c) => {
     const startDate = c.req.query('startDate');
     const endDate = c.req.query('endDate');
     const records = await db.queryPayroll({ createdBy: user.id, startDate, endDate });
-    return c.json({ payroll: records });
+    const allItems: any[] = [];
+    records.forEach(r => {
+      if (Array.isArray(r.items) && r.items.length > 0) {
+        r.items.forEach((item: any) => {
+          allItems.push({ ...item, payrollId: r.id, cycleStart: r.startDate, cycleEnd: r.endDate });
+        });
+      } else {
+        allItems.push(r);
+      }
+    });
+    return c.json({ payroll: allItems, batches: records });
   } catch (e: any) { return c.json({ error: e.message }, 500); }
 });
 
@@ -476,16 +605,122 @@ app.get("/make-server-689d7d60/dashboard/stats", async (c) => {
     const user = await authUser(c);
     if (!user) return c.json({ error: 'Unauthorized' }, 401);
     const contractorId = await getContractorId(user.id);
-    const workers = await db.getWorkersByContractor(contractorId!);
-    const sites = await db.getSitesByContractor(contractorId!);
+    const allWorkers = await db.getWorkersByContractor(contractorId!);
+    const allSites = await db.getSitesByContractor(contractorId!);
+
+    const siteId = c.req.query('siteId');
+    const dateParam = c.req.query('date');
+    const today = dateParam || new Date().toISOString().split('T')[0];
+
+    // Filter by site if specified
+    const isFiltered = Boolean(siteId && siteId !== 'all');
+    const targetSites = isFiltered
+      ? allSites.filter((s: any) => s.id === siteId)
+      : allSites;
+    const targetWorkers = isFiltered
+      ? allWorkers.filter((w: any) => w.siteId === siteId)
+      : allWorkers;
+
+    const targetSiteIds = targetSites.map((s: any) => s.id);
+
+    let presentToday = 0;
+    let halfDayToday = 0;
+    let absentToday = 0;
+    let totalWagesToday = 0;
+    let recentActivity: any[] = [];
+
+    if (targetSiteIds.length > 0) {
+      // Query today's attendance for the target sites
+      const { data: todayAttendance, error: attError } = await db.supabase
+        .from('attendance')
+        .select('*')
+        .in('site_id', targetSiteIds)
+        .eq('date', today);
+
+      if (!attError && todayAttendance) {
+        for (const a of todayAttendance) {
+          if (a.status === 'present') presentToday++;
+          else if (a.status === 'half-day') halfDayToday++;
+          else if (a.status === 'absent') absentToday++;
+
+          let pay = Number(a.total_payment || 0);
+          if (!pay) {
+            const worker = allWorkers.find((w: any) => w.id === a.worker_id);
+            const baseWage = Number(worker?.dailyWage || 800);
+            if (a.status === 'present') pay = baseWage;
+            else if (a.status === 'half-day') pay = Math.round(baseWage / 2);
+          }
+          totalWagesToday += pay;
+        }
+      }
+
+      // Query recent attendance punches for activity feed
+      const { data: recentPunches } = await db.supabase
+        .from('attendance')
+        .select('*')
+        .in('site_id', targetSiteIds)
+        .order('created_at', { ascending: false })
+        .limit(8);
+
+      if (recentPunches) {
+        recentActivity = recentPunches.map((p: any) => {
+          const w = allWorkers.find((wrk: any) => wrk.id === p.worker_id);
+          const s = allSites.find((st: any) => st.id === p.site_id);
+          return {
+            id: p.id,
+            workerId: p.worker_id,
+            workerName: w?.name || p.worker_name || 'Worker',
+            trade: w?.skillLevel ? w.skillLevel.toUpperCase() : 'GENERAL',
+            siteId: p.site_id,
+            siteName: s?.name || 'Site',
+            status: p.status,
+            shift: p.shift || 'day',
+            checkIn: p.check_in,
+            checkOut: p.check_out,
+            date: p.date,
+            createdAt: p.created_at,
+          };
+        });
+      }
+    }
+
+    const totalWorkers = targetWorkers.length;
+    const activeWorkers = presentToday + halfDayToday;
+    const unmarkedToday = Math.max(0, totalWorkers - (presentToday + halfDayToday + absentToday));
+    const activeSites = isFiltered
+      ? targetSites.filter((s: any) => s.status === 'active').length
+      : allSites.filter((s: any) => s.status === 'active').length;
+    const totalSites = isFiltered ? 1 : allSites.length;
+    const turnoutPercentage = totalWorkers > 0
+      ? Math.min(100, Math.round((activeWorkers / totalWorkers) * 100))
+      : 0;
+
     return c.json({
       stats: {
-        totalWorkers: workers.length,
-        activeSites: sites.filter((s:any) => s.status === 'active').length,
-        totalSites: sites.length
-      }
+        totalWorkers,
+        activeWorkers,
+        presentToday,
+        halfDayToday,
+        absentToday,
+        unmarkedToday,
+        totalSites,
+        activeSites,
+        totalWagesToday,
+        turnoutPercentage,
+        date: today,
+        siteId: siteId || 'all',
+      },
+      recentActivity,
+      sites: allSites.map((s: any) => ({
+        id: s.id,
+        name: s.name,
+        address: s.address,
+        status: s.status,
+      })),
     });
-  } catch (e: any) { return c.json({ error: e.message }, 500); }
+  } catch (e: any) {
+    return c.json({ error: e.message }, 500);
+  }
 });
 
 // ADDITIONAL MISSING ROUTES
@@ -576,25 +811,65 @@ app.post("/make-server-689d7d60/payroll/process", async (c) => {
     const user = await authUser(c);
     if (!user) return c.json({ error: 'Unauthorized' }, 401);
     const { siteId, startDate, endDate } = await c.req.json();
-    let q = db.supabase.from('attendance').select('worker_id, total_payment, date').gte('date', startDate).lte('date', endDate);
+    const contractorId = await getContractorId(user.id);
+    const workers = await db.getWorkersByContractor(contractorId!);
+
+    let q = db.supabase.from('attendance')
+      .select('worker_id, status, total_payment, date')
+      .gte('date', startDate)
+      .lte('date', endDate);
+
     if (siteId) {
       q = q.eq('site_id', siteId);
     } else {
-      const contractorId = await getContractorId(user.id);
       const sites = await db.getSitesByContractor(contractorId!);
       const siteIds = sites.map((s: any) => s.id);
       if (siteIds.length > 0) q = q.in('site_id', siteIds);
     }
     const { data: att } = await q;
-    const totalGross = (att || []).reduce((sum: number, a: any) => sum + Number(a.total_payment || 0), 0);
+    const attRecords = att || [];
+
+    const { data: advances } = await db.supabase.from('advances')
+      .select('*')
+      .eq('status', 'pending');
+    const pendingAdvances = advances || [];
+
+    const items = workers.map((worker: any) => {
+      const workerAtt = attRecords.filter((a: any) => a.worker_id === worker.id);
+      const presentDays = workerAtt.filter((a: any) => a.status === 'present').length;
+      const halfDays = workerAtt.filter((a: any) => a.status === 'half-day').length;
+      const daysWorked = presentDays + (halfDays * 0.5);
+
+      const totalWage = workerAtt.reduce((sum: number, a: any) => sum + Number(a.total_payment || 0), 0) || (daysWorked * (worker.dailyWage || 0));
+      const workerAdvances = pendingAdvances.filter((adv: any) => adv.worker_id === worker.id).reduce((sum: number, adv: any) => sum + Number(adv.amount || 0), 0);
+      const deductions = (worker.messCharge || 0) * daysWorked;
+      const netPay = Math.max(0, totalWage - workerAdvances - deductions);
+
+      return {
+        id: crypto.randomUUID(),
+        workerId: worker.id,
+        workerName: worker.name,
+        daysWorked,
+        dailyWage: worker.dailyWage || 0,
+        totalWage,
+        advances: workerAdvances,
+        deductions,
+        netPay,
+        status: 'pending'
+      };
+    }).filter((item: any) => item.daysWorked > 0 || item.advances > 0);
+
+    const totalGross = items.reduce((sum: number, item: any) => sum + item.totalWage, 0);
+    const totalNet = items.reduce((sum: number, item: any) => sum + item.netPay, 0);
+
     const record = {
       id: crypto.randomUUID(),
       siteId: siteId || null,
       startDate,
       endDate,
-      items: [],
+      items,
       totalGross,
-      totalNet: totalGross,
+      totalNet,
       status: 'pending',
       createdBy: user.id,
       createdAt: new Date().toISOString()

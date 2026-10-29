@@ -5,6 +5,7 @@ import { WorkerAttendanceTab } from '../features/attendance/WorkerAttendanceTab'
 import { WorkerProfileTab } from '../features/profile/WorkerProfileTab';
 import { SettingsScreen } from '../screens/SettingsScreen';
 import { MaterialIcons } from '@expo/vector-icons';
+import { colors, shadows } from '../styles/theme';
 
 export type LabourTabParamList = {
   Home: { accessToken: string };
@@ -22,18 +23,29 @@ export function LabourNavigator({ route }: { route: any }) {
     <Tab.Navigator
       screenOptions={{
         headerShown: false,
-        tabBarActiveTintColor: '#2563eb',
-        tabBarInactiveTintColor: '#717182',
+        tabBarActiveTintColor: colors.accent,
+        tabBarInactiveTintColor: colors.textMuted,
+        tabBarLabelStyle: {
+          fontSize: 10,
+          fontWeight: '700',
+          marginBottom: 4,
+        },
         tabBarStyle: {
-          paddingBottom: 5,
-          height: 60,
+          backgroundColor: '#FFFFFF',
+          borderTopWidth: 1,
+          borderTopColor: colors.border,
+          height: 64,
+          paddingTop: 6,
+          paddingBottom: 8,
+          ...shadows.dock,
         },
       }}
     >
       <Tab.Screen
         name="Home"
         options={{
-          tabBarIcon: ({ color, size }) => <MaterialIcons name="home" size={size} color={color} />,
+          tabBarLabel: 'Dashboard',
+          tabBarIcon: ({ color, size }) => <MaterialIcons name="dashboard" size={size} color={color} />,
         }}
       >
         {(props) => <ModernLabourDashboard {...props} accessToken={accessToken} />}
@@ -41,7 +53,8 @@ export function LabourNavigator({ route }: { route: any }) {
       <Tab.Screen
         name="Attendance"
         options={{
-          tabBarIcon: ({ color, size }) => <MaterialIcons name="calendar-today" size={size} color={color} />,
+          tabBarLabel: 'Attendance',
+          tabBarIcon: ({ color, size }) => <MaterialIcons name="calendar-month" size={size} color={color} />,
         }}
       >
         {(props) => <WorkerAttendanceTab {...props} accessToken={accessToken} />}
@@ -49,7 +62,8 @@ export function LabourNavigator({ route }: { route: any }) {
       <Tab.Screen
         name="Profile"
         options={{
-          tabBarIcon: ({ color, size }) => <MaterialIcons name="person" size={size} color={color} />,
+          tabBarLabel: 'Wage Slip',
+          tabBarIcon: ({ color, size }) => <MaterialIcons name="badge" size={size} color={color} />,
         }}
       >
         {(props) => <WorkerProfileTab {...props} accessToken={accessToken} />}
@@ -58,6 +72,7 @@ export function LabourNavigator({ route }: { route: any }) {
         name="Settings"
         component={SettingsScreen}
         options={{
+          tabBarLabel: 'Settings',
           tabBarIcon: ({ color, size }) => <MaterialIcons name="settings" size={size} color={color} />,
         }}
       />

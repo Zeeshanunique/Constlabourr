@@ -87,11 +87,48 @@ export async function getAttendanceById(id: string) {
   return data ? mapAttendance(data) : null;
 }
 
-export async function queryAttendance(filters: { workerId?: string; siteId?: string; date?: string; startDate?: string; endDate?: string }) {
+export function normalizeShift(s?: string): 'day' | 'night' {
+  if (!s) return 'day';
+  const lower = String(s).toLowerCase();
+  return lower.includes('night') ? 'night' : 'day';
+}
+
+export function sanitizeTime(t: any): string | null {
+  if (!t || typeof t !== 'string') return null;
+  const trimmed = t.replace(/[\u202f\u00a0]/g, ' ').trim();
+  if (!trimmed) return null;
+
+  const match24 = trimmed.match(/^(\d{1,2}):(\d{2})(?::(\d{2}))?$/);
+  if (match24) {
+    const h = match24[1].padStart(2, '0');
+    const m = match24[2];
+    const s = match24[3] || '00';
+    return `${h}:${m}:${s}`;
+  }
+
+  const match12 = trimmed.match(/^(\d{1,2}):(\d{2})(?::(\d{2}))?\s*(am|pm)$/i);
+  if (match12) {
+    let h = parseInt(match12[1], 10);
+    const m = match12[2];
+    const s = match12[3] || '00';
+    const ampm = match12[4].toLowerCase();
+    if (ampm === 'pm' && h < 12) h += 12;
+    if (ampm === 'am' && h === 12) h = 0;
+    return `${String(h).padStart(2, '0')}:${m}:${s}`;
+  }
+
+  return null;
+}
+
+export async function queryAttendance(filters: { workerId?: string; siteId?: string; date?: string; shift?: string; startDate?: string; endDate?: string }) {
   let q = supabase.from('attendance').select('*');
   if (filters.workerId) q = q.eq('worker_id', filters.workerId);
   if (filters.siteId) q = q.eq('site_id', filters.siteId);
   if (filters.date) q = q.eq('date', filters.date);
+  if (filters.shift) {
+    const s = normalizeShift(filters.shift);
+    q = q.in('shift', [s, s === 'day' ? 'Day Shift' : 'Night Shift']);
+  }
   if (filters.startDate) q = q.gte('date', filters.startDate);
   if (filters.endDate) q = q.lte('date', filters.endDate);
   const { data, error } = await q;
@@ -99,9 +136,15 @@ export async function queryAttendance(filters: { workerId?: string; siteId?: str
   return (data || []).map(mapAttendance);
 }
 
-export async function findExistingAttendance(workerId: string, siteId: string, date: string) {
-  const { data } = await supabase.from('attendance').select('*')
-    .eq('worker_id', workerId).eq('site_id', siteId).eq('date', date).maybeSingle();
+export async function findExistingAttendance(workerId: string, siteId: string, date: string, shift?: string) {
+  let q = supabase.from('attendance').select('*')
+    .eq('worker_id', workerId).eq('date', date);
+  if (siteId) q = q.eq('site_id', siteId);
+  if (shift) {
+    const s = normalizeShift(shift);
+    q = q.in('shift', [s, s === 'day' ? 'Day Shift' : 'Night Shift']);
+  }
+  const { data } = await q.maybeSingle();
   return data ? mapAttendance(data) : null;
 }
 
@@ -292,7 +335,7 @@ function unmapSite(s: any) {
 }
 
 export function mapAttendance(r: any) {
-  return { id: r.id, workerId: r.worker_id, workerName: r.worker_name, siteId: r.site_id, date: r.date, checkIn: r.check_in, checkOut: r.check_out, breakStart: r.break_start, breakEnd: r.break_end, status: r.status, totalHours: Number(r.total_hours), breakHours: Number(r.break_hours), netWorkHours: Number(r.net_work_hours), regularHours: Number(r.regular_hours), overtimeHours: Number(r.overtime_hours), dailyWage: Number(r.daily_wage), hourlyRate: Number(r.hourly_rate), overtimeRate: Number(r.overtime_rate), dailyPayment: Number(r.daily_payment), overtimePayment: Number(r.overtime_payment), totalPayment: Number(r.total_payment), geoLocation: r.geo_location, notes: r.notes, markedBy: r.marked_by, createdAt: r.created_at, updatedAt: r.updated_at };
+  return { id: r.id, workerId: r.worker_id, workerName: r.worker_name, siteId: r.site_id, date: r.date, shift: r.shift || 'day', checkIn: r.check_in, checkOut: r.check_out, breakStart: r.break_start, breakEnd: r.break_end, status: r.status, totalHours: Number(r.total_hours || 0), breakHours: Number(r.break_hours || 0), netWorkHours: Number(r.net_work_hours || 0), regularHours: Number(r.regular_hours || 0), overtimeHours: Number(r.overtime_hours || 0), dailyWage: Number(r.daily_wage || 0), hourlyRate: Number(r.hourly_rate || 0), overtimeRate: Number(r.overtime_rate || 0), dailyPayment: Number(r.daily_payment || 0), overtimePayment: Number(r.overtime_payment || 0), totalPayment: Number(r.total_payment || 0), geoLocation: r.geo_location, notes: r.notes, markedBy: r.marked_by, createdAt: r.created_at, updatedAt: r.updated_at };
 }
 
 function unmapAttendance(a: any) {
@@ -302,10 +345,11 @@ function unmapAttendance(a: any) {
   if (a.workerName !== undefined) row.worker_name = a.workerName;
   if (a.siteId !== undefined) row.site_id = a.siteId;
   if (a.date !== undefined) row.date = a.date;
-  if (a.checkIn !== undefined) row.check_in = a.checkIn;
-  if (a.checkOut !== undefined) row.check_out = a.checkOut;
-  if (a.breakStart !== undefined) row.break_start = a.breakStart;
-  if (a.breakEnd !== undefined) row.break_end = a.breakEnd;
+  if (a.shift !== undefined) row.shift = normalizeShift(a.shift);
+  if (a.checkIn !== undefined) row.check_in = sanitizeTime(a.checkIn);
+  if (a.checkOut !== undefined) row.check_out = sanitizeTime(a.checkOut);
+  if (a.breakStart !== undefined) row.break_start = sanitizeTime(a.breakStart);
+  if (a.breakEnd !== undefined) row.break_end = sanitizeTime(a.breakEnd);
   if (a.status !== undefined) row.status = a.status;
   if (a.totalHours !== undefined) row.total_hours = a.totalHours;
   if (a.breakHours !== undefined) row.break_hours = a.breakHours;

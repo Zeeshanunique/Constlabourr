@@ -1,13 +1,11 @@
-import React, { useState, useRef } from 'react';
-import { View, StyleSheet, TouchableOpacity, Platform } from 'react-native';
-import { FormControl, FormControlLabel, FormControlLabelText, FormControlHelper, FormControlHelperText, FormControlError, FormControlErrorText } from '@/components/ui/form-control';
-import { Input, InputField } from '@/components/ui/input';
-import { Textarea, TextareaInput } from '@/components/ui/textarea';
+import React, { useState } from 'react';
+import { View, StyleSheet, TouchableOpacity, Platform, TextInput } from 'react-native';
 import { Text } from '@/components/ui/text';
 import { MaterialIcons } from '@expo/vector-icons';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import { formStyles } from './form-styles';
 import { Dropdown } from './Dropdown';
+import { theme } from '@/styles/theme';
 
 interface FormFieldProps {
   label: string;
@@ -40,7 +38,7 @@ export function FormField({
   type = 'text',
   keyboardType,
   secureTextEntry = false,
-  autoCapitalize,
+  autoCapitalize = 'none',
   selectOptions = [],
   disabled = false,
   multiline = false,
@@ -49,26 +47,31 @@ export function FormField({
   const [isFocused, setIsFocused] = useState(false);
   const [isDropdownVisible, setIsDropdownVisible] = useState(false);
   const [showDatePicker, setShowDatePicker] = useState(false);
-  const [triggerLayout, setTriggerLayout] = useState<{ x: number; y: number; width: number; height: number } | undefined>(undefined);
-  const triggerRef = useRef<any>(null);
+  const [isPasswordVisible, setIsPasswordVisible] = useState(false);
+
+  const handleTextChange = (text: string) => {
+    if (onChangeText) onChangeText(text);
+    if (onValueChange) onValueChange(text);
+  };
 
   const renderInput = () => {
     if (type === 'date') {
       const dateValue = value ? new Date(value) : new Date();
-      const displayValue = value ? new Date(value).toLocaleDateString('en-GB', { 
-        day: '2-digit', 
-        month: 'short', 
-        year: 'numeric' 
-      }) : '';
+      const displayValue = value
+        ? new Date(value).toLocaleDateString('en-IN', {
+            day: '2-digit',
+            month: 'short',
+            year: 'numeric',
+          })
+        : '';
 
       const handleDateChange = (event: any, selectedDate?: Date) => {
         if (Platform.OS === 'android') {
           setShowDatePicker(false);
         }
-        
-        if (selectedDate && onChangeText) {
+        if (selectedDate) {
           const dateStr = selectedDate.toISOString().split('T')[0];
-          onChangeText(dateStr);
+          handleTextChange(dateStr);
         }
       };
 
@@ -80,34 +83,30 @@ export function FormField({
             style={[
               formStyles.formInput,
               disabled && { opacity: 0.6 },
-              { backgroundColor: '#ffffff', flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+              {
+                flexDirection: 'row',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                paddingHorizontal: 14,
+              },
             ]}
+            activeOpacity={0.7}
           >
-            <Input
-              variant="outline"
-              size="md"
-              style={[formStyles.formInput, { backgroundColor: '#ffffff', flex: 1, borderWidth: 0 }]}
-              isDisabled={true}
+            <Text
+              style={[
+                formStyles.formInputField,
+                { paddingHorizontal: 0, flex: 1 },
+                !displayValue && formStyles.formInputPlaceholder,
+              ]}
             >
-              <InputField
-                placeholder={placeholder || 'Select date'}
-                style={[formStyles.formInputField, { backgroundColor: 'transparent' }]}
-                placeholderTextColor={formStyles.formInputPlaceholder.color}
-                value={displayValue}
-                editable={false}
-              />
-            </Input>
-            <MaterialIcons 
-              name="calendar-today" 
-              size={20} 
-              color="#6B7280"
-              style={{ marginRight: 8 }}
-            />
+              {displayValue || placeholder || 'Select date (DD-MM-YYYY)'}
+            </Text>
+            <MaterialIcons name="event" size={20} color={theme.colors.slate[500]} />
           </TouchableOpacity>
 
           {showDatePicker && (
             <DateTimePicker
-              value={dateValue}
+              value={isNaN(dateValue.getTime()) ? new Date() : dateValue}
               mode="date"
               display={Platform.OS === 'ios' ? 'spinner' : 'default'}
               onChange={handleDateChange}
@@ -117,12 +116,9 @@ export function FormField({
           )}
 
           {Platform.OS === 'ios' && showDatePicker && (
-            <View style={{ backgroundColor: '#ffffff', padding: 10 }}>
-              <TouchableOpacity
-                onPress={() => setShowDatePicker(false)}
-                style={{ alignSelf: 'flex-end', padding: 8 }}
-              >
-                <Text style={{ color: '#007AFF', fontSize: 16, fontWeight: '600' }}>Done</Text>
+            <View style={{ backgroundColor: '#ffffff', padding: 8, alignItems: 'flex-end' }}>
+              <TouchableOpacity onPress={() => setShowDatePicker(false)}>
+                <Text style={{ color: theme.colors.safetyOrange, fontSize: 15, fontWeight: '700' }}>Done</Text>
               </TouchableOpacity>
             </View>
           )}
@@ -131,65 +127,48 @@ export function FormField({
     }
 
     if (type === 'select') {
-      const selectedOption = selectOptions.find(opt => opt.value === value);
-      
-      const handlePress = () => {
-        if (disabled) return;
-        
-        triggerRef.current?.measure((x: number, y: number, width: number, height: number, pageX: number, pageY: number) => {
-          setTriggerLayout({ x: pageX, y: pageY, width, height });
-          setIsDropdownVisible(true);
-        });
-      };
-      
+      const selectedOption = selectOptions.find((opt) => opt.value === value);
+
       return (
         <>
           <TouchableOpacity
-            ref={triggerRef}
-            onPress={handlePress}
+            onPress={() => !disabled && setIsDropdownVisible(true)}
             disabled={disabled}
             style={[
               formStyles.formInput,
               disabled && { opacity: 0.6 },
-              { backgroundColor: '#ffffff', flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+              {
+                flexDirection: 'row',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                paddingHorizontal: 14,
+              },
             ]}
+            activeOpacity={0.7}
           >
-            <Input
-              variant="outline"
-              size="md"
-              style={[formStyles.formInput, { backgroundColor: '#ffffff', flex: 1, borderWidth: 0 }]}
-              isDisabled={true}
+            <Text
+              style={[
+                formStyles.formInputField,
+                { paddingHorizontal: 0, flex: 1 },
+                !selectedOption && formStyles.formInputPlaceholder,
+              ]}
+              numberOfLines={1}
             >
-              <InputField
-                placeholder={placeholder || `Select ${label.toLowerCase()}`}
-                style={[formStyles.formInputField, { backgroundColor: 'transparent' }]}
-                placeholderTextColor={formStyles.formInputPlaceholder.color}
-                value={selectedOption?.label || ''}
-                editable={false}
-              />
-            </Input>
-            <MaterialIcons 
-              name="arrow-drop-down" 
-              size={24} 
-              color="#6B7280"
-              style={{ marginRight: 8 }}
-            />
+              {selectedOption?.label || placeholder || `Select ${label.toLowerCase()}`}
+            </Text>
+            <MaterialIcons name="expand-more" size={22} color={theme.colors.slate[500]} />
           </TouchableOpacity>
-          
+
           <Dropdown
             visible={isDropdownVisible}
             onClose={() => setIsDropdownVisible(false)}
             options={selectOptions}
             selectedValue={value}
-            onSelect={(selectedValue) => {
-              if (onValueChange) {
-                onValueChange(selectedValue);
-              }
-              if (onChangeText) {
-                onChangeText(selectedValue);
-              }
+            title={`Select ${label.replace(/\*/g, '').trim()}`}
+            onSelect={(val) => {
+              handleTextChange(val);
+              setIsDropdownVisible(false);
             }}
-            triggerLayout={triggerLayout}
           />
         </>
       );
@@ -197,89 +176,94 @@ export function FormField({
 
     if (type === 'textarea') {
       return (
-        <Textarea
-          size="md"
-          variant="default"
+        <View
           style={[
             formStyles.formInput,
             isFocused && formStyles.formInputFocused,
-            disabled && { opacity: 0.6 },
-            { backgroundColor: '#ffffff' },
+            errorText && { borderColor: theme.colors.red[500] },
+            { minHeight: 88, padding: 12 },
           ]}
         >
-          <TextareaInput
+          <TextInput
             value={value}
-            onChangeText={onChangeText}
+            onChangeText={handleTextChange}
             placeholder={placeholder}
             placeholderTextColor={formStyles.formInputPlaceholder.color}
-            style={[formStyles.formInputField, { backgroundColor: 'transparent' }]}
-            multiline={multiline}
+            multiline
             numberOfLines={numberOfLines}
+            style={[formStyles.formInputField, { paddingHorizontal: 0, paddingVertical: 0, textAlignVertical: 'top' }]}
+            editable={!disabled}
             onFocus={() => setIsFocused(true)}
             onBlur={() => setIsFocused(false)}
-            editable={!disabled}
           />
-        </Textarea>
+        </View>
       );
     }
 
+    // Default: text, email, phone, number, password
+    let determinedKeyboardType: any = keyboardType;
+    if (!determinedKeyboardType) {
+      if (type === 'email') determinedKeyboardType = 'email-address';
+      else if (type === 'phone') determinedKeyboardType = 'phone-pad';
+      else if (type === 'number') determinedKeyboardType = 'numeric';
+    }
+
+    const isPassword = type === 'password' || secureTextEntry;
+
     return (
-      <Input
-        size="md"
-        variant="outline"
+      <View
         style={[
           formStyles.formInput,
           isFocused && formStyles.formInputFocused,
-          disabled && { opacity: 0.6 },
-          { backgroundColor: '#ffffff' },
+          errorText && { borderColor: theme.colors.red[500] },
+          { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 14 },
         ]}
       >
-        <InputField
+        <TextInput
           value={value}
-          onChangeText={onChangeText}
+          onChangeText={handleTextChange}
           placeholder={placeholder}
           placeholderTextColor={formStyles.formInputPlaceholder.color}
-          keyboardType={keyboardType || (type === 'email' ? 'email-address' : type === 'number' ? 'numeric' : type === 'phone' ? 'phone-pad' : 'default')}
-          secureTextEntry={secureTextEntry || type === 'password'}
-          autoCapitalize={autoCapitalize || (type === 'email' ? 'none' : 'sentences')}
-          style={[formStyles.formInputField, { backgroundColor: 'transparent' }]}
+          style={[formStyles.formInputField, { flex: 1, paddingHorizontal: 0 }]}
+          editable={!disabled}
+          keyboardType={determinedKeyboardType}
+          secureTextEntry={isPassword && !isPasswordVisible}
+          autoCapitalize={autoCapitalize}
           onFocus={() => setIsFocused(true)}
           onBlur={() => setIsFocused(false)}
-          editable={!disabled}
         />
-      </Input>
+        {isPassword && (
+          <TouchableOpacity
+            onPress={() => setIsPasswordVisible(!isPasswordVisible)}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          >
+            <MaterialIcons
+              name={isPasswordVisible ? 'visibility-off' : 'visibility'}
+              size={20}
+              color={theme.colors.slate[400]}
+            />
+          </TouchableOpacity>
+        )}
+      </View>
     );
   };
 
   return (
-    <FormControl
-      isRequired={required}
-      isInvalid={!!errorText}
-      isDisabled={disabled}
-      style={formStyles.formField}
-    >
-      <FormControlLabel>
-        <FormControlLabelText style={formStyles.formLabelText}>
-          {label}
-          {required && <Text style={{ color: '#dc2626' }}> *</Text>}
-        </FormControlLabelText>
-      </FormControlLabel>
+    <View style={formStyles.formField}>
+      <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 6 }}>
+        <Text style={formStyles.formLabel}>{label.replace(/\*/g, '').trim()}</Text>
+        {required && <Text style={{ color: theme.colors.red[600], marginLeft: 4, fontWeight: '800' }}>*</Text>}
+      </View>
+
       {renderInput()}
-      {helperText && !errorText && (
-        <FormControlHelper>
-          <FormControlHelperText style={formStyles.formHelperText}>
-            {helperText}
-          </FormControlHelperText>
-        </FormControlHelper>
-      )}
-      {errorText && (
-        <FormControlError>
-          <FormControlErrorText style={formStyles.formErrorText}>
-            {errorText}
-          </FormControlErrorText>
-        </FormControlError>
-      )}
-    </FormControl>
+
+      {helperText && !errorText ? (
+        <Text style={formStyles.formHelperText}>{helperText}</Text>
+      ) : null}
+
+      {errorText ? (
+        <Text style={formStyles.formErrorText}>{errorText}</Text>
+      ) : null}
+    </View>
   );
 }
-

@@ -1,15 +1,22 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { View, StyleSheet, FlatList, Alert, TouchableOpacity } from 'react-native';
+import {
+  View,
+  StyleSheet,
+  FlatList,
+  Alert,
+  TouchableOpacity,
+  Text,
+  ActivityIndicator,
+} from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { Box } from '@/components/ui/box';
-import { Text } from '@/components/ui/text';
-import { Button, ButtonText } from '@/components/ui/button';
 import { FormModal } from '@/components/shared/FormModal';
 import { FormField } from '@/components/shared/FormField';
 import { MaterialIcons } from '@expo/vector-icons';
 import { projectId } from '@/utils/supabase/info';
 import { useRoute } from '@react-navigation/native';
 import Toast from 'react-native-toast-message';
+import Svg, { Circle, Line } from 'react-native-svg';
+import { colors, shadows, radii } from '@/styles/theme';
 
 interface Site {
   id: string;
@@ -34,19 +41,17 @@ export function SitesTab({ accessToken }: SitesTabProps) {
   const route = useRoute();
   const token = accessToken || (route.params as any)?.accessToken;
   const tokenRef = useRef(token);
-  
-  // Update tokenRef whenever token changes
+
   useEffect(() => {
-    if (token) {
-      tokenRef.current = token;
-    }
+    if (token) tokenRef.current = token;
   }, [token]);
-  
+
   const [sites, setSites] = useState<Site[]>([]);
   const [foremen, setForemen] = useState<Foreman[]>([]);
   const [loading, setLoading] = useState(false);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingSite, setEditingSite] = useState<Site | null>(null);
+
   const [formData, setFormData] = useState({
     name: '',
     address: '',
@@ -64,22 +69,19 @@ export function SitesTab({ accessToken }: SitesTabProps) {
 
   const fetchSites = async () => {
     if (!token) return;
+    setLoading(true);
     try {
       const response = await fetch(
         `https://${projectId}.supabase.co/functions/v1/make-server-689d7d60/sites`,
-        {
-          headers: { 'Authorization': `Bearer ${token}` },
-        }
+        { headers: { Authorization: `Bearer ${token}` } }
       );
       const data = await response.json();
       setSites(data.sites || []);
     } catch (error) {
       console.error('Error fetching sites:', error);
-      Toast.show({
-        type: 'error',
-        text1: 'Error',
-        text2: 'Failed to fetch sites',
-      });
+      Toast.show({ type: 'error', text1: 'Error', text2: 'Failed to fetch sites' });
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -88,9 +90,7 @@ export function SitesTab({ accessToken }: SitesTabProps) {
     try {
       const response = await fetch(
         `https://${projectId}.supabase.co/functions/v1/make-server-689d7d60/foremen`,
-        {
-          headers: { 'Authorization': `Bearer ${token}` },
-        }
+        { headers: { Authorization: `Bearer ${token}` } }
       );
       const data = await response.json();
       setForemen(data.foremen || []);
@@ -101,22 +101,22 @@ export function SitesTab({ accessToken }: SitesTabProps) {
 
   const handleSubmit = async () => {
     const currentToken = tokenRef.current;
-    
-    if (!currentToken) {
-      Toast.show({
-        type: 'error',
-        text1: 'Error',
-        text2: 'Authentication token not found. Please log in again.',
-      });
+    if (!currentToken) return;
+
+    if (!formData.name.trim()) {
+      Toast.show({ type: 'error', text1: 'Validation Error', text2: 'Please enter site project name' });
       return;
     }
-    
+    if (!formData.address.trim()) {
+      Toast.show({ type: 'error', text1: 'Validation Error', text2: 'Please enter site location address' });
+      return;
+    }
+
     setLoading(true);
-    
     try {
       const siteData = {
-        name: formData.name,
-        address: formData.address,
+        name: formData.name.trim(),
+        address: formData.address.trim(),
         startDate: formData.startDate || null,
         endDate: formData.endDate || null,
         foremanId: formData.foremanId || null,
@@ -128,7 +128,7 @@ export function SitesTab({ accessToken }: SitesTabProps) {
           {
             method: 'PUT',
             headers: {
-              'Authorization': `Bearer ${currentToken}`,
+              Authorization: `Bearer ${currentToken}`,
               'Content-Type': 'application/json',
             },
             body: JSON.stringify(siteData),
@@ -136,50 +136,35 @@ export function SitesTab({ accessToken }: SitesTabProps) {
         );
 
         if (!response.ok) {
-          const error = await response.json();
-          throw new Error(error.error || 'Failed to update site');
+          const errData = await response.json().catch(() => ({}));
+          throw new Error(errData.error || 'Failed to update site configuration');
         }
-
-        Toast.show({
-          type: 'success',
-          text1: 'Success',
-          text2: 'Site updated successfully',
-        });
+        Toast.show({ type: 'success', text1: 'Site Updated', text2: `${siteData.name} details saved.` });
       } else {
         const response = await fetch(
           `https://${projectId}.supabase.co/functions/v1/make-server-689d7d60/sites`,
           {
             method: 'POST',
             headers: {
-              'Authorization': `Bearer ${currentToken}`,
+              Authorization: `Bearer ${currentToken}`,
               'Content-Type': 'application/json',
             },
             body: JSON.stringify(siteData),
           }
         );
-        
-        const responseData = await response.json();
 
         if (!response.ok) {
-          throw new Error(responseData.error || 'Failed to create site');
+          const errData = await response.json().catch(() => ({}));
+          throw new Error(errData.error || 'Failed to establish construction site');
         }
-
-        Toast.show({
-          type: 'success',
-          text1: 'Success',
-          text2: 'Site created successfully',
-        });
+        Toast.show({ type: 'success', text1: 'Site Established', text2: `${siteData.name} active and geo-locked.` });
       }
 
       setIsModalOpen(false);
       resetForm();
       fetchSites();
     } catch (error: any) {
-      Toast.show({
-        type: 'error',
-        text1: 'Error',
-        text2: error.message || 'Failed to save site',
-      });
+      Toast.show({ type: 'error', text1: 'Operation Failed', text2: error.message || 'Operation failed' });
     } finally {
       setLoading(false);
     }
@@ -187,7 +172,7 @@ export function SitesTab({ accessToken }: SitesTabProps) {
 
   const handleDelete = (site: Site) => {
     Alert.alert(
-      'Delete Site',
+      'Delete Construction Site',
       `Are you sure you want to delete ${site.name}?`,
       [
         { text: 'Cancel', style: 'cancel' },
@@ -201,26 +186,15 @@ export function SitesTab({ accessToken }: SitesTabProps) {
                 `https://${projectId}.supabase.co/functions/v1/make-server-689d7d60/sites/${site.id}`,
                 {
                   method: 'DELETE',
-                  headers: { 'Authorization': `Bearer ${token}` },
+                  headers: { Authorization: `Bearer ${token}` },
                 }
               );
 
-              if (!response.ok) {
-                throw new Error('Failed to delete site');
-              }
-
-              Toast.show({
-                type: 'success',
-                text1: 'Success',
-                text2: 'Site deleted successfully',
-              });
+              if (!response.ok) throw new Error('Failed to delete site');
+              Toast.show({ type: 'success', text1: 'Site Deleted', text2: `${site.name} removed.` });
               fetchSites();
             } catch (error: any) {
-              Toast.show({
-                type: 'error',
-                text1: 'Error',
-                text2: error.message || 'Failed to delete site',
-              });
+              Toast.show({ type: 'error', text1: 'Error', text2: error.message });
             }
           },
         },
@@ -251,132 +225,182 @@ export function SitesTab({ accessToken }: SitesTabProps) {
     setEditingSite(null);
   };
 
+  const foremanMap = new Map<string, string>();
+  foremen.forEach((f) => foremanMap.set(f.id, f.name));
+
+  const foremanOptions = foremen.map((f) => ({ label: f.name, value: f.id }));
+
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
-      <View style={styles.content}>
-        {/* Header */}
-        <View style={styles.header}>
-          <View style={styles.headerText}>
-            <Text style={styles.headerTitle}>Sites</Text>
-            <Text style={styles.headerSubtitle}>Manage your construction sites</Text>
+      {/* 1. TOP INDUSTRIAL HEADER */}
+      <View style={styles.header}>
+        <View style={styles.headerRow}>
+          <View>
+            <Text style={styles.headerTitle}>Construction Sites</Text>
+            <Text style={styles.headerSubtitle}>Project locations, foremen & milestones</Text>
           </View>
-          <Button
-            onPress={() => { 
-              resetForm(); 
+          <TouchableOpacity
+            style={styles.addSiteButton}
+            onPress={() => {
+              resetForm();
               setIsModalOpen(true);
             }}
-            style={styles.addButton}
+            activeOpacity={0.85}
           >
-            <MaterialIcons name="add" size={20} color="#ffffff" />
-            <ButtonText style={styles.addButtonText}>Add Site</ButtonText>
-          </Button>
+            <MaterialIcons name="add-location-alt" size={16} color="#FFFFFF" />
+            <Text style={styles.addSiteButtonText}>Add Site</Text>
+          </TouchableOpacity>
         </View>
 
-        {/* Sites List */}
+        {/* 2. SITES KPI BENTO STRIP */}
+        <View style={styles.kpiRow}>
+          <View style={styles.kpiCard}>
+            <Text style={styles.kpiLabel}>Active Sites</Text>
+            <Text style={styles.kpiValue}>{sites.length}</Text>
+          </View>
+          <View style={styles.kpiCard}>
+            <Text style={styles.kpiLabel}>Supervisors</Text>
+            <Text style={[styles.kpiValue, { color: colors.accent }]}>
+              {sites.filter((s) => s.foremanId).length}
+            </Text>
+          </View>
+          <View style={styles.kpiCard}>
+            <Text style={styles.kpiLabel}>Scheduled</Text>
+            <Text style={[styles.kpiValue, { color: colors.success }]}>
+              {sites.filter((s) => s.startDate).length}
+            </Text>
+          </View>
+          <View style={styles.kpiCard}>
+            <Text style={styles.kpiLabel}>Status</Text>
+            <Text style={[styles.kpiValue, { color: colors.primary }]}>Active</Text>
+          </View>
+        </View>
+      </View>
+
+      <View style={styles.content}>
         <FlatList
           data={sites}
           keyExtractor={(item) => item.id}
+          showsVerticalScrollIndicator={false}
           contentContainerStyle={styles.listContent}
-          renderItem={({ item }) => (
-            <View style={styles.siteCard}>
-              <View style={styles.siteCardHeader}>
-                <View style={styles.siteInfo}>
-                  <Text style={styles.siteName}>{item.name}</Text>
-                  <View style={styles.siteLocation}>
-                    <MaterialIcons name="place" size={16} color="#6b7280" />
-                    <Text style={styles.siteLocationText}>
-                      {item.address || 'No address'}
-                    </Text>
-                  </View>
-                </View>
-                <View style={styles.siteHeaderRight}>
-                  <View style={styles.statusBadge}>
-                    <Text style={styles.statusText}>active</Text>
-                  </View>
-                  <View style={styles.siteActions}>
-                    <TouchableOpacity onPress={() => handleEdit(item)} style={styles.actionButton}>
-                      <MaterialIcons name="edit" size={20} color="#2563eb" />
-                    </TouchableOpacity>
-                    <TouchableOpacity onPress={() => handleDelete(item)} style={styles.actionButton}>
-                      <MaterialIcons name="delete" size={20} color="#dc2626" />
-                    </TouchableOpacity>
-                  </View>
-                </View>
-              </View>
-              <View style={styles.siteCardFooter}>
-                <MaterialIcons name="calendar-today" size={16} color="#6b7280" />
-                <Text style={styles.siteDate}>Started: {new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}</Text>
-              </View>
-            </View>
-          )}
+          refreshing={loading}
+          onRefresh={fetchSites}
           ListEmptyComponent={
-            <View style={styles.emptyState}>
-              <MaterialIcons name="place" size={64} color="#d1d5db" style={{ marginBottom: 16 }} />
-              <Text style={styles.emptyText}>No sites found</Text>
-              <Text style={styles.emptySubtext}>Add your first site to get started</Text>
+            <View style={styles.emptyContainer}>
+              <MaterialIcons name="location-off" size={48} color={colors.borderDark} />
+              <Text style={styles.emptyTitle}>No Construction Sites Registered</Text>
+              <Text style={styles.emptySubtitle}>Tap "+ Add Site" to register your first construction site.</Text>
             </View>
           }
+          renderItem={({ item }) => {
+            const foremanName = item.foremanId ? foremanMap.get(item.foremanId) || 'Assigned' : 'Unassigned';
+
+            return (
+              <View style={styles.siteCard}>
+                <View style={styles.siteCardHeader}>
+                  <View style={styles.siteTitleContainer}>
+                    <View style={styles.siteIconBox}>
+                      <MaterialIcons name="apartment" size={20} color={colors.primary} />
+                    </View>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.siteName}>{item.name}</Text>
+                      <Text style={styles.siteAddress}>📍 {item.address || 'Address pending'}</Text>
+                    </View>
+                  </View>
+                  <View style={styles.activePill}>
+                    <View style={styles.greenDot} />
+                    <Text style={styles.activePillText}>OPERATIONAL</Text>
+                  </View>
+                </View>
+
+                {/* Foreman & Timeline Row */}
+                <View style={styles.metaRow}>
+                  <View style={styles.metaItem}>
+                    <MaterialIcons name="engineering" size={15} color={colors.accent} />
+                    <Text style={styles.metaLabel}>Foreman: </Text>
+                    <Text style={styles.metaVal}>{foremanName}</Text>
+                  </View>
+                  {item.startDate ? (
+                    <View style={styles.metaItem}>
+                      <MaterialIcons name="event" size={15} color={colors.textMuted} />
+                      <Text style={styles.metaVal}>{item.startDate}</Text>
+                    </View>
+                  ) : null}
+                </View>
+
+                {/* Action Strip */}
+                <View style={styles.actionStrip}>
+                  <TouchableOpacity style={styles.actionBtn} onPress={() => handleEdit(item)}>
+                    <MaterialIcons name="edit" size={15} color={colors.primary} />
+                    <Text style={styles.actionBtnText}>Configure</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[styles.actionBtn, { marginLeft: 8 }]}
+                    onPress={() => handleDelete(item)}
+                  >
+                    <MaterialIcons name="delete-outline" size={15} color={colors.error} />
+                    <Text style={[styles.actionBtnText, { color: colors.error }]}>Delete</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            );
+          }}
         />
       </View>
 
-      {/* Add/Edit Modal */}
       <FormModal
         isOpen={isModalOpen}
-        onClose={() => { 
-          setIsModalOpen(false); 
-          resetForm(); 
-        }}
-        title={editingSite ? 'Edit Site' : 'Add New Site'}
-        subtitle={editingSite ? 'Update site information' : 'Create a new construction site'}
+        onClose={() => setIsModalOpen(false)}
+        title={editingSite ? 'Configure Construction Site' : 'Create New Construction Site'}
+        subtitle={editingSite ? 'Modify site details or assigned supervisor' : 'Register project address and allocate site supervisor'}
+        submitLabel={editingSite ? 'Save Changes' : 'Establish Site'}
         onSubmit={handleSubmit}
-        submitLabel={editingSite ? 'Update Site' : 'Create Site'}
         loading={loading}
         submitDisabled={!formData.name.trim() || !formData.address.trim()}
       >
         <FormField
-          label="Site Name"
-                      value={formData.name}
-                      onChangeText={(text) => setFormData({ ...formData, name: text })}
-          placeholder="e.g., Sunrise Apartments"
+          label="Site Project Name"
           required
-          type="text"
+          value={formData.name}
+          onChangeText={(val) => setFormData({ ...formData, name: val })}
+          placeholder="e.g. Skyline Towers - Phase 2"
         />
 
         <FormField
-          label="Address"
-                      value={formData.address}
-                      onChangeText={(text) => setFormData({ ...formData, address: text })}
-          placeholder="Full site address"
+          label="Site Location / Physical Address"
           required
-          type="text"
+          value={formData.address}
+          onChangeText={(val) => setFormData({ ...formData, address: val })}
+          placeholder="e.g. Plot 42, Sector 18, Navi Mumbai"
+          helperText="Physical address or project landmark"
         />
 
         <FormField
-          label="Start Date"
-          value={formData.startDate}
-          onChangeText={(text) => setFormData({ ...formData, startDate: text })}
-          placeholder="Select start date"
-          type="date"
-        />
-
-        <FormField
-          label="End Date"
-          value={formData.endDate}
-          onChangeText={(text) => setFormData({ ...formData, endDate: text })}
-          placeholder="Select end date (optional)"
-          type="date"
-        />
-
-        <FormField
-          label="Assign Foreman"
-          value={formData.foremanId}
-          onValueChange={(value) => setFormData({ ...formData, foremanId: value })}
-          placeholder="Select a foreman"
+          label="Assign Site Foreman / Supervisor"
           type="select"
+          value={formData.foremanId}
+          onChangeText={(val) => setFormData({ ...formData, foremanId: val })}
           selectOptions={[
-            { label: 'None', value: '' },
-            ...foremen.map((f) => ({ label: f.name, value: f.id }))
+            { label: 'Unassigned (No Supervisor Assigned)', value: '' },
+            ...foremanOptions,
           ]}
+          placeholder="Select site supervisor"
+        />
+
+        <FormField
+          label="Project Start Date"
+          type="date"
+          value={formData.startDate}
+          onChangeText={(val) => setFormData({ ...formData, startDate: val })}
+          placeholder="Select start date"
+        />
+
+        <FormField
+          label="Estimated Completion Date"
+          type="date"
+          value={formData.endDate}
+          onChangeText={(val) => setFormData({ ...formData, endDate: val })}
+          placeholder="Select completion date"
         />
       </FormModal>
     </SafeAreaView>
@@ -386,134 +410,198 @@ export function SitesTab({ accessToken }: SitesTabProps) {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#f8fafc',
-  },
-  content: {
-    flex: 1,
-    padding: 20,
+    backgroundColor: colors.background,
   },
   header: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'flex-start',
-    marginBottom: 20,
+    backgroundColor: colors.primary,
+    paddingTop: 12,
+    paddingBottom: 14,
+    paddingHorizontal: 16,
+    ...shadows.card,
   },
-  headerText: {
-    flex: 1,
-    marginRight: 12,
+  headerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 12,
   },
   headerTitle: {
-    fontSize: 24,
-    fontWeight: '700',
-    color: '#111827',
-    marginBottom: 4,
+    fontSize: 20,
+    fontWeight: '800',
+    color: '#FFFFFF',
+    letterSpacing: -0.3,
   },
   headerSubtitle: {
-    fontSize: 14,
-    color: '#6b7280',
+    fontSize: 11,
+    color: '#94A3B8',
+    marginTop: 2,
   },
-  addButton: {
-    backgroundColor: '#2563eb',
-    borderRadius: 8,
-    paddingVertical: 10,
-    paddingHorizontal: 16,
+  addSiteButton: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
-    minHeight: 40,
+    backgroundColor: colors.accent,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: radii.md,
+    ...shadows.sm,
   },
-  addButtonText: {
-    color: '#ffffff',
-    fontWeight: '600',
-    fontSize: 14,
-  },
-  listContent: {
-    paddingBottom: 20,
-  },
-  siteCard: {
-    backgroundColor: '#ffffff',
-    borderRadius: 12,
-    padding: 16,
-    marginBottom: 12,
-    borderWidth: 1,
-    borderColor: '#e5e7eb',
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.05,
-    shadowRadius: 2,
-    elevation: 1,
-  },
-  siteCardHeader: {
-    marginBottom: 12,
-  },
-  siteInfo: {
-    marginBottom: 8,
-  },
-  siteName: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: '#111827',
-    marginBottom: 8,
-  },
-  siteLocation: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-  },
-  siteLocationText: {
-    fontSize: 14,
-    color: '#6b7280',
-  },
-  siteHeaderRight: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  },
-  statusBadge: {
-    backgroundColor: '#dcfce7',
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 6,
-  },
-  statusText: {
+  addSiteButtonText: {
     fontSize: 12,
-    color: '#16a34a',
-    fontWeight: '600',
-    textTransform: 'capitalize',
+    fontWeight: '800',
+    color: '#FFFFFF',
+    marginLeft: 4,
   },
-  siteActions: {
+  kpiRow: {
     flexDirection: 'row',
     gap: 8,
   },
-  actionButton: {
-    padding: 8,
+  kpiCard: {
+    flex: 1,
+    backgroundColor: '#1E293B',
+    borderRadius: radii.md,
+    paddingVertical: 8,
+    paddingHorizontal: 10,
+    borderWidth: 1,
+    borderColor: '#334155',
   },
-  siteCardFooter: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
+  kpiLabel: {
+    fontSize: 9,
+    fontWeight: '700',
+    color: '#94A3B8',
+    textTransform: 'uppercase',
+  },
+  kpiValue: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: '#FFFFFF',
+    marginTop: 2,
+  },
+  content: {
+    flex: 1,
+    paddingHorizontal: 16,
     paddingTop: 12,
-    borderTopWidth: 1,
-    borderTopColor: '#f3f4f6',
   },
-  siteDate: {
-    fontSize: 13,
-    color: '#6b7280',
+  listContent: {
+    paddingBottom: 24,
   },
-  emptyState: {
-    padding: 60,
+  siteCard: {
+    backgroundColor: colors.surface,
+    borderRadius: radii.xl,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: colors.border,
+    marginBottom: 12,
+    ...shadows.card,
+  },
+  siteCardHeader: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    marginBottom: 10,
+  },
+  siteTitleContainer: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    flex: 1,
+    marginRight: 8,
+  },
+  siteIconBox: {
+    width: 38,
+    height: 38,
+    borderRadius: radii.md,
+    backgroundColor: colors.surfaceMuted,
+    borderWidth: 1,
+    borderColor: colors.borderDark,
     alignItems: 'center',
     justifyContent: 'center',
+    marginRight: 10,
   },
-  emptyText: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: '#374151',
-    marginBottom: 8,
+  siteName: {
+    fontSize: 15,
+    fontWeight: '800',
+    color: colors.text,
   },
-  emptySubtext: {
-    fontSize: 14,
-    color: '#9ca3af',
-    textAlign: 'center',
+  siteAddress: {
+    fontSize: 11,
+    color: colors.textMuted,
+    marginTop: 2,
+  },
+  activePill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: colors.successLight,
+    paddingHorizontal: 7,
+    paddingVertical: 3,
+    borderRadius: radii.xs,
+  },
+  greenDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: colors.success,
+    marginRight: 4,
+  },
+  activePillText: {
+    fontSize: 9,
+    fontWeight: '800',
+    color: colors.successDark,
+  },
+  metaRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 6,
+  },
+  metaItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  metaLabel: {
+    fontSize: 11,
+    color: colors.textMuted,
+    marginLeft: 4,
+  },
+  metaVal: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: colors.text,
+  },
+  actionStrip: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    paddingTop: 10,
+    marginTop: 8,
+    borderTopWidth: 1,
+    borderTopColor: colors.border,
+  },
+  actionBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: radii.sm,
+    backgroundColor: colors.surfaceMuted,
+  },
+  actionBtnText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: colors.text,
+    marginLeft: 4,
+  },
+  emptyContainer: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 48,
+  },
+  emptyTitle: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: colors.textMuted,
+    marginTop: 12,
+  },
+  emptySubtitle: {
+    fontSize: 12,
+    color: colors.textLight,
+    marginTop: 4,
   },
 });

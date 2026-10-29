@@ -1,12 +1,10 @@
 import React from 'react';
-import { StyleSheet, View } from 'react-native';
-import { Modal, ModalBackdrop, ModalContent, ModalHeader, ModalBody, ModalCloseButton, ModalFooter } from '@/components/ui/modal';
+import { View, KeyboardAvoidingView, Platform, TouchableOpacity, ScrollView } from 'react-native';
+import { Modal, ModalBackdrop, ModalContent, ModalHeader, ModalBody, ModalFooter } from '@/components/ui/modal';
 import { Text } from '@/components/ui/text';
-import { Button, ButtonText } from '@/components/ui/button';
-import { HStack } from '@/components/ui/hstack';
-import { VStack } from '@/components/ui/vstack';
 import { MaterialIcons } from '@expo/vector-icons';
 import { formStyles } from './form-styles';
+import { theme } from '@/styles/theme';
 
 interface FormModalProps {
   isOpen: boolean;
@@ -30,7 +28,7 @@ export function FormModal({
   subtitle,
   children,
   onSubmit,
-  submitLabel = 'Save',
+  submitLabel = 'Save Changes',
   cancelLabel = 'Cancel',
   loading = false,
   submitDisabled = false,
@@ -51,55 +49,74 @@ export function FormModal({
           { alignSelf: 'center' }
         ]}
       >
-        <ModalHeader style={formStyles.modalHeader}>
-          <View style={{ flex: 1, marginRight: 16 }}>
-            <Text style={formStyles.modalTitle}>{title}</Text>
-            {subtitle && (
-              <Text style={formStyles.modalSubtitle}>{subtitle}</Text>
-            )}
-          </View>
-          <ModalCloseButton onPress={onClose} style={{ padding: 4 }}>
-            <MaterialIcons name="close" size={24} color="#6b7280" />
-          </ModalCloseButton>
-        </ModalHeader>
-        <ModalBody 
-          style={formStyles.modalBody}
-          contentContainerStyle={{ paddingBottom: 24 }}
-          showsVerticalScrollIndicator={true}
-          nestedScrollEnabled={true}
-          keyboardShouldPersistTaps="handled"
+        <KeyboardAvoidingView 
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+          style={{ flexShrink: 1, maxHeight: '100%' }}
         >
-          <VStack space="lg">
-            {children}
-          </VStack>
-        </ModalBody>
-        {showFooter && (
-          <ModalFooter style={formStyles.modalFooter}>
-            <Button
-              variant="outline"
-              onPress={onClose}
-              style={formStyles.buttonCancel}
+          {/* Header */}
+          <View style={formStyles.modalHeader}>
+            <View style={{ flex: 1, marginRight: 12 }}>
+              <Text style={formStyles.modalTitle}>{title}</Text>
+              {subtitle ? (
+                <Text style={formStyles.modalSubtitle}>{subtitle}</Text>
+              ) : null}
+            </View>
+            <TouchableOpacity 
+              onPress={onClose} 
+              style={{
+                width: 32,
+                height: 32,
+                borderRadius: 16,
+                backgroundColor: theme.colors.slate[100],
+                alignItems: 'center',
+                justifyContent: 'center',
+              }}
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
             >
-              <ButtonText style={formStyles.buttonCancelText}>{cancelLabel}</ButtonText>
-            </Button>
-            {onSubmit && (
-              <Button
-                onPress={onSubmit}
-                isDisabled={loading || submitDisabled}
-                style={[
-                  formStyles.buttonPrimary,
-                  (loading || submitDisabled) && formStyles.buttonPrimaryDisabled,
-                ]}
+              <MaterialIcons name="close" size={18} color={theme.colors.slate[600]} />
+            </TouchableOpacity>
+          </View>
+
+          {/* Body */}
+          <ScrollView
+            style={formStyles.modalBody}
+            contentContainerStyle={{ paddingBottom: 20 }}
+            showsVerticalScrollIndicator={true}
+            keyboardShouldPersistTaps="handled"
+          >
+            {children}
+          </ScrollView>
+
+          {/* Footer */}
+          {showFooter && (
+            <View style={formStyles.modalFooter}>
+              <TouchableOpacity
+                onPress={onClose}
+                style={formStyles.buttonCancel}
+                activeOpacity={0.7}
               >
-                <ButtonText style={formStyles.buttonPrimaryText}>
-                  {loading ? 'Loading...' : submitLabel}
-                </ButtonText>
-              </Button>
-            )}
-          </ModalFooter>
-        )}
+                <Text style={formStyles.buttonCancelText}>{cancelLabel}</Text>
+              </TouchableOpacity>
+
+              {onSubmit && (
+                <TouchableOpacity
+                  onPress={onSubmit}
+                  disabled={loading || submitDisabled}
+                  style={[
+                    formStyles.buttonPrimary,
+                    (loading || submitDisabled) && formStyles.buttonPrimaryDisabled,
+                  ]}
+                  activeOpacity={0.85}
+                >
+                  <Text style={formStyles.buttonPrimaryText}>
+                    {loading ? 'Processing...' : submitLabel}
+                  </Text>
+                </TouchableOpacity>
+              )}
+            </View>
+          )}
+        </KeyboardAvoidingView>
       </ModalContent>
     </Modal>
   );
 }
-

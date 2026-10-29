@@ -1,10 +1,10 @@
-import React, { useRef, useEffect, useState } from 'react';
-import { Modal, TouchableOpacity, StyleSheet, ScrollView, View, Dimensions, TextInput } from 'react-native';
+import React, { useEffect, useState } from 'react';
+import { Modal, TouchableOpacity, StyleSheet, ScrollView, View, TextInput } from 'react-native';
 import { Text } from '@/components/ui/text';
-import { VStack } from '@/components/ui/vstack';
 import { MaterialIcons } from '@expo/vector-icons';
+import { theme } from '@/styles/theme';
 
-interface DropdownOption {
+export interface DropdownOption {
   label: string;
   value: string;
 }
@@ -15,6 +15,7 @@ interface DropdownProps {
   options: DropdownOption[];
   selectedValue: string;
   onSelect: (value: string) => void;
+  title?: string;
   triggerLayout?: { x: number; y: number; width: number; height: number };
 }
 
@@ -24,7 +25,7 @@ export const Dropdown: React.FC<DropdownProps> = ({
   options,
   selectedValue,
   onSelect,
-  triggerLayout,
+  title = 'Select Option',
 }) => {
   const [searchQuery, setSearchQuery] = useState('');
   
@@ -40,7 +41,7 @@ export const Dropdown: React.FC<DropdownProps> = ({
     }
   }, [visible]);
 
-  if (!visible || !triggerLayout) return null;
+  if (!visible) return null;
 
   // Filter options based on search query
   const filteredOptions = searchQuery
@@ -49,28 +50,6 @@ export const Dropdown: React.FC<DropdownProps> = ({
       )
     : options;
 
-  const screenHeight = Dimensions.get('window').height;
-  const dropdownMaxHeight = 250;
-  
-  // Position dropdown below the trigger
-  const dropdownTop = triggerLayout.y + triggerLayout.height + 4;
-  const spaceBelow = screenHeight - dropdownTop;
-  const shouldShowAbove = spaceBelow < dropdownMaxHeight && triggerLayout.y > dropdownMaxHeight;
-  
-  const dropdownStyle = shouldShowAbove
-    ? {
-        bottom: screenHeight - triggerLayout.y + 4,
-        left: triggerLayout.x,
-        width: triggerLayout.width,
-        maxHeight: dropdownMaxHeight,
-      }
-    : {
-        top: dropdownTop,
-        left: triggerLayout.x,
-        width: triggerLayout.width,
-        maxHeight: Math.min(dropdownMaxHeight, spaceBelow - 20),
-      };
-
   return (
     <Modal
       visible={visible}
@@ -78,78 +57,89 @@ export const Dropdown: React.FC<DropdownProps> = ({
       animationType="fade"
       onRequestClose={onClose}
     >
-      <TouchableOpacity 
-        style={styles.backdrop} 
-        activeOpacity={1} 
-        onPress={onClose}
-      >
-        <View style={[styles.dropdown, dropdownStyle]}>
-          {/* Search Input - only show if more than 5 options */}
-          {options.length > 5 && (
+      <View style={styles.backdrop}>
+        <TouchableOpacity 
+          style={StyleSheet.absoluteFill} 
+          activeOpacity={1} 
+          onPress={onClose}
+        />
+        
+        <View style={styles.sheetContainer}>
+          {/* Header */}
+          <View style={styles.header}>
+            <Text style={styles.title}>{title}</Text>
+            <TouchableOpacity 
+              onPress={onClose} 
+              style={styles.closeBtn}
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+            >
+              <MaterialIcons name="close" size={20} color={theme.colors.slate[500]} />
+            </TouchableOpacity>
+          </View>
+
+          {/* Search Input - show if more than 4 options */}
+          {options.length > 4 && (
             <View style={styles.searchContainer}>
-              <MaterialIcons name="search" size={20} color="#9CA3AF" style={styles.searchIcon} />
+              <MaterialIcons name="search" size={18} color={theme.colors.slate[400]} />
               <TextInput
                 style={styles.searchInput}
-                placeholder="Search..."
+                placeholder="Search options..."
                 value={searchQuery}
                 onChangeText={setSearchQuery}
-                autoFocus={false}
-                placeholderTextColor="#9CA3AF"
+                placeholderTextColor={theme.colors.slate[400]}
               />
               {searchQuery.length > 0 && (
-                <TouchableOpacity onPress={() => setSearchQuery('')} style={styles.clearButton}>
-                  <MaterialIcons name="close" size={18} color="#9CA3AF" />
+                <TouchableOpacity onPress={() => setSearchQuery('')} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+                  <MaterialIcons name="close" size={16} color={theme.colors.slate[400]} />
                 </TouchableOpacity>
               )}
             </View>
           )}
-          
+
+          {/* Options List */}
           <ScrollView 
             style={styles.scrollView}
             showsVerticalScrollIndicator={true}
-            nestedScrollEnabled
+            contentContainerStyle={styles.scrollContent}
+            keyboardShouldPersistTaps="handled"
           >
-            <VStack>
-              {filteredOptions.length > 0 ? (
-                filteredOptions.map((option, index) => {
-                  const isSelected = option.value === selectedValue;
-                  const isFirst = index === 0;
-                  const isLast = index === filteredOptions.length - 1;
-                  
-                  return (
-                    <TouchableOpacity
-                      key={option.value}
+            {filteredOptions.length > 0 ? (
+              filteredOptions.map((option) => {
+                const isSelected = option.value === selectedValue;
+                return (
+                  <TouchableOpacity
+                    key={option.value}
+                    style={[
+                      styles.option,
+                      isSelected && styles.optionSelected,
+                    ]}
+                    onPress={() => handleSelect(option.value)}
+                    activeOpacity={0.7}
+                  >
+                    <Text
                       style={[
-                        styles.option,
-                        isSelected && styles.optionSelected,
-                        isFirst && options.length <= 5 && styles.optionFirst,
-                        isLast && styles.optionLast,
+                        styles.optionText,
+                        isSelected && styles.optionTextSelected,
                       ]}
-                      onPress={() => handleSelect(option.value)}
                     >
-                      <Text
-                        style={[
-                          styles.optionText,
-                          isSelected && styles.optionTextSelected,
-                        ]}
-                      >
-                        {option.label}
-                      </Text>
-                      {isSelected && (
-                        <MaterialIcons name="check" size={18} color="#007AFF" />
-                      )}
-                    </TouchableOpacity>
-                  );
-                })
-              ) : (
-                <View style={styles.noResults}>
-                  <Text style={styles.noResultsText}>No results found</Text>
-                </View>
-              )}
-            </VStack>
+                      {option.label}
+                    </Text>
+                    {isSelected ? (
+                      <MaterialIcons name="check-circle" size={18} color={theme.colors.safetyOrange} />
+                    ) : (
+                      <View style={styles.uncheckCircle} />
+                    )}
+                  </TouchableOpacity>
+                );
+              })
+            ) : (
+              <View style={styles.noResults}>
+                <Text style={styles.noResultsText}>No matching options found</Text>
+              </View>
+            )}
           </ScrollView>
         </View>
-      </TouchableOpacity>
+      </View>
     </Modal>
   );
 };
@@ -157,84 +147,110 @@ export const Dropdown: React.FC<DropdownProps> = ({
 const styles = StyleSheet.create({
   backdrop: {
     flex: 1,
-    backgroundColor: 'transparent',
+    backgroundColor: 'rgba(15, 23, 42, 0.55)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 16,
   },
-  dropdown: {
-    position: 'absolute',
+  sheetContainer: {
     backgroundColor: '#ffffff',
-    borderRadius: 8,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.15,
-    shadowRadius: 12,
-    elevation: 8,
+    borderRadius: theme.radii.lg,
+    width: '100%',
+    maxWidth: 440,
+    maxHeight: '75%',
     borderWidth: 1,
-    borderColor: '#E5E7EB',
+    borderColor: theme.colors.border,
     overflow: 'hidden',
+    ...theme.shadows.card,
+  },
+  header: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingTop: 16,
+    paddingBottom: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: theme.colors.slate[100],
+  },
+  title: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: theme.colors.slate[900],
+    letterSpacing: -0.3,
+  },
+  closeBtn: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: theme.colors.slate[100],
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   searchContainer: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderBottomWidth: 1,
-    borderBottomColor: '#F3F4F6',
-    backgroundColor: '#F9FAFB',
-  },
-  searchIcon: {
-    marginRight: 8,
+    gap: 8,
+    backgroundColor: theme.colors.slate[50],
+    marginHorizontal: 14,
+    marginTop: 10,
+    marginBottom: 6,
+    paddingHorizontal: 10,
+    borderRadius: theme.radii.md,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    minHeight: 40,
   },
   searchInput: {
     flex: 1,
-    fontSize: 15,
-    color: '#111827',
+    fontSize: 13,
+    color: theme.colors.slate[900],
     paddingVertical: 6,
-  },
-  clearButton: {
-    padding: 4,
   },
   scrollView: {
     flexGrow: 0,
+  },
+  scrollContent: {
+    paddingHorizontal: 10,
+    paddingVertical: 8,
   },
   option: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     paddingVertical: 12,
-    paddingHorizontal: 16,
-    borderBottomWidth: 1,
-    borderBottomColor: '#F3F4F6',
-    backgroundColor: '#ffffff',
-  },
-  optionFirst: {
-    borderTopLeftRadius: 8,
-    borderTopRightRadius: 8,
-  },
-  optionLast: {
-    borderBottomWidth: 0,
-    borderBottomLeftRadius: 8,
-    borderBottomRightRadius: 8,
+    paddingHorizontal: 12,
+    borderRadius: theme.radii.md,
+    marginBottom: 4,
   },
   optionSelected: {
-    backgroundColor: '#F0F9FF',
+    backgroundColor: theme.colors.safetyOrangeLight,
   },
   optionText: {
-    fontSize: 15,
-    color: '#374151',
+    fontSize: 14,
+    color: theme.colors.slate[800],
+    fontWeight: '500',
     flex: 1,
+    marginRight: 10,
   },
   optionTextSelected: {
-    color: '#007AFF',
-    fontWeight: '500',
+    color: theme.colors.safetyOrange,
+    fontWeight: '700',
+  },
+  uncheckCircle: {
+    width: 16,
+    height: 16,
+    borderRadius: 8,
+    borderWidth: 1.5,
+    borderColor: theme.colors.slate[300],
   },
   noResults: {
-    paddingVertical: 24,
-    paddingHorizontal: 16,
+    padding: 24,
     alignItems: 'center',
+    justifyContent: 'center',
   },
   noResultsText: {
-    fontSize: 14,
-    color: '#9CA3AF',
+    fontSize: 13,
+    color: theme.colors.slate[400],
   },
 });
-

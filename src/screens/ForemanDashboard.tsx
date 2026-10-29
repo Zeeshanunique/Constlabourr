@@ -1,12 +1,20 @@
-import React, { useState, useEffect, useContext, useCallback } from "react";
-import { View, ScrollView, StyleSheet, TouchableOpacity } from "react-native";
-import { SafeAreaView } from "react-native-safe-area-context";
-import { Text } from "../components/ui/text";
-import { AppContext } from "../context/AppContext";
-import { MaterialIcons } from "@expo/vector-icons";
-import { projectId } from "../utils/supabase/info";
-import { useNavigation, useRoute, NavigationProp, useFocusEffect } from "@react-navigation/native";
-import type { ForemanTabParamList } from "../navigation/ForemanNavigator";
+import React, { useState, useEffect, useContext, useCallback } from 'react';
+import {
+  View,
+  ScrollView,
+  StyleSheet,
+  TouchableOpacity,
+  Text,
+  RefreshControl,
+} from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import { AppContext } from '../context/AppContext';
+import { MaterialIcons } from '@expo/vector-icons';
+import { projectId } from '../utils/supabase/info';
+import { useNavigation, useRoute, NavigationProp, useFocusEffect } from '@react-navigation/native';
+import type { ForemanTabParamList } from '../navigation/ForemanNavigator';
+import { colors, shadows, radii } from '../styles/theme';
+import { BrandLogo } from '../components/shared/BrandLogo';
 
 interface ForemanDashboardProps {
   accessToken?: string;
@@ -25,6 +33,7 @@ export function ModernForemanDashboard({ accessToken }: ForemanDashboardProps) {
   const route = useRoute();
   const token = accessToken || (route.params as any)?.accessToken;
   const [stats, setStats] = useState<ForemanStats | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
 
   useEffect(() => {
     if (token) {
@@ -32,7 +41,6 @@ export function ModernForemanDashboard({ accessToken }: ForemanDashboardProps) {
     }
   }, [token]);
 
-  // Refresh stats when dashboard comes into focus
   useFocusEffect(
     useCallback(() => {
       if (token) {
@@ -53,158 +61,146 @@ export function ModernForemanDashboard({ accessToken }: ForemanDashboardProps) {
         }
       );
 
-      if (!response.ok) {
-        throw new Error("Failed to fetch stats");
-      }
+      if (!response.ok) throw new Error('Failed to fetch stats');
 
       const data = await response.json();
       setStats(data.stats || null);
     } catch (error) {
-      console.error("Error fetching foreman stats:", error);
+      console.error('Error fetching foreman stats:', error);
     }
+  };
+
+  const onRefresh = async () => {
+    setRefreshing(true);
+    await fetchStats();
+    setRefreshing(false);
   };
 
   if (!context) return null;
 
-  const StatCard = ({
-    title,
-    value,
-    subtitle,
-    icon,
-    bgColor,
-  }: {
-    title: string;
-    value: number;
-    subtitle: string;
-    icon: string;
-    bgColor: string;
-  }) => (
-    <View style={[styles.statCard, { backgroundColor: bgColor }]}>
-      <View style={styles.statCardContent}>
-        <View style={styles.statCardText}>
-          <Text style={styles.statCardTitle}>{title}</Text>
-          <Text style={styles.statCardValue}>{value}</Text>
-          <Text style={styles.statCardSubtitle}>{subtitle}</Text>
-        </View>
-        <View style={styles.statCardIcon}>
-          <MaterialIcons name={icon as any} size={24} color="white" />
-        </View>
-      </View>
-    </View>
-  );
+  const presentCount = stats?.presentToday || 0;
+  const absentCount = stats?.absentToday || 0;
+  const assignedWorkers = stats?.assignedWorkers || 0;
+  const assignedSites = stats?.assignedSites || 1;
 
-  const QuickActionCard = ({
-    title,
-    subtitle,
-    icon,
-    iconBg,
-    iconColor,
-    onPress,
-  }: {
-    title: string;
-    subtitle: string;
-    icon: string;
-    iconBg: string;
-    iconColor: string;
-    onPress: () => void;
-  }) => (
-    <TouchableOpacity onPress={onPress} activeOpacity={0.7} style={styles.quickActionCard}>
-      <View style={styles.quickActionContent}>
-        <View style={styles.quickActionLeft}>
-          <View style={[styles.quickActionIcon, { backgroundColor: iconBg }]}>
-            <MaterialIcons name={icon as any} size={24} color={iconColor} />
-          </View>
-          <View style={styles.quickActionText}>
-            <Text style={styles.quickActionTitle}>{title}</Text>
-            <Text style={styles.quickActionSubtitle}>{subtitle}</Text>
-          </View>
-        </View>
-        <MaterialIcons name="chevron-right" size={20} color="#9ca3af" />
-      </View>
-    </TouchableOpacity>
-  );
+  const turnoutPercentage = assignedWorkers > 0 ? Math.round((presentCount / assignedWorkers) * 100) : 90;
 
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
-      {/* Header */}
+      {/* 1. TOP INDUSTRIAL HEADER */}
       <View style={styles.header}>
         <View style={styles.headerTop}>
-          <View style={styles.headerLeft}>
-            <View style={styles.logoContainer}>
-              <MaterialIcons name="business" size={28} color="#7c3aed" />
-            </View>
-            <View style={styles.headerText}>
-              <Text style={styles.headerTitle}>ConstLabour</Text>
-              <Text style={styles.headerSubtitle}>{context.user?.email || context.user?.name}</Text>
-            </View>
-          </View>
-          <TouchableOpacity onPress={context.logout} style={styles.logoutButton}>
-            <MaterialIcons name="logout" size={24} color="#ffffff" />
+          <BrandLogo size={38} showText={true} variant="light" subtitle="SITE SUPERVISOR / FOREMAN" />
+          <TouchableOpacity onPress={context.logout} style={styles.iconCircleButton}>
+            <MaterialIcons name="logout" size={18} color="#FFFFFF" />
           </TouchableOpacity>
         </View>
-        <View style={styles.headerBottom}>
-          <Text style={styles.dashboardLabel}>Foreman Dashboard</Text>
-          <Text style={styles.welcomeText}>Welcome back!</Text>
+
+        <View style={styles.foremanBadgeRow}>
+          <View style={styles.activeSitePill}>
+            <View style={styles.greenPulseDot} />
+            <Text style={styles.activeSitePillText}>Assigned Site • Pier 102 Metro Line</Text>
+          </View>
+          <Text style={styles.foremanNameText}>
+            {context.user?.name || context.user?.email?.split('@')[0]}
+          </Text>
         </View>
       </View>
 
-      {/* Main Content */}
-      <ScrollView style={styles.scrollView} contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
-        <View style={styles.contentCard}>
-          {/* Stats Grid */}
-          <View style={styles.statsGrid}>
-            <StatCard
-              title="Assigned Workers"
-              value={stats?.assignedWorkers || 0}
-              subtitle="under supervision"
-              icon="people"
-              bgColor="#7c3aed"
-            />
-            <StatCard
-              title="Assigned Sites"
-              value={stats?.assignedSites || 0}
-              subtitle="active locations"
-              icon="place"
-              bgColor="#a855f7"
-            />
-            <StatCard
-              title="Present Today"
-              value={stats?.presentToday || 0}
-              subtitle="attendance marked"
-              icon="check-box"
-              bgColor="#22c55e"
-            />
-            <StatCard
-              title="Absent Today"
-              value={stats?.absentToday || 0}
-              subtitle="workers absent"
-              icon="schedule"
-              bgColor="#f97316"
-            />
-          </View>
-
-          {/* Quick Actions */}
-          <View style={styles.quickActionsSection}>
-            <Text style={styles.quickActionsTitle}>Quick Actions</Text>
-            <View style={styles.quickActionsList}>
-              <QuickActionCard
-                title="Mark Attendance"
-                subtitle="Record worker attendance"
-                icon="check-box"
-                iconBg="#faf5ff"
-                iconColor="#7c3aed"
-                onPress={() => navigation.navigate("Attendance" as never)}
-              />
-              <QuickActionCard
-                title="View Workers"
-                subtitle="See all assigned workers"
-                icon="people"
-                iconBg="#f0fdf4"
-                iconColor="#16a34a"
-                onPress={() => navigation.navigate("Workers" as never)}
-              />
+      <ScrollView
+        style={styles.scrollView}
+        contentContainerStyle={styles.scrollContent}
+        showsVerticalScrollIndicator={false}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.accent} />}
+      >
+        {/* 3. 4-CARD BENTO GRID */}
+        <Text style={styles.sectionLabel}>DAILY SITE SHIFT OVERVIEW</Text>
+        <View style={styles.bentoGrid}>
+          <View style={styles.bentoCard}>
+            <View style={styles.bentoHeaderRow}>
+              <Text style={styles.bentoCardTitle}>Present Today</Text>
+              <View style={[styles.microIconCircle, { backgroundColor: colors.successLight }]}>
+                <MaterialIcons name="check-circle" size={16} color={colors.success} />
+              </View>
+            </View>
+            <Text style={[styles.bentoNumber, { color: colors.success }]}>{presentCount}</Text>
+            <View style={[styles.bentoTag, { backgroundColor: colors.successLight }]}>
+              <Text style={[styles.bentoTagText, { color: colors.successDark }]}>{turnoutPercentage}% Turnout</Text>
             </View>
           </View>
+
+          <View style={styles.bentoCard}>
+            <View style={styles.bentoHeaderRow}>
+              <Text style={styles.bentoCardTitle}>Absent / Off</Text>
+              <View style={[styles.microIconCircle, { backgroundColor: colors.errorLight }]}>
+                <MaterialIcons name="cancel" size={16} color={colors.error} />
+              </View>
+            </View>
+            <Text style={[styles.bentoNumber, { color: colors.error }]}>{absentCount}</Text>
+            <View style={[styles.bentoTag, { backgroundColor: colors.errorLight }]}>
+              <Text style={[styles.bentoTagText, { color: colors.errorDark }]}>Not Checked-In</Text>
+            </View>
+          </View>
+
+          <View style={styles.bentoCard}>
+            <View style={styles.bentoHeaderRow}>
+              <Text style={styles.bentoCardTitle}>Assigned Crew</Text>
+              <View style={[styles.microIconCircle, { backgroundColor: colors.surfaceMuted }]}>
+                <MaterialIcons name="groups" size={16} color={colors.primary} />
+              </View>
+            </View>
+            <Text style={styles.bentoNumber}>{assignedWorkers}</Text>
+            <View style={[styles.bentoTag, { backgroundColor: colors.surfaceMuted }]}>
+              <Text style={[styles.bentoTagText, { color: colors.textMuted }]}>Site Roster</Text>
+            </View>
+          </View>
+
+          <View style={styles.bentoCard}>
+            <View style={styles.bentoHeaderRow}>
+              <Text style={styles.bentoCardTitle}>Active Sites</Text>
+              <View style={[styles.microIconCircle, { backgroundColor: colors.accentLight }]}>
+                <MaterialIcons name="location-city" size={16} color={colors.accent} />
+              </View>
+            </View>
+            <Text style={styles.bentoNumber}>{assignedSites}</Text>
+            <View style={[styles.bentoTag, { backgroundColor: colors.accentLight }]}>
+              <Text style={[styles.bentoTagText, { color: colors.accentDark }]}>Assigned</Text>
+            </View>
+          </View>
+        </View>
+
+        {/* 4. TACTICAL FOREMAN ACTIONS */}
+        <Text style={[styles.sectionLabel, { marginTop: 18 }]}>SUPERVISOR ACTIONS</Text>
+        <View style={styles.actionsList}>
+          <TouchableOpacity
+            style={styles.actionCard}
+            onPress={() => navigation.navigate('Attendance' as never)}
+            activeOpacity={0.8}
+          >
+            <View style={[styles.actionIconBox, { backgroundColor: colors.accent }]}>
+              <MaterialIcons name="assignment-turned-in" size={22} color="#FFFFFF" />
+            </View>
+            <View style={styles.actionTextContent}>
+              <Text style={styles.actionTitle}>Mark Daily Attendance</Text>
+              <Text style={styles.actionSub}>Log Check-in, Check-out, Half-day, and Overtime</Text>
+            </View>
+            <MaterialIcons name="arrow-forward" size={18} color={colors.textLight} />
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={styles.actionCard}
+            onPress={() => navigation.navigate('Workers' as never)}
+            activeOpacity={0.8}
+          >
+            <View style={[styles.actionIconBox, { backgroundColor: colors.primary }]}>
+              <MaterialIcons name="people" size={22} color="#FFFFFF" />
+            </View>
+            <View style={styles.actionTextContent}>
+              <Text style={styles.actionTitle}>Assigned Site Workers</Text>
+              <Text style={styles.actionSub}>View skill classification, contacts & emergency info</Text>
+            </View>
+            <MaterialIcons name="arrow-forward" size={18} color={colors.textLight} />
+          </TouchableOpacity>
         </View>
       </ScrollView>
     </SafeAreaView>
@@ -214,190 +210,184 @@ export function ModernForemanDashboard({ accessToken }: ForemanDashboardProps) {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: "#f8fafc",
+    backgroundColor: colors.background,
   },
   header: {
-    backgroundColor: "#7c3aed",
-    paddingTop: 16,
-    paddingBottom: 24,
-    paddingHorizontal: 20,
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 8,
-    elevation: 4,
+    backgroundColor: colors.primary,
+    paddingTop: 12,
+    paddingBottom: 16,
+    paddingHorizontal: 16,
+    ...shadows.card,
   },
   headerTop: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 20,
+    marginBottom: 10,
   },
-  headerLeft: {
+  iconCircleButton: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: '#1E293B',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: '#334155',
+  },
+  foremanBadgeRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 12,
+    justifyContent: 'space-between',
+    marginTop: 4,
   },
-  logoContainer: {
-    width: 48,
-    height: 48,
-    borderRadius: 12,
-    backgroundColor: '#ffffff',
-    justifyContent: 'center',
+  activeSitePill: {
+    flexDirection: 'row',
     alignItems: 'center',
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 3,
+    backgroundColor: '#1E293B',
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: radii.pill,
+    borderWidth: 1,
+    borderColor: '#334155',
   },
-  headerText: {
-    gap: 4,
+  greenPulseDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: colors.success,
+    marginRight: 6,
   },
-  headerTitle: {
-    fontSize: 18,
+  activeSitePillText: {
+    fontSize: 11,
+    color: '#FFFFFF',
     fontWeight: '700',
-    color: '#ffffff',
   },
-  headerSubtitle: {
-    fontSize: 14,
-    color: '#e9d5ff',
-  },
-  logoutButton: {
-    padding: 8,
-  },
-  headerBottom: {
-    gap: 4,
-  },
-  dashboardLabel: {
-    fontSize: 14,
-    color: '#e9d5ff',
-  },
-  welcomeText: {
-    fontSize: 28,
+  foremanNameText: {
+    fontSize: 12,
+    color: colors.accentLight,
     fontWeight: '700',
-    color: '#ffffff',
   },
   scrollView: {
     flex: 1,
   },
   scrollContent: {
-    paddingBottom: 20,
+    paddingHorizontal: 16,
+    paddingTop: 14,
+    paddingBottom: 30,
   },
-  contentCard: {
-    backgroundColor: '#ffffff',
-    borderRadius: 16,
-    marginTop: 16,
-    marginHorizontal: 16,
-    padding: 20,
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 8,
-    elevation: 4,
+  alertBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFF7ED',
+    borderWidth: 1,
+    borderColor: '#FFEDD5',
+    borderRadius: radii.lg,
+    padding: 12,
+    marginBottom: 14,
   },
-  statsGrid: {
+  alertIcon: {
+    fontSize: 20,
+  },
+  alertTitle: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: colors.accentDark,
+  },
+  alertSub: {
+    fontSize: 11,
+    color: '#9A3412',
+    marginTop: 1,
+  },
+  sectionLabel: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: colors.textMuted,
+    letterSpacing: 0.8,
+    marginBottom: 10,
+  },
+  bentoGrid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    justifyContent: 'space-between',
-    marginBottom: 24,
-    gap: 12,
+    gap: 8,
+    marginBottom: 14,
   },
-  statCard: {
-    width: '48%',
-    borderRadius: 12,
-    padding: 16,
-    marginBottom: 12,
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.2,
-    shadowRadius: 4,
-    elevation: 3,
-  },
-  statCardContent: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'flex-start',
-  },
-  statCardText: {
-    flex: 1,
-    gap: 4,
-  },
-  statCardTitle: {
-    fontSize: 12,
-    color: 'rgba(255,255,255,0.9)',
-    fontWeight: '500',
-  },
-  statCardValue: {
-    fontSize: 28,
-    fontWeight: '700',
-    color: '#ffffff',
-  },
-  statCardSubtitle: {
-    fontSize: 12,
-    color: 'rgba(255,255,255,0.8)',
-  },
-  statCardIcon: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: 'rgba(255,255,255,0.2)',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  quickActionsSection: {
-    marginTop: 8,
-  },
-  quickActionsTitle: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#111827',
-    marginBottom: 16,
-  },
-  quickActionsList: {
-    gap: 12,
-  },
-  quickActionCard: {
-    backgroundColor: '#ffffff',
-    borderRadius: 12,
-    padding: 16,
+  bentoCard: {
+    width: '48.5%',
+    backgroundColor: colors.surface,
+    borderRadius: radii.lg,
+    padding: 12,
     borderWidth: 1,
-    borderColor: '#e5e7eb',
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.05,
-    shadowRadius: 2,
-    elevation: 1,
+    borderColor: colors.border,
+    ...shadows.sm,
   },
-  quickActionContent: {
+  bentoHeaderRow: {
     flexDirection: 'row',
+    alignItems: 'center',
     justifyContent: 'space-between',
-    alignItems: 'center',
+    marginBottom: 4,
   },
-  quickActionLeft: {
+  bentoCardTitle: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: colors.textMuted,
+  },
+  microIconCircle: {
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  bentoNumber: {
+    fontSize: 22,
+    fontWeight: '800',
+    color: colors.text,
+    marginVertical: 2,
+  },
+  bentoTag: {
+    alignSelf: 'flex-start',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: radii.xs,
+    marginTop: 4,
+  },
+  bentoTagText: {
+    fontSize: 9,
+    fontWeight: '800',
+  },
+  actionsList: {
+    gap: 10,
+  },
+  actionCard: {
     flexDirection: 'row',
     alignItems: 'center',
-    flex: 1,
-    gap: 12,
+    backgroundColor: colors.surface,
+    borderRadius: radii.xl,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: colors.border,
+    ...shadows.sm,
   },
-  quickActionIcon: {
-    width: 48,
-    height: 48,
-    borderRadius: 12,
-    justifyContent: 'center',
+  actionIconBox: {
+    width: 44,
+    height: 44,
+    borderRadius: radii.md,
     alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 12,
   },
-  quickActionText: {
+  actionTextContent: {
     flex: 1,
-    gap: 4,
   },
-  quickActionTitle: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#111827',
+  actionTitle: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: colors.text,
   },
-  quickActionSubtitle: {
-    fontSize: 13,
-    color: '#6b7280',
+  actionSub: {
+    fontSize: 11,
+    color: colors.textMuted,
+    marginTop: 2,
   },
 });

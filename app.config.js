@@ -8,7 +8,7 @@ export default {
     icon: "./assets/icon.png",
     splash: {
       resizeMode: "contain",
-      backgroundColor: "#2563eb",
+      backgroundColor: "#0F172A",
       image: "./assets/splash.png"
     },
     assetBundlePatterns: ["**/*"],
@@ -21,7 +21,7 @@ export default {
       icon: "./assets/android-icon.png",
       adaptiveIcon: {
         foregroundImage: "./assets/icon.png",
-        backgroundColor: "#2563eb"
+        backgroundColor: "#0F172A"
       },
       package: "com.constlabour.app"
     },

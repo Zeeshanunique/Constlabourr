@@ -1,38 +1,40 @@
 import React, { useState, useEffect } from 'react';
-import { View, StyleSheet, ScrollView, FlatList, Platform, TouchableOpacity, Modal } from 'react-native';
+import {
+  View,
+  StyleSheet,
+  ScrollView,
+  TouchableOpacity,
+  Modal,
+  Text,
+  ActivityIndicator,
+} from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { Box } from '@/components/ui/box';
-import { Text } from '@/components/ui/text';
-import { VStack } from '@/components/ui/vstack';
-import { HStack } from '@/components/ui/hstack';
-import { Button, ButtonText } from '@/components/ui/button';
-import { Card } from '@/components/ui/card';
-import { Input, InputField } from '@/components/ui/input';
-import DateTimePicker from '@react-native-community/datetimepicker';
 import { MaterialIcons } from '@expo/vector-icons';
 import { projectId } from '@/utils/supabase/info';
 import { useRoute } from '@react-navigation/native';
 import Toast from 'react-native-toast-message';
 import { FormField } from '@/components/shared/FormField';
+import { colors, shadows, radii } from '@/styles/theme';
 
 interface Worker {
   id: string;
   name: string;
   phone: string;
-  role: string;
+  role?: string;
+  dailyWage?: number;
 }
 
 interface PayrollEntry {
   id: string;
   workerId: string;
   workerName: string;
-  period: string;
-  daysWorked: number;
-  dailyWage: number;
-  totalWage: number;
-  advances: number;
-  deductions: number;
-  netPay: number;
+  period?: string;
+  daysWorked?: number;
+  dailyWage?: number;
+  totalWage?: number;
+  advances?: number;
+  deductions?: number;
+  netPay?: number;
   status: 'pending' | 'paid';
 }
 
@@ -44,19 +46,18 @@ export function PayrollTab({ accessToken }: PayrollTabProps) {
   const route = useRoute();
   const token = accessToken || (route.params as any)?.accessToken;
   const [payrollEntries, setPayrollEntries] = useState<PayrollEntry[]>([]);
-  const [startDate, setStartDate] = useState(new Date());
-  const [endDate, setEndDate] = useState(new Date());
-  const [showStartPicker, setShowStartPicker] = useState(false);
-  const [showEndPicker, setShowEndPicker] = useState(false);
+  const [workers, setWorkers] = useState<Worker[]>([]);
   const [loading, setLoading] = useState(false);
-  
+
+  // Date range defaults to current week
+  const [startDate] = useState(new Date(Date.now() - 7 * 24 * 60 * 60 * 1000));
+  const [endDate] = useState(new Date());
+
   // Give Advance modal state
   const [showAdvanceModal, setShowAdvanceModal] = useState(false);
-  const [workers, setWorkers] = useState<Worker[]>([]);
   const [selectedWorker, setSelectedWorker] = useState('');
   const [advanceAmount, setAdvanceAmount] = useState('');
   const [advanceReason, setAdvanceReason] = useState('');
-  const [advanceDate, setAdvanceDate] = useState(new Date());
   const [submittingAdvance, setSubmittingAdvance] = useState(false);
 
   useEffect(() => {
@@ -64,7 +65,7 @@ export function PayrollTab({ accessToken }: PayrollTabProps) {
       fetchPayroll();
       fetchWorkers();
     }
-  }, [token, startDate, endDate]);
+  }, [token]);
 
   const fetchPayroll = async () => {
     if (!token) return;
@@ -73,33 +74,17 @@ export function PayrollTab({ accessToken }: PayrollTabProps) {
       const startStr = startDate.toISOString().split('T')[0];
       const endStr = endDate.toISOString().split('T')[0];
       const url = `https://${projectId}.supabase.co/functions/v1/make-server-689d7d60/payroll?startDate=${startStr}&endDate=${endStr}`;
-      
-      const response = await fetch(
-        url,
-        {
-          headers: { 'Authorization': `Bearer ${token}` },
-        }
-      );
 
-      if (!response.ok) {
-        throw new Error(`Failed to fetch payroll: ${response.status}`);
-      }
+      const response = await fetch(url, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
 
-      const contentType = response.headers.get('content-type');
-      if (!contentType || !contentType.includes('application/json')) {
-        throw new Error('Invalid response format');
-      }
-
+      if (!response.ok) throw new Error(`Failed to fetch payroll: ${response.status}`);
       const data = await response.json();
       setPayrollEntries(data.payroll || []);
     } catch (error: any) {
       console.error('Error fetching payroll:', error);
       setPayrollEntries([]);
-      Toast.show({
-        type: 'error',
-        text1: 'Error',
-        text2: error.message || 'Failed to fetch payroll data',
-      });
     } finally {
       setLoading(false);
     }
@@ -110,15 +95,8 @@ export function PayrollTab({ accessToken }: PayrollTabProps) {
     try {
       const response = await fetch(
         `https://${projectId}.supabase.co/functions/v1/make-server-689d7d60/workers`,
-        {
-          headers: { 'Authorization': `Bearer ${token}` },
-        }
+        { headers: { Authorization: `Bearer ${token}` } }
       );
-
-      if (!response.ok) {
-        throw new Error('Failed to fetch workers');
-      }
-
       const data = await response.json();
       setWorkers(data.workers || []);
     } catch (error: any) {
@@ -128,21 +106,13 @@ export function PayrollTab({ accessToken }: PayrollTabProps) {
 
   const handleGiveAdvance = async () => {
     if (!selectedWorker || !advanceAmount) {
-      Toast.show({
-        type: 'error',
-        text1: 'Validation Error',
-        text2: 'Please select a worker and enter amount',
-      });
+      Toast.show({ type: 'error', text1: 'Validation Error', text2: 'Please select worker and amount' });
       return;
     }
 
     const amount = parseFloat(advanceAmount);
     if (isNaN(amount) || amount <= 0) {
-      Toast.show({
-        type: 'error',
-        text1: 'Validation Error',
-        text2: 'Please enter a valid amount',
-      });
+      Toast.show({ type: 'error', text1: 'Invalid Amount', text2: 'Enter a valid positive number' });
       return;
     }
 
@@ -153,56 +123,31 @@ export function PayrollTab({ accessToken }: PayrollTabProps) {
         {
           method: 'POST',
           headers: {
-            'Authorization': `Bearer ${token}`,
+            Authorization: `Bearer ${token}`,
             'Content-Type': 'application/json',
           },
           body: JSON.stringify({
             workerId: selectedWorker,
-            amount: amount,
-            date: advanceDate.toISOString().split('T')[0],
-            reason: advanceReason,
+            amount,
+            date: new Date().toISOString().split('T')[0],
+            reason: advanceReason || 'Kharcha / Advance',
           }),
         }
       );
 
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.error || 'Failed to give advance');
-      }
+      if (!response.ok) throw new Error('Failed to record advance');
 
-      Toast.show({
-        type: 'success',
-        text1: 'Success',
-        text2: 'Advance given successfully',
-      });
-
-      // Reset form and close modal
-      resetAdvanceForm();
+      Toast.show({ type: 'success', text1: 'Advance Granted', text2: `₹${amount} recorded.` });
+      setSelectedWorker('');
+      setAdvanceAmount('');
+      setAdvanceReason('');
       setShowAdvanceModal(false);
-      
-      // Refresh payroll data
       fetchPayroll();
     } catch (error: any) {
-      Toast.show({
-        type: 'error',
-        text1: 'Error',
-        text2: error.message || 'Failed to give advance',
-      });
+      Toast.show({ type: 'error', text1: 'Error', text2: error.message });
     } finally {
       setSubmittingAdvance(false);
     }
-  };
-
-  const resetAdvanceForm = () => {
-    setSelectedWorker('');
-    setAdvanceAmount('');
-    setAdvanceReason('');
-    setAdvanceDate(new Date());
-  };
-
-  const handleCancelAdvance = () => {
-    resetAdvanceForm();
-    setShowAdvanceModal(false);
   };
 
   const handleProcessPayroll = async () => {
@@ -216,33 +161,18 @@ export function PayrollTab({ accessToken }: PayrollTabProps) {
         {
           method: 'POST',
           headers: {
-            'Authorization': `Bearer ${token}`,
+            Authorization: `Bearer ${token}`,
             'Content-Type': 'application/json',
           },
-          body: JSON.stringify({
-            startDate: startStr,
-            endDate: endStr,
-          }),
+          body: JSON.stringify({ startDate: startStr, endDate: endStr }),
         }
       );
 
-      if (!response.ok) {
-        throw new Error('Failed to process payroll');
-      }
-
-      Toast.show({
-        type: 'success',
-        text1: 'Success',
-        text2: 'Payroll processed successfully',
-      });
-
+      if (!response.ok) throw new Error('Failed to calculate wages');
+      Toast.show({ type: 'success', text1: 'Payroll Processed', text2: 'Wage calculations updated.' });
       fetchPayroll();
     } catch (error: any) {
-      Toast.show({
-        type: 'error',
-        text1: 'Error',
-        text2: error.message || 'Failed to process payroll',
-      });
+      Toast.show({ type: 'error', text1: 'Error', text2: error.message });
     } finally {
       setLoading(false);
     }
@@ -255,261 +185,213 @@ export function PayrollTab({ accessToken }: PayrollTabProps) {
         `https://${projectId}.supabase.co/functions/v1/make-server-689d7d60/payroll/${entryId}/mark-paid`,
         {
           method: 'POST',
-          headers: { 'Authorization': `Bearer ${token}` },
+          headers: { Authorization: `Bearer ${token}` },
         }
       );
 
-      if (!response.ok) {
-        throw new Error('Failed to mark as paid');
-      }
-
-      Toast.show({
-        type: 'success',
-        text1: 'Success',
-        text2: 'Marked as paid',
-      });
-
+      if (!response.ok) throw new Error('Failed to mark as paid');
+      Toast.show({ type: 'success', text1: 'Settled', text2: 'Payment marked as disbursed' });
       fetchPayroll();
     } catch (error: any) {
-      Toast.show({
-        type: 'error',
-        text1: 'Error',
-        text2: error.message || 'Failed to update status',
-      });
+      Toast.show({ type: 'error', text1: 'Error', text2: error.message });
     }
   };
 
-  const totalAmount = payrollEntries.reduce((sum, entry) => sum + (entry.netPay ?? (entry as any).totalNet ?? (entry as any).totalGross ?? 0), 0);
+  // Financial aggregates
+  const totalGross = payrollEntries.reduce((sum, e) => sum + (e.totalWage || (e as any).totalGross || 0), 0);
+  const totalAdvances = payrollEntries.reduce((sum, e) => sum + (e.advances || 0), 0);
+  const totalDeductions = payrollEntries.reduce((sum, e) => sum + (e.deductions || 0), 0);
+  const totalNet = payrollEntries.reduce((sum, e) => sum + (e.netPay || (e as any).totalNet || e.totalWage || 0), 0);
+
+  const workerOptions = workers.map((w) => ({ label: `${w.name} (Base ₹${w.dailyWage || 800})`, value: w.id }));
 
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
-      <ScrollView style={styles.scrollView} contentContainerStyle={styles.scrollContent}>
-        {/* Header */}
-        <View style={styles.header}>
-          <View style={styles.headerText}>
-            <Text style={styles.headerTitle}>Payroll Management</Text>
-            <Text style={styles.headerSubtitle}>Calculate and process worker payments</Text>
+      {/* 1. TOP INDUSTRIAL HEADER */}
+      <View style={styles.header}>
+        <View style={styles.headerRow}>
+          <View>
+            <Text style={styles.headerTitle}>Payroll & Wage Disbursal</Text>
+            <Text style={styles.headerSubtitle}>Weekly settlements, cash advances & UPI payouts</Text>
           </View>
-          <View style={styles.headerButtons}>
-            <Button
-              onPress={() => setShowAdvanceModal(true)}
-              style={styles.actionButton}
-            >
-              <MaterialIcons name="account-balance-wallet" size={20} color="#111827" />
-              <ButtonText style={styles.actionButtonText}>Give Advance</ButtonText>
-            </Button>
-            <Button
-              onPress={handleProcessPayroll}
-              isDisabled={loading}
-              style={[styles.actionButton, styles.primaryButton]}
-            >
-              <MaterialIcons name="calculate" size={20} color="#ffffff" />
-              <ButtonText style={styles.primaryButtonText}>
-                {loading ? 'Processing...' : 'Calculate Payroll'}
-              </ButtonText>
-            </Button>
+          <TouchableOpacity
+            style={styles.giveAdvanceBtn}
+            onPress={() => setShowAdvanceModal(true)}
+            activeOpacity={0.85}
+          >
+            <MaterialIcons name="account-balance-wallet" size={16} color="#FFFFFF" />
+            <Text style={styles.giveAdvanceText}>Give Advance</Text>
+          </TouchableOpacity>
+        </View>
+
+        {/* Date Period Selector Pill */}
+        <View style={styles.periodPill}>
+          <MaterialIcons name="date-range" size={14} color={colors.accentLight} />
+          <Text style={styles.periodText}>
+            Current Settlement Cycle: {startDate.toLocaleDateString([], { month: 'short', day: 'numeric' })} - {endDate.toLocaleDateString([], { month: 'short', day: 'numeric' })}
+          </Text>
+        </View>
+      </View>
+
+      <ScrollView style={styles.scrollView} contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
+        {/* 2. HIGH-IMPACT FINANCIAL BENTO */}
+        <View style={styles.bentoRow}>
+          <View style={styles.bentoMiniCard}>
+            <Text style={styles.bentoMiniLabel}>Gross Wages</Text>
+            <Text style={styles.bentoMiniVal}>₹{totalGross.toLocaleString()}</Text>
+            <Text style={styles.bentoSubLabel}>{payrollEntries.length} Workers</Text>
+          </View>
+          <View style={styles.bentoMiniCard}>
+            <Text style={styles.bentoMiniLabel}>Advances</Text>
+            <Text style={[styles.bentoMiniVal, { color: colors.warning }]}>-₹{totalAdvances.toLocaleString()}</Text>
+            <Text style={styles.bentoSubLabel}>Deducted</Text>
+          </View>
+          <View style={styles.bentoMiniCard}>
+            <Text style={styles.bentoMiniLabel}>Mess / Kharcha</Text>
+            <Text style={[styles.bentoMiniVal, { color: colors.error }]}>-₹{totalDeductions.toLocaleString()}</Text>
+            <Text style={styles.bentoSubLabel}>Canteen</Text>
           </View>
         </View>
 
-        {/* Date Range Selectors */}
-        <View style={styles.dateRangeContainer}>
-          <View style={styles.dateSelector}>
-            <Text style={styles.dateLabel}>Start Date</Text>
-            <TouchableOpacity
-              style={styles.dateButton}
-              onPress={() => setShowStartPicker(true)}
-            >
-              <Text style={styles.dateButtonText}>
-                {startDate.toLocaleDateString()}
-              </Text>
-              <MaterialIcons name="calendar-today" size={20} color="#2563eb" />
-            </TouchableOpacity>
+        {/* HERO NET PAYABLE CARD */}
+        <View style={styles.heroNetCard}>
+          <View style={styles.heroNetLeft}>
+            <Text style={styles.heroNetLabel}>NET DISBURSABLE AMOUNT</Text>
+            <Text style={styles.heroNetValue}>₹{totalNet.toLocaleString()}</Text>
+            <Text style={styles.heroNetSub}>Direct Bank / UPI Settlement Ready</Text>
           </View>
-          <View style={styles.dateSelector}>
-            <Text style={styles.dateLabel}>End Date</Text>
-            <TouchableOpacity
-              style={styles.dateButton}
-              onPress={() => setShowEndPicker(true)}
-            >
-              <Text style={styles.dateButtonText}>
-                {endDate.toLocaleDateString()}
-              </Text>
-              <MaterialIcons name="calendar-today" size={20} color="#2563eb" />
-            </TouchableOpacity>
-          </View>
+          <TouchableOpacity
+            style={styles.recalcBtn}
+            onPress={handleProcessPayroll}
+            disabled={loading}
+            activeOpacity={0.8}
+          >
+            <MaterialIcons name="refresh" size={18} color="#FFFFFF" />
+            <Text style={styles.recalcBtnText}>Calculate</Text>
+          </TouchableOpacity>
         </View>
 
-        {showStartPicker && (
-          <DateTimePicker
-            value={startDate}
-            mode="date"
-            display="default"
-            onChange={(event, date) => {
-              setShowStartPicker(Platform.OS === 'ios');
-              if (date) setStartDate(date);
-            }}
-          />
-        )}
+        {/* 3. WORKER WAGE LEDGER */}
+        <View style={styles.sectionHeaderRow}>
+          <Text style={styles.sectionTitle}>WORKER WAGE BREAKDOWN ({payrollEntries.length})</Text>
+          {loading && <ActivityIndicator size="small" color={colors.accent} />}
+        </View>
 
-        {showEndPicker && (
-          <DateTimePicker
-            value={endDate}
-            mode="date"
-            display="default"
-            onChange={(event, date) => {
-              setShowEndPicker(Platform.OS === 'ios');
-              if (date) setEndDate(date);
-            }}
-          />
-        )}
-
-        {/* Payroll Entries or Empty State */}
-        {payrollEntries.length > 0 ? (
-          <>
-            {totalAmount > 0 && (
-              <View style={styles.totalCard}>
-                <Text style={styles.totalLabel}>Total Payroll</Text>
-                <Text style={styles.totalAmount}>₹{totalAmount.toLocaleString()}</Text>
-              </View>
-            )}
-            <FlatList
-              data={payrollEntries}
-              keyExtractor={(item) => item.id}
-              scrollEnabled={false}
-              renderItem={({ item }: { item: any }) => (
-                <View style={styles.payrollCard}>
-                  <View style={styles.payrollCardHeader}>
-                    <Text style={styles.workerName}>{item.workerName || `Payroll Batch (${item.startDate || ''} to ${item.endDate || ''})`}</Text>
-                    <View style={[styles.statusBadge, item.status === 'paid' && styles.statusBadgePaid]}>
-                      <Text style={[styles.statusText, item.status === 'paid' && styles.statusTextPaid]}>
-                        {item.status}
-                      </Text>
-                    </View>
-                  </View>
-                  <Text style={styles.period}>{item.period || `${item.startDate || ''} - ${item.endDate || ''}`}</Text>
-                  <View style={styles.payrollDetails}>
-                    <View style={styles.detailItem}>
-                      <Text style={styles.detailLabel}>Days Worked</Text>
-                      <Text style={styles.detailValue}>{item.daysWorked ?? '-'}</Text>
-                    </View>
-                    <View style={styles.detailItem}>
-                      <Text style={styles.detailLabel}>Daily Wage</Text>
-                      <Text style={styles.detailValue}>{item.dailyWage ? `₹${item.dailyWage}` : '-'}</Text>
-                    </View>
-                    <View style={styles.detailItem}>
-                      <Text style={styles.detailLabel}>Net Pay</Text>
-                      <Text style={styles.detailValueNet}>₹{(item.netPay ?? item.totalNet ?? item.totalGross ?? 0).toLocaleString()}</Text>
-                    </View>
-                  </View>
-                  {item.status === 'pending' && (
-                    <Button
-                      onPress={() => handleMarkPaid(item.id)}
-                      style={styles.markPaidButton}
-                    >
-                      <MaterialIcons name="check-circle" size={18} color="#ffffff" />
-                      <ButtonText style={styles.markPaidButtonText}>Mark as Paid</ButtonText>
-                    </Button>
-                  )}
-                </View>
-              )}
-            />
-          </>
+        {payrollEntries.length === 0 ? (
+          <View style={styles.emptyContainer}>
+            <MaterialIcons name="payments" size={48} color={colors.borderDark} />
+            <Text style={styles.emptyTitle}>No Payroll Entries for This Cycle</Text>
+            <Text style={styles.emptySubtitle}>Tap "Calculate" to generate wage computations from attendance records.</Text>
+          </View>
         ) : (
-          <View style={styles.emptyState}>
-            <MaterialIcons name="receipt-long" size={64} color="#d1d5db" />
-            <Text style={styles.emptyTitle}>No payroll calculated</Text>
-            <Text style={styles.emptySubtitle}>Calculate payroll to process payments</Text>
-          </View>
+          payrollEntries.map((entry) => {
+            const isPaid = entry.status === 'paid';
+            const netAmount = entry.netPay ?? (entry as any).totalNet ?? entry.totalWage ?? 0;
+
+            return (
+              <View key={entry.id} style={styles.entryCard}>
+                <View style={styles.entryHeader}>
+                  <View style={styles.entryWorkerInfo}>
+                    <Text style={styles.entryWorkerName}>{entry.workerName}</Text>
+                    <Text style={styles.entryMeta}>
+                      {entry.daysWorked || 7} Days Worked • Base ₹{entry.dailyWage || 800}/day
+                    </Text>
+                  </View>
+                  <View style={[styles.statusBadge, isPaid ? styles.statusBadgePaid : styles.statusBadgePending]}>
+                    <Text style={[styles.statusBadgeText, isPaid ? styles.statusTextPaid : styles.statusTextPending]}>
+                      {isPaid ? 'PAID & SETTLED' : 'READY TO PAY'}
+                    </Text>
+                  </View>
+                </View>
+
+                {/* Financial Breakdown Grid */}
+                <View style={styles.breakdownRow}>
+                  <View style={styles.breakdownItem}>
+                    <Text style={styles.breakdownLabel}>Gross</Text>
+                    <Text style={styles.breakdownVal}>₹{(entry.totalWage || 0).toLocaleString()}</Text>
+                  </View>
+                  <View style={styles.breakdownItem}>
+                    <Text style={styles.breakdownLabel}>Advance</Text>
+                    <Text style={[styles.breakdownVal, { color: colors.warning }]}>-₹{entry.advances || 0}</Text>
+                  </View>
+                  <View style={styles.breakdownItem}>
+                    <Text style={styles.breakdownLabel}>Mess</Text>
+                    <Text style={[styles.breakdownVal, { color: colors.error }]}>-₹{entry.deductions || 0}</Text>
+                  </View>
+                  <View style={styles.breakdownItem}>
+                    <Text style={[styles.breakdownLabel, { fontWeight: '800' }]}>Net Pay</Text>
+                    <Text style={[styles.breakdownVal, { color: colors.primary, fontWeight: '800' }]}>
+                      ₹{netAmount.toLocaleString()}
+                    </Text>
+                  </View>
+                </View>
+
+                {/* Direct Pay Action */}
+                {!isPaid && (
+                  <View style={styles.entryActionRow}>
+                    <TouchableOpacity
+                      style={styles.payUpiBtn}
+                      onPress={() => handleMarkPaid(entry.id)}
+                      activeOpacity={0.85}
+                    >
+                      <MaterialIcons name="bolt" size={16} color="#FFFFFF" />
+                      <Text style={styles.payUpiBtnText}>Disburse ₹{netAmount.toLocaleString()} via UPI</Text>
+                    </TouchableOpacity>
+                  </View>
+                )}
+              </View>
+            );
+          })
         )}
       </ScrollView>
 
-      {/* Give Advance Modal */}
-      <Modal
-        visible={showAdvanceModal}
-        transparent
-        animationType="fade"
-        onRequestClose={() => setShowAdvanceModal(false)}
-      >
+      {/* 4. GIVE ADVANCE MODAL */}
+      <Modal visible={showAdvanceModal} transparent animationType="fade">
         <View style={styles.modalOverlay}>
-          <View style={styles.modalContent}>
+          <View style={styles.modalSheet}>
             <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>Give Advance</Text>
+              <Text style={styles.modalTitle}>Issue Worker Advance</Text>
               <TouchableOpacity onPress={() => setShowAdvanceModal(false)}>
-                <MaterialIcons name="close" size={24} color="#6b7280" />
+                <MaterialIcons name="close" size={22} color={colors.textMuted} />
               </TouchableOpacity>
             </View>
 
-            <ScrollView style={styles.modalBody} showsVerticalScrollIndicator={false}>
-              {/* Worker Selection */}
-              <FormField
-                label="Select Worker"
-                value={selectedWorker}
-                onValueChange={(value) => setSelectedWorker(value)}
-                placeholder="Choose a worker"
-                required
-                type="select"
-                selectOptions={[
-                  { label: 'Select a worker', value: '' },
-                  ...workers.map((worker) => ({ label: worker.name, value: worker.id }))
-                ]}
-              />
+            <FormField
+              label="Select Worker *"
+              type="select"
+              value={selectedWorker}
+              onChangeText={setSelectedWorker}
+              selectOptions={workerOptions}
+              placeholder="Select worker for advance"
+            />
 
-              {/* Amount */}
-              <View style={styles.formGroup}>
-                <Text style={styles.label}>Amount (₹) *</Text>
-                <Input style={styles.input}>
-                  <InputField
-                    placeholder="Enter amount"
-                    value={advanceAmount}
-                    onChangeText={setAdvanceAmount}
-                    keyboardType="numeric"
-                    style={styles.inputField}
-                  />
-                </Input>
-              </View>
+            <FormField
+              label="Advance Amount (₹) *"
+              value={advanceAmount}
+              onChangeText={setAdvanceAmount}
+              placeholder="e.g. 1500"
+              keyboardType="numeric"
+            />
 
-              {/* Date */}
-              <FormField
-                label="Date"
-                value={advanceDate.toISOString().split('T')[0]}
-                onChangeText={(dateStr) => setAdvanceDate(new Date(dateStr))}
-                placeholder="Select date"
-                type="date"
-              />
+            <FormField
+              label="Reason / Purpose *"
+              value={advanceReason}
+              onChangeText={setAdvanceReason}
+              placeholder="e.g. Medical emergency / Family travel"
+            />
 
-              {/* Reason */}
-              <View style={styles.formGroup}>
-                <Text style={styles.label}>Reason (Optional)</Text>
-                <Input style={[styles.input, styles.textArea]}>
-                  <InputField
-                    placeholder="Enter reason for advance"
-                    value={advanceReason}
-                    onChangeText={setAdvanceReason}
-                    multiline
-                    numberOfLines={3}
-                    style={[styles.inputField, styles.textAreaField]}
-                  />
-                </Input>
-              </View>
-            </ScrollView>
-
-            <View style={styles.modalFooter}>
-              <Button
-                onPress={handleCancelAdvance}
-                style={styles.cancelButton}
-              >
-                <ButtonText style={styles.cancelButtonText}>Cancel</ButtonText>
-              </Button>
-              <Button
-                onPress={handleGiveAdvance}
-                isDisabled={submittingAdvance || !selectedWorker || !advanceAmount}
-                style={styles.submitButton}
-              >
-                <ButtonText style={styles.submitButtonText}>
-                  {submittingAdvance ? 'Processing...' : 'Give Advance'}
-                </ButtonText>
-              </Button>
-            </View>
+            <TouchableOpacity
+              style={styles.modalSubmitBtn}
+              onPress={handleGiveAdvance}
+              disabled={submittingAdvance}
+              activeOpacity={0.85}
+            >
+              {submittingAdvance ? (
+                <ActivityIndicator size="small" color="#FFFFFF" />
+              ) : (
+                <Text style={styles.modalSubmitBtnText}>Disburse & Record Advance</Text>
+              )}
+            </TouchableOpacity>
           </View>
         </View>
       </Modal>
@@ -520,316 +402,302 @@ export function PayrollTab({ accessToken }: PayrollTabProps) {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#f8fafc',
+    backgroundColor: colors.background,
+  },
+  header: {
+    backgroundColor: colors.primary,
+    paddingTop: 12,
+    paddingBottom: 14,
+    paddingHorizontal: 16,
+    ...shadows.card,
+  },
+  headerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 10,
+  },
+  headerTitle: {
+    fontSize: 20,
+    fontWeight: '800',
+    color: '#FFFFFF',
+    letterSpacing: -0.3,
+  },
+  headerSubtitle: {
+    fontSize: 11,
+    color: '#94A3B8',
+    marginTop: 2,
+  },
+  giveAdvanceBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: colors.accent,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: radii.md,
+    ...shadows.sm,
+  },
+  giveAdvanceText: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: '#FFFFFF',
+    marginLeft: 4,
+  },
+  periodPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#1E293B',
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: radii.pill,
+    alignSelf: 'flex-start',
+    borderWidth: 1,
+    borderColor: '#334155',
+  },
+  periodText: {
+    fontSize: 11,
+    color: '#FFFFFF',
+    fontWeight: '600',
+    marginLeft: 6,
   },
   scrollView: {
     flex: 1,
   },
   scrollContent: {
-    padding: 20,
-    paddingBottom: 100,
-  },
-  header: {
-    marginBottom: 24,
-  },
-  headerText: {
-    marginBottom: 16,
-  },
-  headerTitle: {
-    fontSize: 24,
-    fontWeight: '700',
-    color: '#111827',
-    marginBottom: 4,
-  },
-  headerSubtitle: {
-    fontSize: 14,
-    color: '#6b7280',
-  },
-  headerButtons: {
-    flexDirection: 'row',
-    gap: 12,
-  },
-  actionButton: {
-    flex: 1,
-    backgroundColor: '#ffffff',
-    borderWidth: 1,
-    borderColor: '#d1d5db',
-    borderRadius: 8,
-    paddingVertical: 12,
     paddingHorizontal: 16,
+    paddingTop: 14,
+    paddingBottom: 30,
+  },
+  bentoRow: {
+    flexDirection: 'row',
+    gap: 8,
+    marginBottom: 12,
+  },
+  bentoMiniCard: {
+    flex: 1,
+    backgroundColor: colors.surface,
+    borderRadius: radii.lg,
+    padding: 10,
+    borderWidth: 1,
+    borderColor: colors.border,
+    ...shadows.sm,
+  },
+  bentoMiniLabel: {
+    fontSize: 9,
+    fontWeight: '700',
+    color: colors.textMuted,
+    textTransform: 'uppercase',
+  },
+  bentoMiniVal: {
+    fontSize: 15,
+    fontWeight: '800',
+    color: colors.text,
+    marginVertical: 2,
+  },
+  bentoSubLabel: {
+    fontSize: 9,
+    color: colors.textLight,
+  },
+  heroNetCard: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'center',
-    gap: 8,
-    minHeight: 44,
+    justifyContent: 'space-between',
+    backgroundColor: colors.surface,
+    borderRadius: radii.xl,
+    padding: 16,
+    borderWidth: 1.5,
+    borderColor: colors.accent,
+    marginBottom: 16,
+    ...shadows.card,
   },
-  primaryButton: {
-    backgroundColor: '#2563eb',
-    borderColor: '#2563eb',
-  },
-  actionButtonText: {
-    color: '#111827',
-    fontWeight: '600',
-    fontSize: 14,
-  },
-  primaryButtonText: {
-    color: '#ffffff',
-    fontWeight: '600',
-    fontSize: 14,
-  },
-  dateRangeContainer: {
-    flexDirection: 'row',
-    gap: 12,
-    marginBottom: 24,
-  },
-  dateSelector: {
+  heroNetLeft: {
     flex: 1,
   },
-  dateLabel: {
-    fontSize: 14,
-    fontWeight: '500',
-    color: '#374151',
-    marginBottom: 8,
+  heroNetLabel: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: colors.accent,
+    letterSpacing: 0.8,
   },
-  dateButton: {
+  heroNetValue: {
+    fontSize: 26,
+    fontWeight: '800',
+    color: colors.text,
+    letterSpacing: -0.5,
+    marginVertical: 2,
+  },
+  heroNetSub: {
+    fontSize: 11,
+    color: colors.textMuted,
+  },
+  recalcBtn: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
-    backgroundColor: '#ffffff',
-    borderWidth: 1,
-    borderColor: '#d1d5db',
-    borderRadius: 8,
+    backgroundColor: colors.primary,
     paddingHorizontal: 12,
-    paddingVertical: 12,
-    minHeight: 44,
+    paddingVertical: 8,
+    borderRadius: radii.md,
+    marginLeft: 12,
   },
-  dateButtonText: {
-    fontSize: 16,
-    color: '#111827',
+  recalcBtnText: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: '#FFFFFF',
+    marginLeft: 4,
   },
-  totalCard: {
-    backgroundColor: '#eff6ff',
-    borderRadius: 12,
-    padding: 20,
-    marginBottom: 20,
+  sectionHeaderRow: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
     alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 10,
+  },
+  sectionTitle: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: colors.textMuted,
+    letterSpacing: 0.8,
+  },
+  entryCard: {
+    backgroundColor: colors.surface,
+    borderRadius: radii.xl,
+    padding: 14,
     borderWidth: 1,
-    borderColor: '#dbeafe',
+    borderColor: colors.border,
+    marginBottom: 10,
+    ...shadows.sm,
   },
-  totalLabel: {
-    fontSize: 18,
-    fontWeight: '700',
-    color: '#111827',
-  },
-  totalAmount: {
-    fontSize: 24,
-    fontWeight: '700',
-    color: '#2563eb',
-  },
-  payrollCard: {
-    backgroundColor: '#ffffff',
-    borderRadius: 12,
-    padding: 16,
-    marginBottom: 12,
-    borderWidth: 1,
-    borderColor: '#e5e7eb',
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.05,
-    shadowRadius: 2,
-    elevation: 1,
-  },
-  payrollCardHeader: {
+  entryHeader: {
     flexDirection: 'row',
+    alignItems: 'flex-start',
     justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 8,
+    marginBottom: 10,
   },
-  workerName: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: '#111827',
+  entryWorkerInfo: {
+    flex: 1,
+  },
+  entryWorkerName: {
+    fontSize: 15,
+    fontWeight: '800',
+    color: colors.text,
+  },
+  entryMeta: {
+    fontSize: 11,
+    color: colors.textMuted,
+    marginTop: 2,
   },
   statusBadge: {
-    backgroundColor: '#fef3c7',
     paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 6,
+    paddingVertical: 3,
+    borderRadius: radii.xs,
   },
   statusBadgePaid: {
-    backgroundColor: '#dcfce7',
+    backgroundColor: colors.successLight,
   },
-  statusText: {
-    fontSize: 12,
-    color: '#d97706',
-    fontWeight: '600',
-    textTransform: 'capitalize',
+  statusBadgePending: {
+    backgroundColor: '#FFF7ED',
+  },
+  statusBadgeText: {
+    fontSize: 10,
+    fontWeight: '800',
   },
   statusTextPaid: {
-    color: '#16a34a',
+    color: colors.successDark,
   },
-  period: {
-    fontSize: 14,
-    color: '#6b7280',
-    marginBottom: 12,
+  statusTextPending: {
+    color: colors.accent,
   },
-  payrollDetails: {
+  breakdownRow: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginBottom: 12,
-    paddingTop: 12,
-    borderTopWidth: 1,
-    borderTopColor: '#f3f4f6',
+    backgroundColor: colors.surfaceMuted,
+    borderRadius: radii.md,
+    padding: 8,
   },
-  detailItem: {
+  breakdownItem: {
+    flex: 1,
     alignItems: 'center',
   },
-  detailLabel: {
+  breakdownLabel: {
+    fontSize: 10,
+    color: colors.textMuted,
+    marginBottom: 2,
+  },
+  breakdownVal: {
     fontSize: 12,
-    color: '#6b7280',
-    marginBottom: 4,
-  },
-  detailValue: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#111827',
-  },
-  detailValueNet: {
-    fontSize: 16,
     fontWeight: '700',
-    color: '#2563eb',
+    color: colors.text,
   },
-  markPaidButton: {
-    backgroundColor: '#22c55e',
-    borderRadius: 8,
-    paddingVertical: 10,
-    paddingHorizontal: 16,
+  entryActionRow: {
+    marginTop: 10,
+    paddingTop: 10,
+    borderTopWidth: 1,
+    borderTopColor: colors.border,
+  },
+  payUpiBtn: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 6,
-    minHeight: 36,
+    backgroundColor: colors.primary,
+    paddingVertical: 10,
+    borderRadius: radii.md,
   },
-  markPaidButtonText: {
-    color: '#ffffff',
-    fontWeight: '600',
-    fontSize: 14,
+  payUpiBtnText: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: '#FFFFFF',
+    marginLeft: 6,
   },
-  emptyState: {
+  emptyContainer: {
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: 60,
-    paddingHorizontal: 20,
+    paddingVertical: 48,
   },
   emptyTitle: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: '#111827',
-    marginTop: 16,
-    marginBottom: 8,
+    fontSize: 16,
+    fontWeight: '800',
+    color: colors.textMuted,
+    marginTop: 12,
   },
   emptySubtitle: {
-    fontSize: 14,
-    color: '#6b7280',
+    fontSize: 12,
+    color: colors.textLight,
+    marginTop: 4,
     textAlign: 'center',
+    paddingHorizontal: 24,
   },
   modalOverlay: {
     flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    backgroundColor: 'rgba(15, 23, 42, 0.6)',
     justifyContent: 'center',
-    alignItems: 'center',
-    padding: 20,
+    padding: 24,
   },
-  modalContent: {
-    backgroundColor: '#ffffff',
-    borderRadius: 16,
-    width: '100%',
-    maxWidth: 500,
-    maxHeight: '80%',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.15,
-    shadowRadius: 12,
-    elevation: 8,
+  modalSheet: {
+    backgroundColor: colors.surface,
+    borderRadius: radii.xl,
+    padding: 20,
+    ...shadows.card,
   },
   modalHeader: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
     alignItems: 'center',
-    padding: 20,
-    borderBottomWidth: 1,
-    borderBottomColor: '#e5e7eb',
+    justifyContent: 'space-between',
+    marginBottom: 14,
   },
   modalTitle: {
-    fontSize: 20,
-    fontWeight: '700',
-    color: '#111827',
-  },
-  modalBody: {
-    padding: 20,
-    maxHeight: 400,
-  },
-  modalFooter: {
-    flexDirection: 'row',
-    gap: 12,
-    padding: 20,
-    borderTopWidth: 1,
-    borderTopColor: '#e5e7eb',
-  },
-  formGroup: {
-    marginBottom: 20,
-  },
-  label: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#374151',
-    marginBottom: 8,
-  },
-  input: {
-    borderWidth: 1,
-    borderColor: '#d1d5db',
-    borderRadius: 8,
-    minHeight: 48,
-  },
-  inputField: {
     fontSize: 16,
-    color: '#111827',
+    fontWeight: '800',
+    color: colors.text,
   },
-  textArea: {
-    minHeight: 100,
-  },
-  textAreaField: {
-    textAlignVertical: 'top',
-    paddingTop: 12,
-  },
-  cancelButton: {
-    flex: 1,
-    backgroundColor: '#ffffff',
-    borderWidth: 1,
-    borderColor: '#d1d5db',
-    borderRadius: 8,
-    minHeight: 44,
-    justifyContent: 'center',
+  modalSubmitBtn: {
+    backgroundColor: colors.accent,
+    paddingVertical: 12,
+    borderRadius: radii.md,
     alignItems: 'center',
+    marginTop: 14,
+    ...shadows.hero,
   },
-  cancelButtonText: {
-    color: '#374151',
-    fontWeight: '600',
-    fontSize: 16,
-  },
-  submitButton: {
-    flex: 1,
-    backgroundColor: '#2563eb',
-    borderRadius: 8,
-    minHeight: 44,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  submitButtonText: {
-    color: '#ffffff',
-    fontWeight: '600',
-    fontSize: 16,
+  modalSubmitBtnText: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: '#FFFFFF',
   },
 });

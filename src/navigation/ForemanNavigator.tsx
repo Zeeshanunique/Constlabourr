@@ -6,6 +6,7 @@ import { ForemanWorkersTab } from '../features/workers/ForemanWorkersTab';
 import { SettingsScreen } from '../screens/SettingsScreen';
 import { MaterialIcons } from '@expo/vector-icons';
 import { colors, shadows } from '../styles/theme';
+import { useTranslation } from '../i18n';
 
 export type ForemanTabParamList = {
   Home: { accessToken: string };
@@ -18,6 +19,7 @@ const Tab = createBottomTabNavigator<ForemanTabParamList>();
 
 export function ForemanNavigator({ route }: { route: any }) {
   const accessToken = route.params?.accessToken;
+  const { t } = useTranslation();
   
   return (
     <Tab.Navigator
@@ -44,7 +46,7 @@ export function ForemanNavigator({ route }: { route: any }) {
       <Tab.Screen
         name="Home"
         options={{
-          tabBarLabel: 'Dashboard',
+          tabBarLabel: t('nav.dashboard'),
           tabBarIcon: ({ color, size }) => <MaterialIcons name="dashboard" size={size} color={color} />,
         }}
       >
@@ -53,7 +55,7 @@ export function ForemanNavigator({ route }: { route: any }) {
       <Tab.Screen
         name="Attendance"
         options={{
-          tabBarLabel: 'Attendance',
+          tabBarLabel: t('nav.attendance'),
           tabBarIcon: ({ color, size }) => <MaterialIcons name="assignment-turned-in" size={size} color={color} />,
         }}
       >
@@ -62,7 +64,7 @@ export function ForemanNavigator({ route }: { route: any }) {
       <Tab.Screen
         name="Workers"
         options={{
-          tabBarLabel: 'Site Crew',
+          tabBarLabel: t('nav.workers'),
           tabBarIcon: ({ color, size }) => <MaterialIcons name="groups" size={size} color={color} />,
         }}
       >
@@ -72,7 +74,7 @@ export function ForemanNavigator({ route }: { route: any }) {
         name="Settings"
         component={SettingsScreen}
         options={{
-          tabBarLabel: 'Settings',
+          tabBarLabel: t('nav.settings'),
           tabBarIcon: ({ color, size }) => <MaterialIcons name="settings" size={size} color={color} />,
         }}
       />

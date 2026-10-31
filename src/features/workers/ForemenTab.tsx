@@ -6,11 +6,13 @@ import { Button, ButtonText } from '@/components/ui/button';
 import { Input, InputField } from '@/components/ui/input';
 import { FormModal } from '@/components/shared/FormModal';
 import { FormField } from '@/components/shared/FormField';
+import { formStyles } from '@/components/shared/form-styles';
 import { MaterialIcons } from '@expo/vector-icons';
 import { projectId } from '@/utils/supabase/info';
 import { useRoute } from '@react-navigation/native';
 import Toast from 'react-native-toast-message';
 import { theme } from '@/styles/theme';
+import { useTranslation } from '@/i18n';
 
 interface Foreman {
   id: string;
@@ -32,6 +34,7 @@ interface ForemenTabProps {
 
 export function ForemenTab({ accessToken }: ForemenTabProps) {
   const route = useRoute();
+  const { t, language } = useTranslation();
   const token = accessToken || (route.params as any)?.accessToken;
   const [foremen, setForemen] = useState<Foreman[]>([]);
   const [sites, setSites] = useState<Site[]>([]);
@@ -98,13 +101,14 @@ export function ForemenTab({ accessToken }: ForemenTabProps) {
       Toast.show({ type: 'error', text1: 'Validation Error', text2: 'Please enter foreman full name' });
       return;
     }
-    const cleanPhone = formData.phone.trim().replace(/\D/g, '');
-    if (cleanPhone.length < 10) {
+    const cleanPhone = formData.phone.trim().replace(/\D/g, '').slice(0, 10);
+    if (cleanPhone.length !== 10) {
       Toast.show({ type: 'error', text1: 'Validation Error', text2: 'Please enter a valid 10-digit mobile number' });
       return;
     }
-    if (!formData.email.trim() || !formData.email.includes('@')) {
-      Toast.show({ type: 'error', text1: 'Validation Error', text2: 'Please enter a valid official email address' });
+    const cleanEmail = formData.email.trim().toLowerCase();
+    if (cleanEmail && (!cleanEmail.includes('@') || !cleanEmail.includes('.'))) {
+      Toast.show({ type: 'error', text1: 'Validation Error', text2: 'Please enter a valid official email address or leave blank' });
       return;
     }
     if (!editingForeman && (!formData.password || formData.password.length < 6)) {
@@ -116,7 +120,7 @@ export function ForemenTab({ accessToken }: ForemenTabProps) {
     try {
       const foremanData: any = {
         name: formData.name.trim(),
-        email: formData.email.trim().toLowerCase(),
+        email: cleanEmail || null,
         phone: cleanPhone,
         siteId: formData.siteId || null,
       };
@@ -254,11 +258,15 @@ export function ForemenTab({ accessToken }: ForemenTabProps) {
     setEditingForeman(null);
   };
 
-  const filteredForemen = foremen.filter(foreman =>
-    foreman.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    foreman.phone.includes(searchTerm) ||
-    foreman.email.toLowerCase().includes(searchTerm.toLowerCase())
-  );
+  const filteredForemen = foremen.filter((foreman) => {
+    if (!foreman) return false;
+    const term = (searchTerm || '').trim().toLowerCase();
+    if (!term) return true;
+    const nameMatch = (foreman.name || '').toLowerCase().includes(term);
+    const phoneMatch = (foreman.phone || '').includes(term);
+    const emailMatch = (foreman.email || '').toLowerCase().includes(term);
+    return nameMatch || phoneMatch || emailMatch;
+  });
 
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
@@ -266,11 +274,11 @@ export function ForemenTab({ accessToken }: ForemenTabProps) {
         {/* Header & KPI Bar */}
         <View style={styles.header}>
           <View>
-            <Text style={styles.headerTitle}>Site Supervisors</Text>
-            <Text style={styles.headerSubtitle}>Manage foremen and site supervisory assignments</Text>
+            <Text style={styles.headerTitle}>{t('foremen.directory')}</Text>
+            <Text style={styles.headerSubtitle}>{t('foremen.directorySubtitle')}</Text>
           </View>
           <View style={styles.countBadge}>
-            <Text style={styles.countBadgeText}>{foremen.length} Active</Text>
+            <Text style={styles.countBadgeText}>{foremen.length} {t('common.active')}</Text>
           </View>
         </View>
 
@@ -279,7 +287,7 @@ export function ForemenTab({ accessToken }: ForemenTabProps) {
           <Input size="md" variant="outline" style={styles.searchWrapper}>
             <MaterialIcons name="search" size={20} color={theme.colors.slate[400]} style={styles.searchIcon} />
             <InputField
-              placeholder="Search by name, phone or email..."
+              placeholder={`${t('common.search')}...`}
               value={searchTerm}
               onChangeText={setSearchTerm}
               style={styles.searchInput}
@@ -292,7 +300,7 @@ export function ForemenTab({ accessToken }: ForemenTabProps) {
             activeOpacity={0.85}
           >
             <MaterialIcons name="person-add-alt-1" size={18} color="#ffffff" />
-            <Text style={styles.addButtonText}>Add</Text>
+            <Text style={styles.addButtonText}>+ {t('foremen.addForeman')}</Text>
           </TouchableOpacity>
         </View>
 
@@ -312,7 +320,7 @@ export function ForemenTab({ accessToken }: ForemenTabProps) {
                   <View style={styles.foremanNameRow}>
                     <Text style={styles.foremanName}>{item.name}</Text>
                     <View style={styles.roleTag}>
-                      <Text style={styles.roleTagText}>SUPERVISOR</Text>
+                      <Text style={styles.roleTagText}>{t('auth.foremanRole').toUpperCase()}</Text>
                     </View>
                   </View>
 
@@ -345,7 +353,7 @@ export function ForemenTab({ accessToken }: ForemenTabProps) {
                         { color: item.siteName ? theme.colors.emerald[700] : theme.colors.amber[700] }
                       ]}
                     >
-                      {item.siteName ? `Assigned: ${item.siteName}` : 'Unassigned to any site'}
+                      {item.siteName ? `${t('foremen.assignedSite')}: ${item.siteName}` : '-'}
                     </Text>
                   </View>
                 </View>
@@ -374,9 +382,11 @@ export function ForemenTab({ accessToken }: ForemenTabProps) {
               <View style={styles.emptyIconCircle}>
                 <MaterialIcons name="engineering" size={40} color={theme.colors.slate[400]} />
               </View>
-              <Text style={styles.emptyText}>No Foremen Found</Text>
+              <Text style={styles.emptyText}>{t('foremen.noForemenFound')}</Text>
               <Text style={styles.emptySubtext}>
-                {searchTerm ? 'No supervisor matched your search keywords.' : 'Add your first site foreman to delegate worker attendance and tracking.'}
+                {searchTerm
+                  ? (language === 'hi' ? 'आपकी खोज से कोई पर्यवेक्षक मेल नहीं खाता।' : language === 'bn' ? 'আপনার অনুসন্ধানের সাথে কোনো সুপারভাইজার মিলছে না।' : 'No supervisor matched your search keywords.')
+                  : (language === 'hi' ? 'श्रमिक उपस्थिति और ट्रैकिंग सौंपने के लिए अपना पहला साइट पर्यवेक्षक जोड़ें।' : language === 'bn' ? 'শ্রমিক উপস্থিতি ও ট্র্যাকিং পরিচালনার জন্য আপনার প্রথম সাইট সুপারভাইজার যুক্ত করুন।' : 'Add your first site foreman to delegate worker attendance and tracking.')}
               </Text>
               <TouchableOpacity
                 onPress={() => { resetForm(); setIsModalOpen(true); }}
@@ -384,7 +394,7 @@ export function ForemenTab({ accessToken }: ForemenTabProps) {
                 activeOpacity={0.85}
               >
                 <MaterialIcons name="person-add" size={18} color="#ffffff" />
-                <Text style={styles.emptyCtaText}>Add First Foreman</Text>
+                <Text style={styles.emptyCtaText}>+ {t('foremen.addForeman')}</Text>
               </TouchableOpacity>
             </View>
           }
@@ -395,52 +405,55 @@ export function ForemenTab({ accessToken }: ForemenTabProps) {
       <FormModal
         isOpen={isModalOpen}
         onClose={() => { setIsModalOpen(false); resetForm(); }}
-        title={editingForeman ? 'Edit Foreman Profile' : 'Register New Foreman'}
-        subtitle={editingForeman ? 'Update supervisory assignment or credentials' : 'Create login credentials and link to an active jobsite'}
+        title={editingForeman ? t('foremen.editForeman') : t('foremen.addForeman')}
+        subtitle={t('foremen.directorySubtitle')}
         onSubmit={handleSubmit}
-        submitLabel={editingForeman ? 'Update Foreman' : 'Create Account'}
+        submitLabel={editingForeman ? t('common.save') : t('foremen.addForeman')}
         loading={loading}
         submitDisabled={
           !formData.name.trim() ||
-          formData.phone.trim().length < 10 ||
-          !formData.email.trim() ||
-          !formData.email.includes('@') ||
-          (!editingForeman && (!formData.password || formData.password.length < 6))
+          formData.phone.trim().replace(/\D/g, '').length !== 10
         }
       >
+        <Text style={formStyles.sectionHeader}>
+          {language === 'hi' ? 'पर्यवेक्षक जानकारी' : language === 'bn' ? 'সুপারভাইজার তথ্য' : 'Supervisor Information'}
+        </Text>
+
         <FormField
-          label="Full Name"
+          label={t('foremen.foremanName')}
           value={formData.name}
           onChangeText={(text) => setFormData({ ...formData, name: text })}
-          placeholder="e.g. Rajesh Kumar"
+          placeholder={t('foremen.foremanNamePlaceholder')}
           required
           type="text"
         />
 
         <FormField
-          label="Mobile Phone Number"
+          label={t('foremen.phone')}
           value={formData.phone}
           onChangeText={(text) => setFormData({ ...formData, phone: text })}
-          placeholder="e.g. 9876543210"
+          placeholder={t('foremen.phonePlaceholder')}
           required
           type="phone"
+          helperText={language === 'hi' ? 'सटीक 10 अंक होने चाहिए' : language === 'bn' ? 'ঠিক ১০ সংখ্যার হতে হবে' : 'Must be exactly 10 digits'}
         />
 
         <FormField
-          label="Email Address"
+          label={`${t('foremen.email')} (${t('common.optional')})`}
           value={formData.email}
           onChangeText={(text) => setFormData({ ...formData, email: text })}
-          placeholder="e.g. rajesh@foreman.com"
-          required
+          placeholder={t('foremen.emailPlaceholder')}
+          required={false}
           type="email"
+          autoCapitalize="none"
         />
 
         {!editingForeman && (
           <FormField
-            label="Initial Account Password"
+            label={t('auth.createPassword')}
             value={formData.password}
             onChangeText={(text) => setFormData({ ...formData, password: text })}
-            placeholder="Minimum 6 characters"
+            placeholder={t('auth.passwordPlaceholder')}
             required
             type="password"
           />
@@ -448,19 +461,21 @@ export function ForemenTab({ accessToken }: ForemenTabProps) {
 
         {editingForeman && (
           <FormField
-            label="Reset Password (optional)"
+            label={`${t('auth.createPassword')} (${t('common.optional')})`}
             value={formData.password}
             onChangeText={(text) => setFormData({ ...formData, password: text })}
-            placeholder="Leave blank to keep current password"
+            placeholder={t('auth.passwordPlaceholder')}
             type="password"
           />
         )}
 
+        <Text style={formStyles.sectionHeader}>{t('foremen.assignedSite')}</Text>
+
         <FormField
-          label="Assign to Active Site"
+          label={t('foremen.assignedSite')}
           value={formData.siteId}
           onValueChange={(value) => setFormData({ ...formData, siteId: value })}
-          placeholder="Select an active jobsite"
+          placeholder={t('workers.selectSitePlaceholder')}
           type="select"
           selectOptions={[
             { label: 'Unassigned (Floating Supervisor)', value: '' },

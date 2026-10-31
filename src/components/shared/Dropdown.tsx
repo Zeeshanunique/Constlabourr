@@ -45,8 +45,10 @@ export const Dropdown: React.FC<DropdownProps> = ({
 
   // Filter options based on search query
   const filteredOptions = searchQuery
-    ? options.filter(option => 
-        option.label.toLowerCase().includes(searchQuery.toLowerCase())
+    ? options.filter((option) =>
+        (option?.label || '')
+          .toLowerCase()
+          .includes((searchQuery || '').trim().toLowerCase())
       )
     : options;
 

@@ -7,7 +7,7 @@ import { formStyles } from './form-styles';
 import { Dropdown } from './Dropdown';
 import { theme } from '@/styles/theme';
 
-interface FormFieldProps {
+export interface FormFieldProps {
   label: string;
   value: string;
   onChangeText?: (text: string) => void;
@@ -24,7 +24,68 @@ interface FormFieldProps {
   disabled?: boolean;
   multiline?: boolean;
   numberOfLines?: number;
+  icon?: keyof typeof MaterialIcons.glyphMap;
+  suffix?: string;
+  maxLength?: number;
 }
+
+export const getFieldIcon = (
+  label: string,
+  type?: string,
+  explicitIcon?: keyof typeof MaterialIcons.glyphMap
+): keyof typeof MaterialIcons.glyphMap => {
+  if (explicitIcon) return explicitIcon;
+  const l = (label || '').toLowerCase();
+
+  if (l.includes('aadhaar') || l.includes('adhaar') || l.includes('identity') || l.includes('govt id')) return 'badge';
+  if (l.includes('phone') || l.includes('mobile') || l.includes('contact')) return 'phone';
+  if (l.includes('email') || l.includes('mail')) return 'mail-outline';
+  if (l.includes('password')) return 'lock-outline';
+  if (
+    l.includes('wage') ||
+    l.includes('salary') ||
+    l.includes('payment') ||
+    l.includes('rate') ||
+    l.includes('amount') ||
+    l.includes('charge') ||
+    l.includes('canteen') ||
+    l.includes('mess') ||
+    l.includes('cost') ||
+    l.includes('overtime') ||
+    l.includes('upi')
+  ) return 'currency-rupee';
+  if (
+    l.includes('site') ||
+    l.includes('project') ||
+    l.includes('location') ||
+    l.includes('address') ||
+    l.includes('building') ||
+    l.includes('firm') ||
+    l.includes('company')
+  ) return 'business';
+  if (l.includes('foreman') || l.includes('supervisor')) return 'engineering';
+  if (
+    l.includes('worker') ||
+    l.includes('labor') ||
+    l.includes('labour') ||
+    l.includes('name') ||
+    l.includes('person') ||
+    l.includes('user')
+  ) return 'person';
+  if (l.includes('skill') || l.includes('qualification') || l.includes('trade') || l.includes('role')) return 'military-tech';
+  if (l.includes('date') || l.includes('start') || l.includes('completion') || l.includes('end') || type === 'date') return 'calendar-today';
+  if (l.includes('bank') || l.includes('account')) return 'account-balance';
+  if (l.includes('ifsc') || l.includes('code') || l.includes('gstin') || l.includes('license')) return 'qr-code';
+  if (l.includes('hours') || l.includes('time') || l.includes('check-in') || l.includes('check-out')) return 'access-time';
+
+  if (type === 'phone') return 'phone';
+  if (type === 'email') return 'mail-outline';
+  if (type === 'password') return 'lock-outline';
+  if (type === 'number') return 'tag';
+  if (type === 'select') return 'list';
+  if (type === 'textarea') return 'notes';
+  return 'edit';
+};
 
 export function FormField({
   label,
@@ -43,18 +104,47 @@ export function FormField({
   disabled = false,
   multiline = false,
   numberOfLines = 4,
+  icon,
+  suffix,
+  maxLength,
 }: FormFieldProps) {
   const [isFocused, setIsFocused] = useState(false);
   const [isDropdownVisible, setIsDropdownVisible] = useState(false);
   const [showDatePicker, setShowDatePicker] = useState(false);
   const [isPasswordVisible, setIsPasswordVisible] = useState(false);
 
+  const cleanLabel = (label || '').replace(/\*/g, '').trim();
+  const lowerLabel = cleanLabel.toLowerCase();
+  const isPhone = type === 'phone' || lowerLabel.includes('phone') || lowerLabel.includes('mobile');
+  const isAadhaar = lowerLabel.includes('aadhaar') || lowerLabel.includes('adhaar');
+
+  // Hard limits for phone (10) and Aadhaar (12)
+  let effectiveMaxLength = maxLength;
+  if (isPhone) effectiveMaxLength = 10;
+  if (isAadhaar) effectiveMaxLength = 12;
+
+  let determinedKeyboardType: any = keyboardType;
+  if (isPhone) determinedKeyboardType = 'phone-pad';
+  else if (isAadhaar) determinedKeyboardType = 'numeric';
+  else if (!determinedKeyboardType) {
+    if (type === 'email') determinedKeyboardType = 'email-address';
+    else if (type === 'number') determinedKeyboardType = 'numeric';
+  }
+
   const handleTextChange = (text: string) => {
-    if (onChangeText) onChangeText(text);
-    if (onValueChange) onValueChange(text);
+    let sanitized = text;
+    if (isPhone) {
+      sanitized = text.replace(/[^0-9]/g, '').slice(0, 10);
+    } else if (isAadhaar) {
+      sanitized = text.replace(/[^0-9]/g, '').slice(0, 12);
+    }
+    if (onChangeText) onChangeText(sanitized);
+    if (onValueChange) onValueChange(sanitized);
   };
 
-  const renderInput = () => {
+  const resolvedIcon = getFieldIcon(cleanLabel, type, icon);
+
+  const renderControl = () => {
     if (type === 'date') {
       const dateValue = value ? new Date(value) : new Date();
       const displayValue = value
@@ -80,28 +170,19 @@ export function FormField({
           <TouchableOpacity
             onPress={() => !disabled && setShowDatePicker(true)}
             disabled={disabled}
-            style={[
-              formStyles.formInput,
-              disabled && { opacity: 0.6 },
-              {
-                flexDirection: 'row',
-                alignItems: 'center',
-                justifyContent: 'space-between',
-                paddingHorizontal: 14,
-              },
-            ]}
+            style={{ flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}
             activeOpacity={0.7}
           >
             <Text
               style={[
-                formStyles.formInputField,
-                { paddingHorizontal: 0, flex: 1 },
-                !displayValue && formStyles.formInputPlaceholder,
+                formStyles.fieldValueText,
+                !displayValue && formStyles.fieldPlaceholderText,
               ]}
+              numberOfLines={1}
             >
               {displayValue || placeholder || 'Select date (DD-MM-YYYY)'}
             </Text>
-            <MaterialIcons name="event" size={20} color={theme.colors.slate[500]} />
+            <MaterialIcons name="event" size={20} color={theme.colors.slate[400]} />
           </TouchableOpacity>
 
           {showDatePicker && (
@@ -134,29 +215,19 @@ export function FormField({
           <TouchableOpacity
             onPress={() => !disabled && setIsDropdownVisible(true)}
             disabled={disabled}
-            style={[
-              formStyles.formInput,
-              disabled && { opacity: 0.6 },
-              {
-                flexDirection: 'row',
-                alignItems: 'center',
-                justifyContent: 'space-between',
-                paddingHorizontal: 14,
-              },
-            ]}
+            style={{ flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}
             activeOpacity={0.7}
           >
             <Text
               style={[
-                formStyles.formInputField,
-                { paddingHorizontal: 0, flex: 1 },
-                !selectedOption && formStyles.formInputPlaceholder,
+                formStyles.fieldValueText,
+                !selectedOption && formStyles.fieldPlaceholderText,
               ]}
               numberOfLines={1}
             >
-              {selectedOption?.label || placeholder || `Select ${label.toLowerCase()}`}
+              {selectedOption?.label || placeholder || `Select ${lowerLabel}`}
             </Text>
-            <MaterialIcons name="expand-more" size={22} color={theme.colors.slate[500]} />
+            <MaterialIcons name="expand-more" size={22} color={theme.colors.slate[400]} />
           </TouchableOpacity>
 
           <Dropdown
@@ -164,7 +235,7 @@ export function FormField({
             onClose={() => setIsDropdownVisible(false)}
             options={selectOptions}
             selectedValue={value}
-            title={`Select ${label.replace(/\*/g, '').trim()}`}
+            title={`Select ${cleanLabel}`}
             onSelect={(val) => {
               handleTextChange(val);
               setIsDropdownVisible(false);
@@ -176,59 +247,40 @@ export function FormField({
 
     if (type === 'textarea') {
       return (
-        <View
-          style={[
-            formStyles.formInput,
-            isFocused && formStyles.formInputFocused,
-            errorText && { borderColor: theme.colors.red[500] },
-            { minHeight: 88, padding: 12 },
-          ]}
-        >
-          <TextInput
-            value={value}
-            onChangeText={handleTextChange}
-            placeholder={placeholder}
-            placeholderTextColor={formStyles.formInputPlaceholder.color}
-            multiline
-            numberOfLines={numberOfLines}
-            style={[formStyles.formInputField, { paddingHorizontal: 0, paddingVertical: 0, textAlignVertical: 'top' }]}
-            editable={!disabled}
-            onFocus={() => setIsFocused(true)}
-            onBlur={() => setIsFocused(false)}
-          />
-        </View>
-      );
-    }
-
-    // Default: text, email, phone, number, password
-    let determinedKeyboardType: any = keyboardType;
-    if (!determinedKeyboardType) {
-      if (type === 'email') determinedKeyboardType = 'email-address';
-      else if (type === 'phone') determinedKeyboardType = 'phone-pad';
-      else if (type === 'number') determinedKeyboardType = 'numeric';
-    }
-
-    const isPassword = type === 'password' || secureTextEntry;
-
-    return (
-      <View
-        style={[
-          formStyles.formInput,
-          isFocused && formStyles.formInputFocused,
-          errorText && { borderColor: theme.colors.red[500] },
-          { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 14 },
-        ]}
-      >
         <TextInput
           value={value}
           onChangeText={handleTextChange}
           placeholder={placeholder}
-          placeholderTextColor={formStyles.formInputPlaceholder.color}
-          style={[formStyles.formInputField, { flex: 1, paddingHorizontal: 0 }]}
+          placeholderTextColor={formStyles.fieldPlaceholderText.color}
+          multiline
+          numberOfLines={numberOfLines}
+          style={[
+            formStyles.fieldTextInput,
+            { minHeight: 64, textAlignVertical: 'top' },
+          ]}
+          editable={!disabled}
+          onFocus={() => setIsFocused(true)}
+          onBlur={() => setIsFocused(false)}
+        />
+      );
+    }
+
+    // Default: text, email, phone, number, password
+    const isPassword = type === 'password' || secureTextEntry;
+
+    return (
+      <>
+        <TextInput
+          value={value}
+          onChangeText={handleTextChange}
+          placeholder={placeholder}
+          placeholderTextColor={formStyles.fieldPlaceholderText.color}
+          style={formStyles.fieldTextInput}
           editable={!disabled}
           keyboardType={determinedKeyboardType}
           secureTextEntry={isPassword && !isPasswordVisible}
           autoCapitalize={autoCapitalize}
+          maxLength={effectiveMaxLength}
           onFocus={() => setIsFocused(true)}
           onBlur={() => setIsFocused(false)}
         />
@@ -244,25 +296,50 @@ export function FormField({
             />
           </TouchableOpacity>
         )}
-      </View>
+      </>
     );
   };
 
   return (
-    <View style={formStyles.formField}>
-      <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 6 }}>
-        <Text style={formStyles.formLabel}>{label.replace(/\*/g, '').trim()}</Text>
-        {required && <Text style={{ color: theme.colors.red[600], marginLeft: 4, fontWeight: '800' }}>*</Text>}
+    <View style={{ marginBottom: 12 }}>
+      <View
+        style={[
+          formStyles.fieldCard,
+          isFocused && formStyles.fieldCardFocused,
+          Boolean(errorText) && formStyles.fieldCardError,
+          disabled && formStyles.fieldCardDisabled,
+        ]}
+      >
+        {/* Card Header: Label on top */}
+        <View style={formStyles.fieldCardHeader}>
+          <Text style={formStyles.fieldCardLabel}>
+            {cleanLabel}
+            {required && <Text style={formStyles.requiredAsterisk}> *</Text>}
+          </Text>
+          {!required && !lowerLabel.includes('optional') && (
+            <Text style={formStyles.optionalTag}>(Optional)</Text>
+          )}
+        </View>
+
+        {/* Card Input Row: Leading Icon + Control + Suffix/Trailing */}
+        <View style={formStyles.fieldInputRow}>
+          <MaterialIcons
+            name={resolvedIcon}
+            size={20}
+            color={isFocused ? theme.colors.safetyOrange : theme.colors.slate[700]}
+            style={formStyles.leadingIcon}
+          />
+          {renderControl()}
+          {suffix ? <Text style={formStyles.fieldSuffix}>{suffix}</Text> : null}
+        </View>
       </View>
 
-      {renderInput()}
-
       {helperText && !errorText ? (
-        <Text style={formStyles.formHelperText}>{helperText}</Text>
+        <Text style={formStyles.fieldHelperText}>{helperText}</Text>
       ) : null}
 
       {errorText ? (
-        <Text style={formStyles.formErrorText}>{errorText}</Text>
+        <Text style={formStyles.fieldErrorText}>{errorText}</Text>
       ) : null}
     </View>
   );

@@ -15,6 +15,7 @@ import { useNavigation, useRoute, NavigationProp, useFocusEffect } from '@react-
 import type { ForemanTabParamList } from '../navigation/ForemanNavigator';
 import { colors, shadows, radii } from '../styles/theme';
 import { BrandLogo } from '../components/shared/BrandLogo';
+import { useTranslation } from '../i18n';
 
 interface ForemanDashboardProps {
   accessToken?: string;
@@ -25,12 +26,16 @@ interface ForemanStats {
   assignedSites: number;
   presentToday: number;
   absentToday: number;
+  siteName?: string;
+  totalWagesToday?: number;
+  turnoutPercentage?: number;
 }
 
 export function ModernForemanDashboard({ accessToken }: ForemanDashboardProps) {
   const context = useContext(AppContext);
   const navigation = useNavigation<NavigationProp<ForemanTabParamList>>();
   const route = useRoute();
+  const { language, setLanguage, t } = useTranslation();
   const token = accessToken || (route.params as any)?.accessToken;
   const [stats, setStats] = useState<ForemanStats | null>(null);
   const [refreshing, setRefreshing] = useState(false);
@@ -90,16 +95,41 @@ export function ModernForemanDashboard({ accessToken }: ForemanDashboardProps) {
       {/* 1. TOP INDUSTRIAL HEADER */}
       <View style={styles.header}>
         <View style={styles.headerTop}>
-          <BrandLogo size={38} showText={true} variant="light" subtitle="SITE SUPERVISOR / FOREMAN" />
-          <TouchableOpacity onPress={context.logout} style={styles.iconCircleButton}>
-            <MaterialIcons name="logout" size={18} color="#FFFFFF" />
-          </TouchableOpacity>
+          <BrandLogo
+            size={38}
+            showText={true}
+            variant="light"
+            subtitle={language === 'hi' ? 'साइट पर्यवेक्षक / फोरमैन' : language === 'bn' ? 'সাইট সুপারভাইজার / ফোরম্যান' : 'SITE SUPERVISOR / FOREMAN'}
+          />
+          <View style={styles.headerRightActions}>
+            <TouchableOpacity
+              onPress={() => {
+                const nextLang = language === 'en' ? 'hi' : language === 'hi' ? 'bn' : 'en';
+                setLanguage(nextLang);
+              }}
+              style={styles.langPillButton}
+              activeOpacity={0.8}
+            >
+              <MaterialIcons name="language" size={14} color="#FDBA74" />
+              <Text style={styles.langPillButtonText}>
+                {language === 'en' ? 'EN' : language === 'hi' ? 'हिन्दी' : 'বাংলা'}
+              </Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity onPress={context.logout} style={styles.iconCircleButton} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+              <MaterialIcons name="logout" size={18} color="#FFFFFF" />
+            </TouchableOpacity>
+          </View>
         </View>
 
         <View style={styles.foremanBadgeRow}>
           <View style={styles.activeSitePill}>
             <View style={styles.greenPulseDot} />
-            <Text style={styles.activeSitePillText}>Assigned Site • Pier 102 Metro Line</Text>
+            <Text style={styles.activeSitePillText}>
+              {stats?.siteName
+                ? `${language === 'hi' ? 'असाइन साइट' : language === 'bn' ? 'নিযুক্ত সাইট' : 'Assigned Site'} • ${stats.siteName}`
+                : (language === 'hi' ? 'असाइन साइट • सक्रिय' : language === 'bn' ? 'নিযুক্ত সাইট • সক্রিয়' : 'Assigned Site • Active')}
+            </Text>
           </View>
           <Text style={styles.foremanNameText}>
             {context.user?.name || context.user?.email?.split('@')[0]}
@@ -114,63 +144,83 @@ export function ModernForemanDashboard({ accessToken }: ForemanDashboardProps) {
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.accent} />}
       >
         {/* 3. 4-CARD BENTO GRID */}
-        <Text style={styles.sectionLabel}>DAILY SITE SHIFT OVERVIEW</Text>
+        <Text style={styles.sectionLabel}>
+          {language === 'hi' ? 'दैनिक साइट शिफ्ट अवलोकन' : language === 'bn' ? 'দৈনিক সাইট শিফট ওভারভিউ' : 'DAILY SITE SHIFT OVERVIEW'}
+        </Text>
         <View style={styles.bentoGrid}>
           <View style={styles.bentoCard}>
             <View style={styles.bentoHeaderRow}>
-              <Text style={styles.bentoCardTitle}>Present Today</Text>
+              <Text style={styles.bentoCardTitle}>
+                {language === 'hi' ? 'आज उपस्थित' : language === 'bn' ? 'আজ উপস্থিত' : 'Present Today'}
+              </Text>
               <View style={[styles.microIconCircle, { backgroundColor: colors.successLight }]}>
                 <MaterialIcons name="check-circle" size={16} color={colors.success} />
               </View>
             </View>
             <Text style={[styles.bentoNumber, { color: colors.success }]}>{presentCount}</Text>
             <View style={[styles.bentoTag, { backgroundColor: colors.successLight }]}>
-              <Text style={[styles.bentoTagText, { color: colors.successDark }]}>{turnoutPercentage}% Turnout</Text>
+              <Text style={[styles.bentoTagText, { color: colors.successDark }]}>
+                {turnoutPercentage}% {language === 'hi' ? 'उपस्थिति' : language === 'bn' ? 'উপস্থিতি' : 'Turnout'}
+              </Text>
             </View>
           </View>
 
           <View style={styles.bentoCard}>
             <View style={styles.bentoHeaderRow}>
-              <Text style={styles.bentoCardTitle}>Absent / Off</Text>
+              <Text style={styles.bentoCardTitle}>
+                {language === 'hi' ? 'अनुपस्थित / अवकाश' : language === 'bn' ? 'অনুপস্থিত / ছুটি' : 'Absent / Off'}
+              </Text>
               <View style={[styles.microIconCircle, { backgroundColor: colors.errorLight }]}>
                 <MaterialIcons name="cancel" size={16} color={colors.error} />
               </View>
             </View>
             <Text style={[styles.bentoNumber, { color: colors.error }]}>{absentCount}</Text>
             <View style={[styles.bentoTag, { backgroundColor: colors.errorLight }]}>
-              <Text style={[styles.bentoTagText, { color: colors.errorDark }]}>Not Checked-In</Text>
+              <Text style={[styles.bentoTagText, { color: colors.errorDark }]}>
+                {language === 'hi' ? 'चेक-इन नहीं' : language === 'bn' ? 'চেক-ইন নেই' : 'Not Checked-In'}
+              </Text>
             </View>
           </View>
 
           <View style={styles.bentoCard}>
             <View style={styles.bentoHeaderRow}>
-              <Text style={styles.bentoCardTitle}>Assigned Crew</Text>
+              <Text style={styles.bentoCardTitle}>
+                {language === 'hi' ? 'तैनात क्रू' : language === 'bn' ? 'নিযুক্ত শ্রমিক' : 'Assigned Crew'}
+              </Text>
               <View style={[styles.microIconCircle, { backgroundColor: colors.surfaceMuted }]}>
                 <MaterialIcons name="groups" size={16} color={colors.primary} />
               </View>
             </View>
             <Text style={styles.bentoNumber}>{assignedWorkers}</Text>
             <View style={[styles.bentoTag, { backgroundColor: colors.surfaceMuted }]}>
-              <Text style={[styles.bentoTagText, { color: colors.textMuted }]}>Site Roster</Text>
+              <Text style={[styles.bentoTagText, { color: colors.textMuted }]}>
+                {language === 'hi' ? 'साइट रोस्टर' : language === 'bn' ? 'সাইট রোস্টার' : 'Site Roster'}
+              </Text>
             </View>
           </View>
 
           <View style={styles.bentoCard}>
             <View style={styles.bentoHeaderRow}>
-              <Text style={styles.bentoCardTitle}>Active Sites</Text>
+              <Text style={styles.bentoCardTitle}>
+                {t('sites.activeSites')}
+              </Text>
               <View style={[styles.microIconCircle, { backgroundColor: colors.accentLight }]}>
                 <MaterialIcons name="location-city" size={16} color={colors.accent} />
               </View>
             </View>
             <Text style={styles.bentoNumber}>{assignedSites}</Text>
             <View style={[styles.bentoTag, { backgroundColor: colors.accentLight }]}>
-              <Text style={[styles.bentoTagText, { color: colors.accentDark }]}>Assigned</Text>
+              <Text style={[styles.bentoTagText, { color: colors.accentDark }]}>
+                {language === 'hi' ? 'असाइन' : language === 'bn' ? 'বরাদ্দ' : 'Assigned'}
+              </Text>
             </View>
           </View>
         </View>
 
         {/* 4. TACTICAL FOREMAN ACTIONS */}
-        <Text style={[styles.sectionLabel, { marginTop: 18 }]}>SUPERVISOR ACTIONS</Text>
+        <Text style={[styles.sectionLabel, { marginTop: 18 }]}>
+          {language === 'hi' ? 'पर्यवेक्षक कार्य' : language === 'bn' ? 'সুপারভাইজার অ্যাকশন' : 'SUPERVISOR ACTIONS'}
+        </Text>
         <View style={styles.actionsList}>
           <TouchableOpacity
             style={styles.actionCard}
@@ -181,8 +231,12 @@ export function ModernForemanDashboard({ accessToken }: ForemanDashboardProps) {
               <MaterialIcons name="assignment-turned-in" size={22} color="#FFFFFF" />
             </View>
             <View style={styles.actionTextContent}>
-              <Text style={styles.actionTitle}>Mark Daily Attendance</Text>
-              <Text style={styles.actionSub}>Log Check-in, Check-out, Half-day, and Overtime</Text>
+              <Text style={styles.actionTitle}>
+                {language === 'hi' ? 'दैनिक उपस्थिति दर्ज करें' : language === 'bn' ? 'দৈনিক উপস্থিতি লিপিবদ্ধ করুন' : 'Mark Daily Attendance'}
+              </Text>
+              <Text style={styles.actionSub}>
+                {language === 'hi' ? 'चेक-इन, चेक-आउट, आधा दिन और ओवरटाइम दर्ज करें' : language === 'bn' ? 'চেক-ইন, চেক-আউট, অর্ধ-দিবস এবং ওভারটাইম লগ করুন' : 'Log Check-in, Check-out, Half-day, and Overtime'}
+              </Text>
             </View>
             <MaterialIcons name="arrow-forward" size={18} color={colors.textLight} />
           </TouchableOpacity>
@@ -196,8 +250,12 @@ export function ModernForemanDashboard({ accessToken }: ForemanDashboardProps) {
               <MaterialIcons name="people" size={22} color="#FFFFFF" />
             </View>
             <View style={styles.actionTextContent}>
-              <Text style={styles.actionTitle}>Assigned Site Workers</Text>
-              <Text style={styles.actionSub}>View skill classification, contacts & emergency info</Text>
+              <Text style={styles.actionTitle}>
+                {language === 'hi' ? 'तैनात साइट श्रमिक' : language === 'bn' ? 'নিযুক্ত সাইট শ্রমিক' : 'Assigned Site Workers'}
+              </Text>
+              <Text style={styles.actionSub}>
+                {language === 'hi' ? 'कौशल वर्गीकरण, संपर्क और विवरण देखें' : language === 'bn' ? 'দক্ষতার শ্রেণীবিভাগ, যোগাযোগ ও তথ্য দেখুন' : 'View skill classification, contacts & emergency info'}
+              </Text>
             </View>
             <MaterialIcons name="arrow-forward" size={18} color={colors.textLight} />
           </TouchableOpacity>
@@ -224,6 +282,27 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
     marginBottom: 10,
+  },
+  headerRightActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  langPillButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#1E293B',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: radii.pill,
+    borderWidth: 1,
+    borderColor: '#334155',
+    gap: 5,
+  },
+  langPillButtonText: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: '#FDBA74',
   },
   iconCircleButton: {
     width: 36,

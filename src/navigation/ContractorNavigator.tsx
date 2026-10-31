@@ -9,14 +9,15 @@ import { PayrollTab } from '../features/payroll/PayrollTab';
 import { SettingsScreen } from '../screens/SettingsScreen';
 import { MaterialIcons } from '@expo/vector-icons';
 import { colors, shadows } from '../styles/theme';
+import { useTranslation } from '../i18n';
 
 export type ContractorTabParamList = {
   Home: { accessToken: string };
-  Workers: { accessToken: string };
-  Foremen: { accessToken: string };
-  Sites: { accessToken: string };
   Attendance: { accessToken: string };
+  Workers: { accessToken: string };
+  Sites: { accessToken: string };
   Payroll: { accessToken: string };
+  Foremen: { accessToken: string };
   Settings: { accessToken: string };
 };
 
@@ -24,6 +25,7 @@ const Tab = createBottomTabNavigator<ContractorTabParamList>();
 
 export function ContractorNavigator({ route }: { route: any }) {
   const accessToken = route.params?.accessToken;
+  const { t } = useTranslation();
   
   return (
     <Tab.Navigator
@@ -50,7 +52,7 @@ export function ContractorNavigator({ route }: { route: any }) {
       <Tab.Screen
         name="Home"
         options={{
-          tabBarLabel: 'Dashboard',
+          tabBarLabel: t('nav.dashboard'),
           tabBarIcon: ({ color, size }) => <MaterialIcons name="dashboard" size={size} color={color} />,
         }}
       >
@@ -59,7 +61,7 @@ export function ContractorNavigator({ route }: { route: any }) {
       <Tab.Screen
         name="Attendance"
         options={{
-          tabBarLabel: 'Attendance',
+          tabBarLabel: t('nav.attendance'),
           tabBarIcon: ({ color, size }) => <MaterialIcons name="assignment-turned-in" size={size} color={color} />,
         }}
       >
@@ -68,7 +70,7 @@ export function ContractorNavigator({ route }: { route: any }) {
       <Tab.Screen
         name="Workers"
         options={{
-          tabBarLabel: 'Workers',
+          tabBarLabel: t('nav.workers'),
           tabBarIcon: ({ color, size }) => <MaterialIcons name="groups" size={size} color={color} />,
         }}
       >
@@ -77,7 +79,7 @@ export function ContractorNavigator({ route }: { route: any }) {
       <Tab.Screen
         name="Sites"
         options={{
-          tabBarLabel: 'Sites',
+          tabBarLabel: t('nav.sites'),
           tabBarIcon: ({ color, size }) => <MaterialIcons name="location-city" size={size} color={color} />,
         }}
       >
@@ -86,7 +88,7 @@ export function ContractorNavigator({ route }: { route: any }) {
       <Tab.Screen
         name="Payroll"
         options={{
-          tabBarLabel: 'Payroll',
+          tabBarLabel: t('nav.payroll'),
           tabBarIcon: ({ color, size }) => <MaterialIcons name="payments" size={size} color={color} />,
         }}
       >
@@ -95,7 +97,7 @@ export function ContractorNavigator({ route }: { route: any }) {
       <Tab.Screen
         name="Foremen"
         options={{
-          tabBarLabel: 'Foremen',
+          tabBarLabel: t('nav.foremen'),
           tabBarIcon: ({ color, size }) => <MaterialIcons name="engineering" size={size} color={color} />,
         }}
       >
@@ -105,7 +107,7 @@ export function ContractorNavigator({ route }: { route: any }) {
         name="Settings"
         component={SettingsScreen}
         options={{
-          tabBarLabel: 'Settings',
+          tabBarLabel: t('nav.settings'),
           tabBarIcon: ({ color, size }) => <MaterialIcons name="settings" size={size} color={color} />,
         }}
       />

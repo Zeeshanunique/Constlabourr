@@ -10,6 +10,7 @@ import Toast from 'react-native-toast-message';
 import { Modal, ModalBackdrop, ModalContent, ModalHeader, ModalBody, ModalCloseButton } from '@/components/ui/modal';
 import { VStack } from '@/components/ui/vstack';
 import { theme } from '@/styles/theme';
+import { useTranslation } from '@/i18n';
 
 interface Worker {
   id: string;
@@ -22,6 +23,7 @@ interface Worker {
   status: string;
   siteId?: string;
   siteName?: string;
+  upiId?: string;
   bankDetails?: {
     accountNumber?: string;
     ifscCode?: string;
@@ -35,6 +37,7 @@ interface ForemanWorkersTabProps {
 
 export function ForemanWorkersTab({ accessToken }: ForemanWorkersTabProps) {
   const route = useRoute();
+  const { t } = useTranslation();
   const token = accessToken || (route.params as any)?.accessToken;
   const [workers, setWorkers] = useState<Worker[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
@@ -70,13 +73,15 @@ export function ForemanWorkersTab({ accessToken }: ForemanWorkersTabProps) {
   };
 
   const filteredWorkers = workers.filter((worker) => {
-    const matchesSearch =
-      worker.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      worker.phone.includes(searchTerm) ||
-      worker.email?.toLowerCase().includes(searchTerm.toLowerCase());
+    if (!worker) return false;
+    const term = (searchTerm || '').trim().toLowerCase();
+    const nameMatch = (worker.name || '').toLowerCase().includes(term);
+    const phoneMatch = (worker.phone || '').includes(term);
+    const emailMatch = (worker.email || '').toLowerCase().includes(term);
+    const matchesSearch = !term || nameMatch || phoneMatch || emailMatch;
     
     if (selectedSkillFilter === 'all') return matchesSearch;
-    return matchesSearch && worker.skillLevel?.toLowerCase() === selectedSkillFilter;
+    return matchesSearch && (worker.skillLevel || 'unskilled').toLowerCase() === selectedSkillFilter.toLowerCase();
   });
 
   const handleViewDetails = (worker: Worker) => {
@@ -99,20 +104,20 @@ export function ForemanWorkersTab({ accessToken }: ForemanWorkersTabProps) {
     }
   };
 
-  const activeCount = workers.filter(w => w.status === 'active').length;
-  const skilledCount = workers.filter(w => w.skillLevel?.toLowerCase() === 'skilled').length;
+  const activeCount = workers.filter(w => (w?.status || 'active').toLowerCase() === 'active').length;
+  const skilledCount = workers.filter(w => (w?.skillLevel || '').toLowerCase() === 'skilled').length;
 
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
       {/* Header */}
       <View style={styles.header}>
         <View>
-          <Text style={styles.headerTitle}>Assigned Workforce</Text>
-          <Text style={styles.headerSubtitle}>Field worker roster under your site supervision</Text>
+          <Text style={styles.headerTitle}>{t('sites.workersOnSite')}</Text>
+          <Text style={styles.headerSubtitle}>{t('workers.directorySubtitle')}</Text>
         </View>
         <View style={styles.roleChip}>
           <MaterialIcons name="security" size={14} color="#ffffff" />
-          <Text style={styles.roleChipText}>SUPERVISOR</Text>
+          <Text style={styles.roleChipText}>{t('auth.foremanRole').toUpperCase()}</Text>
         </View>
       </View>
 
@@ -121,15 +126,15 @@ export function ForemanWorkersTab({ accessToken }: ForemanWorkersTabProps) {
         <View style={styles.kpiRow}>
           <View style={styles.kpiCard}>
             <Text style={styles.kpiNumber}>{workers.length}</Text>
-            <Text style={styles.kpiLabel}>Total Crew</Text>
+            <Text style={styles.kpiLabel}>{t('workers.totalWorkers')}</Text>
           </View>
           <View style={[styles.kpiCard, { borderColor: theme.colors.emerald[200] }]}>
             <Text style={[styles.kpiNumber, { color: theme.colors.emerald[600] }]}>{activeCount}</Text>
-            <Text style={styles.kpiLabel}>Active</Text>
+            <Text style={styles.kpiLabel}>{t('common.active')}</Text>
           </View>
           <View style={[styles.kpiCard, { borderColor: theme.colors.amber[200] }]}>
             <Text style={[styles.kpiNumber, { color: theme.colors.safetyOrange }]}>{skilledCount}</Text>
-            <Text style={styles.kpiLabel}>Skilled</Text>
+            <Text style={styles.kpiLabel}>{t('workers.skilled')}</Text>
           </View>
         </View>
 
@@ -140,7 +145,7 @@ export function ForemanWorkersTab({ accessToken }: ForemanWorkersTabProps) {
             <InputField
               value={searchTerm}
               onChangeText={setSearchTerm}
-              placeholder="Search by worker name or phone..."
+              placeholder={`${t('common.search')}...`}
               placeholderTextColor={theme.colors.slate[400]}
               style={styles.searchInputField}
             />
@@ -155,10 +160,10 @@ export function ForemanWorkersTab({ accessToken }: ForemanWorkersTabProps) {
         {/* Skill Filter Chips */}
         <View style={styles.filterRow}>
           {[
-            { id: 'all', label: 'All Trades' },
-            { id: 'skilled', label: 'Skilled' },
-            { id: 'semi-skilled', label: 'Semi-Skilled' },
-            { id: 'unskilled', label: 'General' },
+            { id: 'all', label: t('common.all') },
+            { id: 'skilled', label: t('workers.skilled') },
+            { id: 'semi-skilled', label: t('workers.semiSkilled') },
+            { id: 'unskilled', label: t('workers.unskilled') },
           ].map((chip) => {
             const isSelected = selectedSkillFilter === chip.id;
             return (

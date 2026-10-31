@@ -4,7 +4,6 @@ import {
   Text,
   StyleSheet,
   TouchableOpacity,
-  Dimensions,
   Animated,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -14,26 +13,17 @@ import { AuthStackParamList } from '../navigation/AuthNavigator';
 import { ChevronDown, Check, Globe } from 'lucide-react-native';
 import { colors, shadows, radii } from '../styles/theme';
 import { BrandLogo } from '../components/shared/BrandLogo';
-
-interface LanguageOption {
-  code: string;
-  label: string;
-  nativeLabel: string;
-}
-
-const LANGUAGES: LanguageOption[] = [
-  { code: 'en', label: 'English', nativeLabel: 'English' },
-  { code: 'hi', label: 'Hindi', nativeLabel: 'हिन्दी' },
-  { code: 'mr', label: 'Marathi', nativeLabel: 'मराठी' },
-  { code: 'gu', label: 'Gujarati', nativeLabel: 'ગુજરાતી' },
-  { code: 'kn', label: 'Kannada', nativeLabel: 'ಕನ್ನಡ' },
-];
+import { useTranslation, SUPPORTED_LANGUAGES, LanguageOption, SupportedLanguage } from '../i18n';
 
 export function LanguageSelectionScreen() {
   const navigation = useNavigation<StackNavigationProp<AuthStackParamList>>();
-  const [selectedLanguage, setSelectedLanguage] = useState<LanguageOption>(LANGUAGES[0]);
+  const { language, setLanguage, t } = useTranslation();
+
   const [isOpen, setIsOpen] = useState(false);
   const [dropdownHeight] = useState(new Animated.Value(0));
+
+  const currentOption =
+    SUPPORTED_LANGUAGES.find((l) => l.code === language) || SUPPORTED_LANGUAGES[0];
 
   const toggleDropdown = () => {
     if (isOpen) {
@@ -45,16 +35,20 @@ export function LanguageSelectionScreen() {
     } else {
       setIsOpen(true);
       Animated.timing(dropdownHeight, {
-        toValue: 240,
+        toValue: 160,
         duration: 220,
         useNativeDriver: false,
       }).start();
     }
   };
 
-  const handleSelectLanguage = (lang: LanguageOption) => {
-    setSelectedLanguage(lang);
+  const handleSelectLanguage = async (lang: LanguageOption) => {
+    await setLanguage(lang.code);
     toggleDropdown();
+  };
+
+  const handleQuickSelect = async (code: SupportedLanguage) => {
+    await setLanguage(code);
   };
 
   const handleContinue = () => {
@@ -67,13 +61,15 @@ export function LanguageSelectionScreen() {
         {/* Top Header & Brand Identity */}
         <View style={styles.header}>
           <BrandLogo size={52} showText={true} subtitle="FIELD OPERATIONS OS v3.4" />
-          <Text style={styles.screenTitle}>Select Operational{'\n'}Language</Text>
-          <Text style={styles.screenSubtitle}>अपनी कार्य भाषा चुनें / Choose preferred vernacular</Text>
+          <Text style={styles.screenTitle}>{t('auth.selectLanguageTitle')}</Text>
+          <Text style={styles.screenSubtitle}>
+            {t('auth.selectLanguageSubtitle')} • अपनी कार्य भाषा चुनें
+          </Text>
         </View>
 
         {/* Dropdown Card */}
         <View style={styles.card}>
-          <Text style={styles.inputLabel}>PRIMARY LANGUAGE</Text>
+          <Text style={styles.inputLabel}>{t('auth.primaryLanguage')}</Text>
           <TouchableOpacity
             style={[styles.dropdownButton, isOpen && styles.dropdownButtonActive]}
             onPress={toggleDropdown}
@@ -84,7 +80,7 @@ export function LanguageSelectionScreen() {
                 <Globe size={18} color={colors.accent} />
               </View>
               <Text style={styles.selectedText}>
-                {selectedLanguage.nativeLabel} ({selectedLanguage.label})
+                {currentOption.nativeLabel} ({currentOption.label})
               </Text>
             </View>
             <Animated.View
@@ -92,7 +88,7 @@ export function LanguageSelectionScreen() {
                 transform: [
                   {
                     rotate: dropdownHeight.interpolate({
-                      inputRange: [0, 240],
+                      inputRange: [0, 160],
                       outputRange: ['0deg', '180deg'],
                     }),
                   },
@@ -105,8 +101,8 @@ export function LanguageSelectionScreen() {
 
           {isOpen && (
             <Animated.View style={[styles.dropdownMenu, { height: dropdownHeight }]}>
-              {LANGUAGES.map((lang) => {
-                const isSelected = selectedLanguage.code === lang.code;
+              {SUPPORTED_LANGUAGES.map((lang) => {
+                const isSelected = language === lang.code;
                 return (
                   <TouchableOpacity
                     key={lang.code}
@@ -114,9 +110,12 @@ export function LanguageSelectionScreen() {
                     onPress={() => handleSelectLanguage(lang)}
                     activeOpacity={0.7}
                   >
-                    <Text style={[styles.dropdownItemText, isSelected && styles.dropdownItemTextActive]}>
-                      {lang.nativeLabel} <Text style={styles.dropdownItemSubText}>({lang.label})</Text>
-                    </Text>
+                    <View>
+                      <Text style={[styles.dropdownItemText, isSelected && styles.dropdownItemTextActive]}>
+                        {lang.nativeLabel} <Text style={styles.dropdownItemSubText}>({lang.label})</Text>
+                      </Text>
+                      {lang.subLabel && <Text style={styles.dropdownItemRegion}>{lang.subLabel}</Text>}
+                    </View>
                     {isSelected && <Check size={18} color={colors.accent} />}
                   </TouchableOpacity>
                 );
@@ -124,19 +123,22 @@ export function LanguageSelectionScreen() {
             </Animated.View>
           )}
 
-          {/* Quick Language Badges Grid */}
+          {/* Quick Language Badges Grid (English, Hindi, Bengali) */}
           <View style={styles.quickBadgeGrid}>
-            {LANGUAGES.map((lang) => {
-              const isSelected = selectedLanguage.code === lang.code;
+            {SUPPORTED_LANGUAGES.map((lang) => {
+              const isSelected = language === lang.code;
               return (
                 <TouchableOpacity
                   key={lang.code}
                   style={[styles.quickBadge, isSelected && styles.quickBadgeActive]}
-                  onPress={() => setSelectedLanguage(lang)}
+                  onPress={() => handleQuickSelect(lang.code)}
                   activeOpacity={0.8}
                 >
                   <Text style={[styles.quickBadgeText, isSelected && styles.quickBadgeTextActive]}>
                     {lang.nativeLabel}
+                  </Text>
+                  <Text style={[styles.quickBadgeSub, isSelected && styles.quickBadgeSubActive]}>
+                    {lang.label}
                   </Text>
                 </TouchableOpacity>
               );
@@ -151,7 +153,7 @@ export function LanguageSelectionScreen() {
             onPress={handleContinue}
             activeOpacity={0.85}
           >
-            <Text style={styles.continueButtonText}>Continue to Portal</Text>
+            <Text style={styles.continueButtonText}>{t('common.continue')}</Text>
             <Text style={styles.arrowIcon}>➔</Text>
           </TouchableOpacity>
         </View>
@@ -248,7 +250,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
     paddingHorizontal: 14,
-    paddingVertical: 12,
+    paddingVertical: 10,
     borderBottomWidth: 1,
     borderBottomColor: colors.border,
   },
@@ -257,54 +259,70 @@ const styles = StyleSheet.create({
   },
   dropdownItemText: {
     fontSize: 14,
-    fontWeight: '600',
+    fontWeight: '700',
     color: colors.text,
   },
   dropdownItemTextActive: {
-    fontWeight: '800',
     color: colors.accent,
   },
   dropdownItemSubText: {
-    color: colors.textMuted,
     fontSize: 12,
+    fontWeight: '500',
+    color: colors.textMuted,
+  },
+  dropdownItemRegion: {
+    fontSize: 10,
+    color: colors.textLight,
+    marginTop: 1,
   },
   quickBadgeGrid: {
     flexDirection: 'row',
-    flexWrap: 'wrap',
     gap: 8,
-    marginTop: 18,
+    marginTop: 14,
   },
   quickBadge: {
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: radii.pill,
+    flex: 1,
+    paddingVertical: 10,
+    paddingHorizontal: 8,
+    borderRadius: radii.md,
     backgroundColor: colors.surfaceSubtle,
-    borderWidth: 1,
+    borderWidth: 1.5,
     borderColor: colors.border,
+    alignItems: 'center',
   },
   quickBadgeActive: {
-    backgroundColor: colors.primary,
-    borderColor: colors.primary,
+    borderColor: colors.accent,
+    backgroundColor: '#FFF7ED',
   },
   quickBadgeText: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: colors.textMuted,
+    fontSize: 14,
+    fontWeight: '800',
+    color: colors.text,
   },
   quickBadgeTextActive: {
-    color: '#FFFFFF',
+    color: colors.accent,
+  },
+  quickBadgeSub: {
+    fontSize: 9.5,
+    fontWeight: '600',
+    color: colors.textMuted,
+    marginTop: 2,
+  },
+  quickBadgeSubActive: {
+    color: colors.accentDark,
   },
   footer: {
-    paddingBottom: 12,
+    paddingBottom: 8,
   },
   continueButton: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: colors.accent,
+    backgroundColor: colors.primary,
+    borderRadius: radii.lg,
     height: 52,
-    borderRadius: radii.md,
-    ...shadows.hero,
+    gap: 8,
+    ...shadows.md,
   },
   continueButtonText: {
     fontSize: 15,
@@ -314,8 +332,7 @@ const styles = StyleSheet.create({
   },
   arrowIcon: {
     fontSize: 16,
-    fontWeight: '800',
-    color: '#FFFFFF',
-    marginLeft: 8,
+    color: colors.accent,
+    fontWeight: '900',
   },
 });

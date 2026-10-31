@@ -23,6 +23,7 @@ import type { ContractorTabParamList } from '../navigation/ContractorNavigator';
 import type { AppStackParamList } from '../navigation/AppNavigator';
 import { colors, shadows, radii } from '../styles/theme';
 import { BrandLogo } from '../components/shared/BrandLogo';
+import { useTranslation } from '../i18n';
 
 interface ContractorDashboardProps {
   accessToken?: string;
@@ -55,6 +56,7 @@ export function ModernContractorDashboard({ accessToken }: ContractorDashboardPr
   const navigation = useNavigation<NavigationProp<ContractorTabParamList>>();
   const route = useRoute();
   const token = accessToken || (route.params as any)?.accessToken;
+  const { language, setLanguage, t } = useTranslation();
 
   const [stats, setStats] = useState<Stats | null>(null);
   const [sites, setSites] = useState<Site[]>([]);
@@ -167,6 +169,21 @@ export function ModernContractorDashboard({ accessToken }: ContractorDashboardPr
         <View style={styles.headerTop}>
           <BrandLogo size={38} showText={true} variant="light" subtitle="CONTRACTOR COMMAND" />
           <View style={styles.headerRightActions}>
+            {/* 1-Tap Quick Language Switcher */}
+            <TouchableOpacity
+              onPress={() => {
+                const nextLang = language === 'en' ? 'hi' : language === 'hi' ? 'bn' : 'en';
+                setLanguage(nextLang);
+              }}
+              style={styles.langPillButton}
+              activeOpacity={0.8}
+            >
+              <MaterialIcons name="language" size={14} color="#FDBA74" />
+              <Text style={styles.langPillButtonText}>
+                {language === 'en' ? 'EN' : language === 'hi' ? 'हिन्दी' : 'বাংলা'}
+              </Text>
+            </TouchableOpacity>
+
             <TouchableOpacity onPress={context.logout} style={styles.iconCircleButton}>
               <MaterialIcons name="logout" size={18} color="#FFFFFF" />
             </TouchableOpacity>
@@ -216,7 +233,7 @@ export function ModernContractorDashboard({ accessToken }: ContractorDashboardPr
           {/* Card 1: Present Today */}
           <View style={styles.bentoCard}>
             <View style={styles.bentoHeaderRow}>
-              <Text style={styles.bentoCardTitle}>Present Today</Text>
+              <Text style={styles.bentoCardTitle}>{t('attendance.present')}</Text>
               <View style={[styles.microIconCircle, { backgroundColor: colors.successLight }]}>
                 <MaterialIcons name="check-circle" size={16} color={colors.success} />
               </View>
@@ -224,7 +241,7 @@ export function ModernContractorDashboard({ accessToken }: ContractorDashboardPr
             <Text style={styles.bentoNumber}>{presentCount}</Text>
             <View style={[styles.bentoTag, { backgroundColor: colors.successLight }]}>
               <Text style={[styles.bentoTagText, { color: colors.successDark }]}>
-                {turnoutPercentage}% Turnout
+                {turnoutPercentage}% {t('attendance.title')}
               </Text>
             </View>
           </View>
@@ -232,7 +249,7 @@ export function ModernContractorDashboard({ accessToken }: ContractorDashboardPr
           {/* Card 2: Daily Wages Accrual */}
           <View style={styles.bentoCard}>
             <View style={styles.bentoHeaderRow}>
-              <Text style={styles.bentoCardTitle}>Daily Wages</Text>
+              <Text style={styles.bentoCardTitle}>{t('attendance.dailyPayment')}</Text>
               <View style={[styles.microIconCircle, { backgroundColor: colors.accentLight }]}>
                 <MaterialIcons name="payments" size={16} color={colors.accent} />
               </View>
@@ -240,7 +257,7 @@ export function ModernContractorDashboard({ accessToken }: ContractorDashboardPr
             <Text style={styles.bentoNumber}>{formatWageDisplay(totalWagesToday)}</Text>
             <View style={[styles.bentoTag, { backgroundColor: colors.accentLight }]}>
               <Text style={[styles.bentoTagText, { color: colors.accentDark }]}>
-                Today's Accrual
+                {t('common.today')}
               </Text>
             </View>
           </View>
@@ -248,7 +265,7 @@ export function ModernContractorDashboard({ accessToken }: ContractorDashboardPr
           {/* Card 3: Absent / Unmarked */}
           <View style={styles.bentoCard}>
             <View style={styles.bentoHeaderRow}>
-              <Text style={styles.bentoCardTitle}>Absent / Off</Text>
+              <Text style={styles.bentoCardTitle}>{t('attendance.absent')}</Text>
               <View style={[styles.microIconCircle, { backgroundColor: colors.errorLight }]}>
                 <MaterialIcons name="cancel" size={16} color={colors.error} />
               </View>
@@ -256,7 +273,7 @@ export function ModernContractorDashboard({ accessToken }: ContractorDashboardPr
             <Text style={styles.bentoNumber}>{absentCount}</Text>
             <View style={[styles.bentoTag, { backgroundColor: colors.errorLight }]}>
               <Text style={[styles.bentoTagText, { color: colors.errorDark }]}>
-                {totalWorkersCount} Total Roster
+                {totalWorkersCount} {t('common.total')}
               </Text>
             </View>
           </View>
@@ -264,7 +281,7 @@ export function ModernContractorDashboard({ accessToken }: ContractorDashboardPr
           {/* Card 4: Active Sites */}
           <View style={styles.bentoCard}>
             <View style={styles.bentoHeaderRow}>
-              <Text style={styles.bentoCardTitle}>Active Sites</Text>
+              <Text style={styles.bentoCardTitle}>{t('nav.sites')}</Text>
               <View style={[styles.microIconCircle, { backgroundColor: colors.surfaceMuted }]}>
                 <MaterialIcons name="location-city" size={16} color={colors.primary} />
               </View>
@@ -272,14 +289,14 @@ export function ModernContractorDashboard({ accessToken }: ContractorDashboardPr
             <Text style={styles.bentoNumber}>{activeSitesCount}</Text>
             <View style={[styles.bentoTag, { backgroundColor: colors.surfaceMuted }]}>
               <Text style={[styles.bentoTagText, { color: colors.primary }]}>
-                {selectedSiteId !== 'all' ? 'Site Filtered' : 'Operational'}
+                {selectedSiteId !== 'all' ? selectedSiteName : t('common.active')}
               </Text>
             </View>
           </View>
         </View>
 
         {/* 3. TACTICAL ACTION DOCK */}
-        <Text style={[styles.sectionLabel, { marginTop: 20 }]}>OPERATIONAL ACTIONS</Text>
+        <Text style={[styles.sectionLabel, { marginTop: 20 }]}>{t('common.actions')}</Text>
         <View style={styles.actionDockGrid}>
           <TouchableOpacity
             style={[styles.actionDockItem, { borderColor: '#FED7AA' }]}
@@ -289,8 +306,8 @@ export function ModernContractorDashboard({ accessToken }: ContractorDashboardPr
             <View style={[styles.actionIconBox, { backgroundColor: colors.accent }]}>
               <MaterialIcons name="assignment-turned-in" size={20} color="#FFFFFF" />
             </View>
-            <Text style={styles.actionDockTitle}>Mark Attendance</Text>
-            <Text style={styles.actionDockSubtitle}>Log daily shifts</Text>
+            <Text style={styles.actionDockTitle}>{t('attendance.markAttendance')}</Text>
+            <Text style={styles.actionDockSubtitle}>{t('attendance.title')}</Text>
           </TouchableOpacity>
 
           <TouchableOpacity
@@ -301,8 +318,8 @@ export function ModernContractorDashboard({ accessToken }: ContractorDashboardPr
             <View style={[styles.actionIconBox, { backgroundColor: colors.success }]}>
               <MaterialIcons name="person-add" size={20} color="#FFFFFF" />
             </View>
-            <Text style={styles.actionDockTitle}>Add Worker</Text>
-            <Text style={styles.actionDockSubtitle}>Assign trade & wage</Text>
+            <Text style={styles.actionDockTitle}>{t('workers.addWorker')}</Text>
+            <Text style={styles.actionDockSubtitle}>{t('workers.directory')}</Text>
           </TouchableOpacity>
 
           <TouchableOpacity
@@ -313,8 +330,8 @@ export function ModernContractorDashboard({ accessToken }: ContractorDashboardPr
             <View style={[styles.actionIconBox, { backgroundColor: colors.primary }]}>
               <MaterialIcons name="receipt-long" size={20} color="#FFFFFF" />
             </View>
-            <Text style={styles.actionDockTitle}>Disburse Pay</Text>
-            <Text style={styles.actionDockSubtitle}>Process wages & UPI</Text>
+            <Text style={styles.actionDockTitle}>{t('nav.payroll')}</Text>
+            <Text style={styles.actionDockSubtitle}>{t('payroll.netDisbursable')}</Text>
           </TouchableOpacity>
 
           <TouchableOpacity
@@ -328,8 +345,8 @@ export function ModernContractorDashboard({ accessToken }: ContractorDashboardPr
             <View style={[styles.actionIconBox, { backgroundColor: colors.warning }]}>
               <MaterialIcons name="insert-chart" size={20} color="#FFFFFF" />
             </View>
-            <Text style={styles.actionDockTitle}>Form D Reports</Text>
-            <Text style={styles.actionDockSubtitle}>Export statutory PDF</Text>
+            <Text style={styles.actionDockTitle}>{t('nav.reports')}</Text>
+            <Text style={styles.actionDockSubtitle}>{t('common.export')}</Text>
           </TouchableOpacity>
         </View>
 
@@ -338,7 +355,7 @@ export function ModernContractorDashboard({ accessToken }: ContractorDashboardPr
           <View style={styles.complianceHeader}>
             <View style={styles.complianceTitleLeft}>
               <MaterialIcons name="security" size={18} color={colors.accent} />
-              <Text style={styles.complianceCardTitle}>Site Compliance & Workforce Benchmark</Text>
+              <Text style={styles.complianceCardTitle}>{t('dashboard.complianceTitle')}</Text>
             </View>
             <TouchableOpacity
               onPress={() => {
@@ -346,15 +363,15 @@ export function ModernContractorDashboard({ accessToken }: ContractorDashboardPr
                 if (parent) parent.navigate('Agreements', { accessToken: token });
               }}
             >
-              <Text style={styles.complianceLink}>Agreements ➔</Text>
+              <Text style={styles.complianceLink}>{t('nav.agreements')} ➔</Text>
             </TouchableOpacity>
           </View>
 
           {/* Turnout Progress Bar */}
           <View style={styles.progressSection}>
             <View style={styles.progressLabelRow}>
-              <Text style={styles.progressLabel}>Daily Turnout</Text>
-              <Text style={styles.progressPercent}>{turnoutPercentage}% of Workforce Active</Text>
+              <Text style={styles.progressLabel}>{t('dashboard.turnout')}</Text>
+              <Text style={styles.progressPercent}>{turnoutPercentage}% {t('dashboard.benchmarkProductivity')}</Text>
             </View>
             <View style={styles.progressTrack}>
               <View
@@ -367,19 +384,19 @@ export function ModernContractorDashboard({ accessToken }: ContractorDashboardPr
 
             <View style={styles.progressBreakdownRow}>
               <Text style={styles.breakdownItem}>
-                <Text style={{ color: colors.success, fontWeight: '800' }}>● {presentCount}</Text> Present
+                <Text style={{ color: colors.success, fontWeight: '800' }}>● {presentCount}</Text> {t('attendance.present')}
               </Text>
               {halfDayCount > 0 && (
                 <Text style={styles.breakdownItem}>
-                  <Text style={{ color: colors.warning, fontWeight: '800' }}>● {halfDayCount}</Text> Half-Day
+                  <Text style={{ color: colors.warning, fontWeight: '800' }}>● {halfDayCount}</Text> {t('attendance.halfDay')}
                 </Text>
               )}
               <Text style={styles.breakdownItem}>
-                <Text style={{ color: colors.error, fontWeight: '800' }}>● {absentCount}</Text> Absent
+                <Text style={{ color: colors.error, fontWeight: '800' }}>● {absentCount}</Text> {t('attendance.absent')}
               </Text>
               {unmarkedCount > 0 && (
                 <Text style={styles.breakdownItem}>
-                  <Text style={{ color: colors.textMuted, fontWeight: '800' }}>● {unmarkedCount}</Text> Unmarked
+                  <Text style={{ color: colors.textMuted, fontWeight: '800' }}>● {unmarkedCount}</Text> -
                 </Text>
               )}
             </View>
@@ -389,11 +406,11 @@ export function ModernContractorDashboard({ accessToken }: ContractorDashboardPr
           <View style={styles.complianceList}>
             <View style={styles.complianceItem}>
               <MaterialIcons name="check-circle" size={16} color={colors.success} />
-              <Text style={styles.complianceItemText}>Contract Labour (R&A) Act 1970 Standard</Text>
+              <Text style={styles.complianceItemText}>{t('dashboard.complianceBadge')}</Text>
             </View>
             <View style={styles.complianceItem}>
               <MaterialIcons name="check-circle" size={16} color={colors.success} />
-              <Text style={styles.complianceItemText}>Aadhaar KYC & Wage Records Synchronized</Text>
+              <Text style={styles.complianceItemText}>{t('dashboard.complianceSub')}</Text>
             </View>
           </View>
         </View>
@@ -405,8 +422,8 @@ export function ModernContractorDashboard({ accessToken }: ContractorDashboardPr
           <View style={styles.modalSheet}>
             <View style={styles.modalHeader}>
               <View style={{ flex: 1 }}>
-                <Text style={styles.modalTitle}>Select Construction Site</Text>
-                <Text style={styles.modalSubtitle}>Filter real-time attendance, stats, and roster</Text>
+                <Text style={styles.modalTitle}>{t('dashboard.selectSiteModalTitle')}</Text>
+                <Text style={styles.modalSubtitle}>{t('dashboard.selectSiteModalSubtitle')}</Text>
               </View>
               <TouchableOpacity
                 onPress={() => setShowSiteModal(false)}
@@ -423,7 +440,7 @@ export function ModernContractorDashboard({ accessToken }: ContractorDashboardPr
                   styles.siteModalItem,
                   selectedSiteId === 'all' && styles.siteModalItemActive,
                 ]}
-                onPress={() => handleSelectSite('all', 'All Active Sites')}
+                onPress={() => handleSelectSite('all', t('dashboard.allActiveSites'))}
                 activeOpacity={0.8}
               >
                 <View
@@ -439,9 +456,9 @@ export function ModernContractorDashboard({ accessToken }: ContractorDashboardPr
                   />
                 </View>
                 <View style={styles.siteModalDetails}>
-                  <Text style={styles.siteModalName}>All Active Sites</Text>
+                  <Text style={styles.siteModalName}>{t('dashboard.allActiveSites')}</Text>
                   <Text style={styles.siteModalAddress}>
-                    Company-wide aggregated stats across all {sites.length} sites
+                    {sites.length} {t('sites.activeSites')}
                   </Text>
                 </View>
                 {selectedSiteId === 'all' && (
@@ -489,7 +506,7 @@ export function ModernContractorDashboard({ accessToken }: ContractorDashboardPr
 
               {sites.length === 0 && (
                 <View style={styles.noSitesBox}>
-                  <Text style={styles.noSitesText}>No sites found. Add your first site from the Sites tab.</Text>
+                  <Text style={styles.noSitesText}>{t('sites.noSitesFound')}</Text>
                 </View>
               )}
             </ScrollView>
@@ -523,6 +540,23 @@ const styles = StyleSheet.create({
   headerRightActions: {
     flexDirection: 'row',
     alignItems: 'center',
+    gap: 8,
+  },
+  langPillButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#1E293B',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: radii.pill,
+    borderWidth: 1,
+    borderColor: '#334155',
+    gap: 4,
+  },
+  langPillButtonText: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#FDBA74',
   },
   iconCircleButton: {
     width: 36,

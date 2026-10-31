@@ -2,7 +2,180 @@ import { StyleSheet } from 'react-native';
 import { theme } from '@/styles/theme';
 
 export const formStyles = StyleSheet.create({
-  // Form Field Styles
+  // Full Screen Page Styles (matching contractor register & mobile full-screen flow)
+  fullScreenContainer: {
+    flex: 1,
+    backgroundColor: '#0F172A',
+  },
+  fullScreenHeader: {
+    backgroundColor: '#0F172A',
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 12,
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#1E293B',
+  },
+  headerBackButton: {
+    width: 40,
+    height: 40,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 20,
+    marginRight: 4,
+  },
+  headerTitleArea: {
+    flex: 1,
+    justifyContent: 'center',
+  },
+  fullScreenHeaderTitle: {
+    fontSize: 18,
+    fontWeight: '800',
+    color: '#FFFFFF',
+    letterSpacing: -0.2,
+  },
+  fullScreenHeaderSubtitle: {
+    fontSize: 11,
+    color: '#94A3B8',
+    marginTop: 2,
+    fontWeight: '500',
+  },
+  fullScreenScroll: {
+    flex: 1,
+    backgroundColor: '#F8FAFC',
+  },
+  fullScreenScrollContent: {
+    padding: 16,
+    paddingBottom: 32,
+  },
+  fullScreenFooter: {
+    backgroundColor: '#FFFFFF',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderTopWidth: 1,
+    borderTopColor: '#E2E8F0',
+    ...theme.shadows.card,
+  },
+  fullScreenSubmitBtn: {
+    backgroundColor: '#0F172A',
+    borderRadius: 25,
+    height: 50,
+    alignItems: 'center',
+    justifyContent: 'center',
+    width: '100%',
+    ...theme.shadows.sm,
+  },
+  fullScreenSubmitBtnDisabled: {
+    backgroundColor: '#64748B',
+    opacity: 0.5,
+  },
+  fullScreenSubmitBtnText: {
+    color: '#FFFFFF',
+    fontSize: 16,
+    fontWeight: '800',
+    letterSpacing: 0.2,
+  },
+
+  // Section Header (Grouping sections: Basic Information, Payment Information, etc.)
+  sectionHeader: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: '#0F172A',
+    marginTop: 14,
+    marginBottom: 8,
+    letterSpacing: -0.1,
+  },
+
+  // Field Card Styles (enclosed white card with leading icon)
+  fieldCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 14,
+    paddingHorizontal: 16,
+    paddingTop: 10,
+    paddingBottom: 10,
+    borderWidth: 1.5,
+    borderColor: '#E2E8F0',
+    marginBottom: 12,
+    ...theme.shadows.sm,
+  },
+  fieldCardFocused: {
+    borderColor: '#0F172A',
+    backgroundColor: '#FFFFFF',
+  },
+  fieldCardError: {
+    borderColor: theme.colors.red[500],
+  },
+  fieldCardDisabled: {
+    opacity: 0.6,
+    backgroundColor: '#F8FAFC',
+  },
+  fieldCardHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 4,
+  },
+  fieldCardLabel: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#64748B',
+    letterSpacing: 0.1,
+  },
+  requiredAsterisk: {
+    color: '#EF4444',
+    fontWeight: '800',
+  },
+  optionalTag: {
+    fontSize: 11,
+    color: '#94A3B8',
+    fontWeight: '500',
+  },
+  fieldInputRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    minHeight: 34,
+  },
+  leadingIcon: {
+    marginRight: 10,
+  },
+  fieldTextInput: {
+    flex: 1,
+    fontSize: 15,
+    color: '#0F172A',
+    fontWeight: '500',
+    paddingVertical: 0,
+    paddingHorizontal: 0,
+  },
+  fieldValueText: {
+    flex: 1,
+    fontSize: 15,
+    color: '#0F172A',
+    fontWeight: '500',
+  },
+  fieldPlaceholderText: {
+    color: '#94A3B8',
+  },
+  fieldSuffix: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#64748B',
+    marginLeft: 8,
+  },
+  fieldHelperText: {
+    fontSize: 11,
+    color: '#64748B',
+    marginTop: 3,
+    paddingHorizontal: 2,
+  },
+  fieldErrorText: {
+    fontSize: 11,
+    color: theme.colors.red[600],
+    marginTop: 3,
+    paddingHorizontal: 2,
+    fontWeight: '600',
+  },
+
+  // Legacy Form Field Styles (retained for popup modals like Issue Advance)
   formField: {
     marginBottom: 16,
   },
@@ -60,7 +233,7 @@ export const formStyles = StyleSheet.create({
     fontWeight: '600',
   },
   
-  // Modal Styles
+  // Popup Modal Styles (retained for Issue Advance & Edit Attendance)
   modalContent: {
     backgroundColor: '#ffffff',
     borderRadius: theme.radii.xl,

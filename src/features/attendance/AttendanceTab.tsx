@@ -20,12 +20,14 @@ import Toast from 'react-native-toast-message';
 import { AppContext } from '@/context/AppContext';
 import { colors, shadows, radii } from '@/styles/theme';
 import { FormField } from '@/components/shared/FormField';
+import { useTranslation } from '@/i18n';
 
 interface Worker {
   id: string;
   name: string;
   phone: string;
   dailyWage: number;
+  overtimeRate?: number;
   siteId?: string;
   skillLevel?: string;
 }
@@ -49,8 +51,11 @@ interface Attendance {
   totalHours?: number;
   regularHours?: number;
   overtimeHours?: number;
+  overtimeRate?: number;
+  overtimePayment?: number;
   dailyWage?: number;
   dailyPayment?: number;
+  totalPayment?: number;
   messCharge?: number;
 }
 
@@ -69,6 +74,7 @@ const getTodayStr = () => {
 export function AttendanceTab({ accessToken }: AttendanceTabProps) {
   const route = useRoute();
   const context = useContext(AppContext);
+  const { t, language } = useTranslation();
   const token = accessToken || (route.params as any)?.accessToken;
   const userRole = context?.user?.role;
   const isForeman = userRole === 'foreman';
@@ -84,6 +90,14 @@ export function AttendanceTab({ accessToken }: AttendanceTabProps) {
   const [currentTime, setCurrentTime] = useState(new Date());
   const [selectedTrade, setSelectedTrade] = useState('All');
   const [showDatePicker, setShowDatePicker] = useState(false);
+  const [expandedWorkers, setExpandedWorkers] = useState<Record<string, boolean>>({});
+
+  const toggleWorkerExpanded = (workerId: string) => {
+    setExpandedWorkers(prev => ({
+      ...prev,
+      [workerId]: !prev[workerId],
+    }));
+  };
 
   // Edit record modal
   const [showEditModal, setShowEditModal] = useState(false);
@@ -93,6 +107,7 @@ export function AttendanceTab({ accessToken }: AttendanceTabProps) {
   const [customCheckIn, setCustomCheckIn] = useState('');
   const [customCheckOut, setCustomCheckOut] = useState('');
   const [customOvertime, setCustomOvertime] = useState('');
+  const [customOvertimeRate, setCustomOvertimeRate] = useState('100');
 
   useEffect(() => {
     const timer = setInterval(() => setCurrentTime(new Date()), 1000);
@@ -227,6 +242,10 @@ export function AttendanceTab({ accessToken }: AttendanceTabProps) {
     setCustomCheckIn(record.checkIn || '');
     setCustomCheckOut(record.checkOut || '');
     setCustomOvertime(record.overtimeHours ? record.overtimeHours.toString() : '');
+    const otRate = record.overtimeRate !== undefined && record.overtimeRate > 0
+      ? record.overtimeRate
+      : (worker.overtimeRate !== undefined && worker.overtimeRate > 0 ? worker.overtimeRate : 100);
+    setCustomOvertimeRate(otRate.toString());
     setShowEditModal(true);
   };
 
@@ -250,6 +269,7 @@ export function AttendanceTab({ accessToken }: AttendanceTabProps) {
   const isToday = selectedDate === todayDateStr;
   const currentISTHour = getCurrentISTHour();
   const isNightShiftNotStarted = currentISTHour < NIGHT_SHIFT_START_HOUR;
+  // Intentional lock: Block only today's night shift before 7:00 PM IST (past dates remain markable)
   const isNightShiftBlocked = isToday && selectedShift === 'Night Shift' && isNightShiftNotStarted;
 
   const handleOpenDatePicker = () => {
@@ -330,10 +350,11 @@ export function AttendanceTab({ accessToken }: AttendanceTabProps) {
     }
     const existing = getWorkerStatus(worker.id);
     if (existing?.status) {
+      setExpandedWorkers(prev => ({ ...prev, [worker.id]: true }));
       Toast.show({
         type: 'info',
         text1: 'Attendance Already Marked',
-        text2: 'Click on the edit button (✏️) to modify attendance.',
+        text2: 'Tap Edit in details below to modify attendance.',
       });
       return;
     }
@@ -368,12 +389,40 @@ export function AttendanceTab({ accessToken }: AttendanceTabProps) {
     const worker = workers.find((w) => w.id === workerId);
     const checkInTime = status === 'present' ? toStandardTime(currentTime) : null;
 
+    const baseDailyWage = worker?.dailyWage || existingRecord?.dailyWage || 0;
+    let dailyPayment = 0;
+    if (status === 'present') {
+      dailyPayment = baseDailyWage;
+    } else if (status === 'half-day') {
+      dailyPayment = Math.round(baseDailyWage / 2);
+    } else {
+      dailyPayment = 0;
+    }
+
+    const otHours = existingRecord?.overtimeHours || 0;
+    const otRate = existingRecord?.overtimeRate || worker?.overtimeRate || 100;
+    const otPayment = existingRecord?.overtimePayment !== undefined
+      ? existingRecord.overtimePayment
+      : Math.round(otHours * otRate);
+    const totalPayment = dailyPayment + otPayment;
+
     // Optimistic UI update
     if (existingRecord) {
       setAttendance((prev) =>
         prev.map((rec) =>
           rec.id === existingRecord.id
-            ? { ...rec, status, shift: currentShift }
+            ? {
+                ...rec,
+                status,
+                shift: currentShift,
+                checkIn: checkInTime,
+                dailyWage: baseDailyWage,
+                dailyPayment,
+                overtimeHours: otHours,
+                overtimeRate: otRate,
+                overtimePayment: otPayment,
+                totalPayment,
+              }
             : rec
         )
       );
@@ -392,6 +441,12 @@ export function AttendanceTab({ accessToken }: AttendanceTabProps) {
           checkIn: checkInTime,
           checkOut: null,
           totalHours: status === 'present' ? 8 : status === 'half-day' ? 4 : 0,
+          dailyWage: baseDailyWage,
+          dailyPayment,
+          overtimeHours: otHours,
+          overtimeRate: otRate,
+          overtimePayment: otPayment,
+          totalPayment,
         },
       ]);
     }
@@ -411,6 +466,12 @@ export function AttendanceTab({ accessToken }: AttendanceTabProps) {
               status,
               shift: currentShift,
               checkIn: checkInTime,
+              dailyWage: baseDailyWage,
+              dailyPayment,
+              overtimeHours: otHours,
+              overtimeRate: otRate,
+              overtimePayment: otPayment,
+              totalPayment,
             }),
           }
         );
@@ -443,6 +504,12 @@ export function AttendanceTab({ accessToken }: AttendanceTabProps) {
               status,
               shift: currentShift,
               checkIn: checkInTime,
+              dailyWage: baseDailyWage,
+              dailyPayment,
+              overtimeHours: otHours,
+              overtimeRate: otRate,
+              overtimePayment: otPayment,
+              totalPayment,
             }),
           }
         );
@@ -689,17 +756,32 @@ export function AttendanceTab({ accessToken }: AttendanceTabProps) {
       });
       return;
     }
-    if (isToday && (editingRecord.shift?.toLowerCase().includes('night') || selectedShift === 'Night Shift') && isNightShiftNotStarted) {
+    const isEditingNight = (editingRecord.shift?.toLowerCase().includes('night') || selectedShift === 'Night Shift');
+    if (isToday && isEditingNight && isNightShiftNotStarted) {
       Toast.show({
         type: 'error',
         text1: 'Night Shift Not Started',
-        text2: 'Night shift attendance cannot be modified before shift starts (07:00 PM).',
+        text2: 'Today’s night shift attendance cannot be modified before shift starts (07:00 PM).',
       });
       return;
     }
 
     try {
       const otHours = parseFloat(customOvertime) || 0;
+      const otRate = parseFloat(customOvertimeRate) || (editingWorker?.overtimeRate ?? 100);
+      const otPayment = Math.round(otHours * otRate);
+
+      const baseDailyWage = editingWorker?.dailyWage || editingRecord.dailyWage || 0;
+      let dailyPayment = 0;
+      if (modalStatus === 'present') {
+        dailyPayment = baseDailyWage;
+      } else if (modalStatus === 'half-day') {
+        dailyPayment = Math.round(baseDailyWage / 2);
+      } else {
+        dailyPayment = 0;
+      }
+      const totalPayment = dailyPayment + otPayment;
+
       const response = await fetch(
         `https://${projectId}.supabase.co/functions/v1/make-server-689d7d60/attendance/${editingRecord.id}`,
         {
@@ -713,6 +795,11 @@ export function AttendanceTab({ accessToken }: AttendanceTabProps) {
             checkIn: customCheckIn || null,
             checkOut: customCheckOut || null,
             overtimeHours: otHours,
+            overtimeRate: otRate,
+            dailyWage: baseDailyWage,
+            dailyPayment,
+            overtimePayment: otPayment,
+            totalPayment,
           }),
         }
       );
@@ -767,9 +854,9 @@ export function AttendanceTab({ accessToken }: AttendanceTabProps) {
     ? workers.filter((w) => w.siteId === selectedSite)
     : [];
 
-  const filteredWorkers = selectedTrade === 'All'
+  const filteredWorkers = (!selectedTrade || selectedTrade === 'All')
     ? siteWorkers
-    : siteWorkers.filter((w) => (w.skillLevel || 'unskilled').toLowerCase().includes(selectedTrade.toLowerCase()));
+    : siteWorkers.filter((w) => (w?.skillLevel || 'unskilled').toLowerCase().includes(selectedTrade.toLowerCase()));
 
   const presentCount = attendance.filter((a) => a.status === 'present').length;
   const halfDayCount = attendance.filter((a) => a.status === 'half-day').length;
@@ -826,7 +913,7 @@ export function AttendanceTab({ accessToken }: AttendanceTabProps) {
       <View style={styles.header}>
         <View style={styles.headerRow}>
           <View>
-            <Text style={styles.headerTitle}>Mark Attendance</Text>
+            <Text style={styles.headerTitle}>{t('attendance.title')}</Text>
             <Text style={styles.headerSubtitle}>
               {currentTime.toLocaleDateString('en-IN', { weekday: 'long', month: 'short', day: 'numeric' })} • {formatTimeString(currentTime)}
             </Text>
@@ -845,7 +932,7 @@ export function AttendanceTab({ accessToken }: AttendanceTabProps) {
                 color={selectedShift === 'Day Shift' ? '#ffffff' : '#94A3B8'}
               />
               <Text style={[styles.shiftBtnText, selectedShift === 'Day Shift' && styles.shiftBtnTextActive]}>
-                Day
+                {t('attendance.dayShift')}
               </Text>
             </TouchableOpacity>
 
@@ -860,7 +947,7 @@ export function AttendanceTab({ accessToken }: AttendanceTabProps) {
                 color={selectedShift === 'Night Shift' ? '#ffffff' : '#94A3B8'}
               />
               <Text style={[styles.shiftBtnText, selectedShift === 'Night Shift' && styles.shiftBtnTextActive]}>
-                Night
+                {t('attendance.nightShift')}
               </Text>
             </TouchableOpacity>
           </View>
@@ -880,7 +967,7 @@ export function AttendanceTab({ accessToken }: AttendanceTabProps) {
               color={isCustomDateSelected ? colors.accent : '#94A3B8'}
             />
             <Text style={[styles.calendarPickerText, isCustomDateSelected && styles.calendarPickerTextActive]}>
-              {isCustomDateSelected ? 'Custom' : 'Date'}
+              {isCustomDateSelected ? t('common.customPeriod') : t('common.date')}
             </Text>
           </TouchableOpacity>
 
@@ -935,15 +1022,15 @@ export function AttendanceTab({ accessToken }: AttendanceTabProps) {
         {/* 2. ATTENDANCE METRIC COUNTERS */}
         <View style={styles.bentoCountersRow}>
           <View style={styles.counterCard}>
-            <Text style={styles.counterLabel}>Assigned</Text>
+            <Text style={styles.counterLabel}>{t('common.total')}</Text>
             <Text style={styles.counterValue}>{totalCount}</Text>
             <View style={[styles.counterTag, { backgroundColor: colors.surfaceMuted }]}>
-              <Text style={[styles.counterTagText, { color: colors.textMuted }]}>Crew</Text>
+              <Text style={[styles.counterTagText, { color: colors.textMuted }]}>{t('nav.workers')}</Text>
             </View>
           </View>
 
           <View style={styles.counterCard}>
-            <Text style={styles.counterLabel}>Present</Text>
+            <Text style={styles.counterLabel}>{t('attendance.present')}</Text>
             <Text style={[styles.counterValue, { color: colors.success }]}>{presentCount}</Text>
             <View style={[styles.counterTag, { backgroundColor: colors.successLight }]}>
               <Text style={[styles.counterTagText, { color: colors.successDark }]}>P</Text>
@@ -951,7 +1038,7 @@ export function AttendanceTab({ accessToken }: AttendanceTabProps) {
           </View>
 
           <View style={styles.counterCard}>
-            <Text style={styles.counterLabel}>Half-Day</Text>
+            <Text style={styles.counterLabel}>{t('attendance.halfDay')}</Text>
             <Text style={[styles.counterValue, { color: colors.warning }]}>{halfDayCount}</Text>
             <View style={[styles.counterTag, { backgroundColor: colors.warningLight }]}>
               <Text style={[styles.counterTagText, { color: colors.warningDark }]}>HD</Text>
@@ -959,7 +1046,7 @@ export function AttendanceTab({ accessToken }: AttendanceTabProps) {
           </View>
 
           <View style={styles.counterCard}>
-            <Text style={styles.counterLabel}>Absent</Text>
+            <Text style={styles.counterLabel}>{t('attendance.absent')}</Text>
             <Text style={[styles.counterValue, { color: colors.error }]}>{absentCount}</Text>
             <View style={[styles.counterTag, { backgroundColor: colors.errorLight }]}>
               <Text style={[styles.counterTagText, { color: colors.errorDark }]}>A</Text>
@@ -970,12 +1057,12 @@ export function AttendanceTab({ accessToken }: AttendanceTabProps) {
         {/* 3. SITE SELECTOR & QUICK BULK ACTIONS */}
         <View style={styles.siteSelectorCard}>
           <FormField
-            label="SELECT ACTIVE CONSTRUCTION SITE"
+            label={t('attendance.selectSite').toUpperCase()}
             type="select"
             value={selectedSite}
             onChangeText={setSelectedSite}
             selectOptions={siteOptions}
-            placeholder="Select a construction site"
+            placeholder={t('workers.selectSitePlaceholder')}
           />
 
           <View style={styles.bulkRow}>
@@ -990,7 +1077,7 @@ export function AttendanceTab({ accessToken }: AttendanceTabProps) {
               disabled={isFutureDate || isNightShiftBlocked}
             >
               <MaterialIcons name="done-all" size={16} color={(isFutureDate || isNightShiftBlocked) ? colors.textMuted : colors.successDark} />
-              <Text style={[styles.bulkBtnText, { color: (isFutureDate || isNightShiftBlocked) ? colors.textMuted : colors.successDark }]}>Bulk Mark All Present</Text>
+              <Text style={[styles.bulkBtnText, { color: (isFutureDate || isNightShiftBlocked) ? colors.textMuted : colors.successDark }]}>{t('attendance.bulkPresent')}</Text>
             </TouchableOpacity>
 
             <TouchableOpacity
@@ -1004,7 +1091,7 @@ export function AttendanceTab({ accessToken }: AttendanceTabProps) {
               disabled={isFutureDate || isNightShiftBlocked}
             >
               <MaterialIcons name="close" size={16} color={(isFutureDate || isNightShiftBlocked) ? colors.textMuted : colors.errorDark} />
-              <Text style={[styles.bulkBtnText, { color: (isFutureDate || isNightShiftBlocked) ? colors.textMuted : colors.errorDark }]}>Mark Rest Absent</Text>
+              <Text style={[styles.bulkBtnText, { color: (isFutureDate || isNightShiftBlocked) ? colors.textMuted : colors.errorDark }]}>{t('attendance.absent')}</Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -1014,17 +1101,21 @@ export function AttendanceTab({ accessToken }: AttendanceTabProps) {
           <View style={styles.futureDateBanner}>
             <MaterialIcons name="event-busy" size={18} color={colors.errorDark} />
             <Text style={styles.futureDateBannerText}>
-              Future date selected ({selectedDate}). Attendance cannot be marked in advance.
+              {language === 'hi' ? `भविष्य की तारीख चुनी गई है (${selectedDate})। अग्रिम में उपस्थिति दर्ज नहीं की जा सकती।` :
+               language === 'bn' ? `ভবিষ্যতের তারিখ নির্বাচন করা হয়েছে (${selectedDate})। অগ্রিম উপস্থিতি দেওয়া যাবে না।` :
+               `Future date selected (${selectedDate}). Attendance cannot be marked in advance.`}
             </Text>
           </View>
         )}
 
-        {/* NIGHT SHIFT NOT STARTED BANNER */}
+        {/* NIGHT SHIFT NOT STARTED BANNER - ONLY FOR TODAY BEFORE 7 PM */}
         {isNightShiftBlocked && (
           <View style={styles.nightShiftLockBanner}>
             <MaterialIcons name="nights-stay" size={18} color="#1E40AF" />
             <Text style={styles.nightShiftLockBannerText}>
-              Night shift for today has not started yet (begins at 07:00 PM). Attendance cannot be marked in advance.
+              {language === 'hi' ? 'आज की रात की शिफ्ट अभी शुरू नहीं हुई है (शाम 07:00 बजे IST से शुरू होगी)। अग्रिम में उपस्थिति दर्ज नहीं की जा सकती।' :
+               language === 'bn' ? 'আজকের রাতের শিফট এখনো শুরু হয়নি (সন্ধ্যা ০৭:০০ টায় শুরু)। অগ্রিম উপস্থিতি দেওয়া যাবে না।' :
+               "Today's night shift has not started yet (begins at 07:00 PM IST). Attendance cannot be marked in advance."}
             </Text>
           </View>
         )}
@@ -1033,6 +1124,11 @@ export function AttendanceTab({ accessToken }: AttendanceTabProps) {
         <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.tradeFilterRow}>
           {['All', 'Skilled', 'Semi-Skilled', 'Unskilled', 'Highly Skilled'].map((trade) => {
             const isTradeActive = selectedTrade === trade;
+            const label = trade === 'All' ? t('common.all') :
+              trade === 'Skilled' ? t('workers.skilled') :
+              trade === 'Semi-Skilled' ? t('workers.semiSkilled') :
+              trade === 'Unskilled' ? t('workers.unskilled') :
+              trade === 'Highly Skilled' ? t('workers.highlySkilled') : trade;
             return (
               <TouchableOpacity
                 key={trade}
@@ -1041,7 +1137,7 @@ export function AttendanceTab({ accessToken }: AttendanceTabProps) {
                 activeOpacity={0.8}
               >
                 <Text style={[styles.tradePillText, isTradeActive && styles.tradePillTextActive]}>
-                  {trade}
+                  {label}
                 </Text>
               </TouchableOpacity>
             );
@@ -1051,7 +1147,7 @@ export function AttendanceTab({ accessToken }: AttendanceTabProps) {
         {/* 5. WORKER ATTENDANCE CARDS */}
         <View style={styles.workerListHeader}>
           <Text style={styles.workerListTitle}>
-            WORKERS ASSIGNED TO THIS SITE ({filteredWorkers.length})
+            {t('sites.workersOnSite').toUpperCase()} ({filteredWorkers.length})
           </Text>
           {loading && <ActivityIndicator size="small" color={colors.accent} />}
         </View>
@@ -1059,9 +1155,11 @@ export function AttendanceTab({ accessToken }: AttendanceTabProps) {
         {filteredWorkers.length === 0 ? (
           <View style={styles.emptySiteCrewBox}>
             <MaterialIcons name="group-off" size={44} color={colors.borderDark} />
-            <Text style={styles.emptySiteCrewTitle}>No Workers Assigned to This Site</Text>
+            <Text style={styles.emptySiteCrewTitle}>{t('workers.noWorkersFound')}</Text>
             <Text style={styles.emptySiteCrewSub}>
-              Only workers deployed to the selected site appear here. Assign workers to this site from the Workforce Roster tab.
+              {language === 'hi' ? 'केवल इस साइट पर तैनात श्रमिक यहाँ दिखाई देते हैं। कार्यबल सूची से श्रमिकों को इस साइट पर असाइन करें।' :
+               language === 'bn' ? 'শুধুমাত্র এই সাইটে নিযুক্ত শ্রমিকরা এখানে প্রদর্শিত হবে। শ্রমিক তালিকা থেকে শ্রমিকদের এই সাইটে যুক্ত করুন।' :
+               'Only workers deployed to the selected site appear here. Assign workers to this site from the Workforce Roster tab.'}
             </Text>
           </View>
         ) : (
@@ -1070,136 +1168,258 @@ export function AttendanceTab({ accessToken }: AttendanceTabProps) {
             const currentStatus = statusRecord?.status;
             const hasCheckIn = Boolean(statusRecord?.checkIn);
             const hasCheckOut = Boolean(statusRecord?.checkOut);
+            const isExpanded = Boolean(expandedWorkers[worker.id]);
 
             return (
               <View key={worker.id} style={styles.workerCard}>
-                <View style={styles.workerCardTop}>
-                  <View style={styles.workerAvatar}>
+                {/* Main Compact Row: Avatar + Info + P / 1/2 / A + Dropdown */}
+                <View style={styles.workerCardMainRow}>
+                  <View style={[
+                    styles.workerAvatar,
+                    currentStatus === 'present' && styles.avatarPresent,
+                    currentStatus === 'half-day' && styles.avatarHalfDay,
+                    currentStatus === 'absent' && styles.avatarAbsent,
+                  ]}>
                     <Text style={styles.avatarText}>{worker.name.charAt(0).toUpperCase()}</Text>
+                    {currentStatus && (
+                      <View style={[
+                        styles.avatarStatusDot,
+                        currentStatus === 'present' && styles.dotPresent,
+                        currentStatus === 'half-day' && styles.dotHalfDay,
+                        currentStatus === 'absent' && styles.dotAbsent,
+                      ]} />
+                    )}
                   </View>
+
                   <View style={styles.workerInfo}>
-                    <Text style={styles.workerName}>{worker.name}</Text>
-                    <Text style={styles.workerMeta}>
-                      {worker.skillLevel ? worker.skillLevel.toUpperCase() : 'GENERAL'} • Base: ₹{worker.dailyWage || 800}/day
+                    <Text style={styles.workerName} numberOfLines={1}>{worker.name}</Text>
+                    <Text style={styles.workerMeta} numberOfLines={1}>
+                      {worker.skillLevel ? worker.skillLevel.toUpperCase() : 'GENERAL'} • ₹{worker.dailyWage || 800}/d
+                      {hasCheckIn ? ` • In: ${formatDisplayTime(statusRecord?.checkIn)}` : ''}
                     </Text>
                   </View>
 
-                  {statusRecord && (
+                  {/* Marking Action Group: P, 1/2, A + Dropdown Chevron */}
+                  <View style={styles.quickMarkGroup}>
+                    {/* P (Present) */}
                     <TouchableOpacity
-                      style={styles.editPencilBtn}
-                      onPress={() => openEditModal(worker, statusRecord)}
+                      style={[
+                        styles.quickMarkBtn,
+                        currentStatus === 'present' && styles.btnPresentActive,
+                        Boolean(currentStatus) && currentStatus !== 'present' && styles.quickMarkBtnMuted,
+                        (isFutureDate || isNightShiftBlocked) && styles.quickMarkBtnDisabled,
+                      ]}
+                      onPress={() => handleCardStatusPress(worker, 'present')}
+                      activeOpacity={(isFutureDate || isNightShiftBlocked) ? 1 : 0.8}
+                    >
+                      <Text
+                        style={[
+                          styles.quickMarkText,
+                          currentStatus === 'present' && styles.quickMarkTextActive,
+                        ]}
+                      >
+                        P
+                      </Text>
+                    </TouchableOpacity>
+
+                    {/* 1/2 (Half-Day) */}
+                    <TouchableOpacity
+                      style={[
+                        styles.quickMarkBtn,
+                        currentStatus === 'half-day' && styles.btnHalfDayActive,
+                        Boolean(currentStatus) && currentStatus !== 'half-day' && styles.quickMarkBtnMuted,
+                        (isFutureDate || isNightShiftBlocked) && styles.quickMarkBtnDisabled,
+                      ]}
+                      onPress={() => handleCardStatusPress(worker, 'half-day')}
+                      activeOpacity={(isFutureDate || isNightShiftBlocked) ? 1 : 0.8}
+                    >
+                      <Text
+                        style={[
+                          styles.quickMarkText,
+                          currentStatus === 'half-day' && styles.quickMarkTextActive,
+                        ]}
+                      >
+                        1/2
+                      </Text>
+                    </TouchableOpacity>
+
+                    {/* A (Absent) */}
+                    <TouchableOpacity
+                      style={[
+                        styles.quickMarkBtn,
+                        currentStatus === 'absent' && styles.btnAbsentActive,
+                        Boolean(currentStatus) && currentStatus !== 'absent' && styles.quickMarkBtnMuted,
+                        (isFutureDate || isNightShiftBlocked) && styles.quickMarkBtnDisabled,
+                      ]}
+                      onPress={() => handleCardStatusPress(worker, 'absent')}
+                      activeOpacity={(isFutureDate || isNightShiftBlocked) ? 1 : 0.8}
+                    >
+                      <Text
+                        style={[
+                          styles.quickMarkText,
+                          currentStatus === 'absent' && styles.quickMarkTextActive,
+                        ]}
+                      >
+                        A
+                      </Text>
+                    </TouchableOpacity>
+
+                    {/* Dropdown Chevron */}
+                    <TouchableOpacity
+                      style={[
+                        styles.dropdownChevronBtn,
+                        isExpanded && styles.dropdownChevronBtnActive,
+                      ]}
+                      onPress={() => toggleWorkerExpanded(worker.id)}
                       activeOpacity={0.7}
-                    >
-                      <MaterialIcons name="edit" size={13} color={colors.accent} />
-                      <Text style={styles.editBtnText}>Edit</Text>
-                    </TouchableOpacity>
-                  )}
-                </View>
-
-                {/* P / HD / A Tactical Switcher */}
-                <View style={styles.statusToggleRow}>
-                  <TouchableOpacity
-                    style={[
-                      styles.statusPill,
-                      currentStatus === 'present' && styles.statusPresentActive,
-                      Boolean(currentStatus) && currentStatus !== 'present' && styles.statusPillLocked,
-                      (isFutureDate || isNightShiftBlocked) && styles.statusPillDisabled,
-                    ]}
-                    onPress={() => handleCardStatusPress(worker, 'present')}
-                    activeOpacity={(isFutureDate || isNightShiftBlocked) ? 1 : 0.85}
-                  >
-                    <Text
-                      style={[
-                        styles.statusPillText,
-                        currentStatus === 'present' && styles.statusPillTextActive,
-                      ]}
-                    >
-                      P • Present
-                    </Text>
-                  </TouchableOpacity>
-
-                  <TouchableOpacity
-                    style={[
-                      styles.statusPill,
-                      currentStatus === 'half-day' && styles.statusHalfDayActive,
-                      Boolean(currentStatus) && currentStatus !== 'half-day' && styles.statusPillLocked,
-                      (isFutureDate || isNightShiftBlocked) && styles.statusPillDisabled,
-                    ]}
-                    onPress={() => handleCardStatusPress(worker, 'half-day')}
-                    activeOpacity={(isFutureDate || isNightShiftBlocked) ? 1 : 0.85}
-                  >
-                    <Text
-                      style={[
-                        styles.statusPillText,
-                        currentStatus === 'half-day' && styles.statusPillTextActive,
-                      ]}
-                    >
-                      HD • Half-Day
-                    </Text>
-                  </TouchableOpacity>
-
-                  <TouchableOpacity
-                    style={[
-                      styles.statusPill,
-                      currentStatus === 'absent' && styles.statusAbsentActive,
-                      Boolean(currentStatus) && currentStatus !== 'absent' && styles.statusPillLocked,
-                      (isFutureDate || isNightShiftBlocked) && styles.statusPillDisabled,
-                    ]}
-                    onPress={() => handleCardStatusPress(worker, 'absent')}
-                    activeOpacity={(isFutureDate || isNightShiftBlocked) ? 1 : 0.85}
-                  >
-                    <Text
-                      style={[
-                        styles.statusPillText,
-                        currentStatus === 'absent' && styles.statusPillTextActive,
-                      ]}
-                    >
-                      A • Absent
-                    </Text>
-                  </TouchableOpacity>
-                </View>
-
-                {/* CHECK-IN & CHECK-OUT TIME STAMPS & PUNCH TRIGGERS */}
-                {(currentStatus === 'present' || currentStatus === 'half-day') && (
-                  <View style={styles.punchRow}>
-                    {/* Check In Action */}
-                    <TouchableOpacity
-                      style={[styles.punchBtn, hasCheckIn && styles.punchBtnRecorded]}
-                      onPress={() => handleCheckIn(worker.id)}
-                      activeOpacity={0.75}
+                      hitSlop={{ top: 8, bottom: 8, left: 4, right: 8 }}
                     >
                       <MaterialIcons
-                        name={hasCheckIn ? "login" : "schedule"}
-                        size={14}
-                        color={hasCheckIn ? colors.successDark : colors.textMuted}
+                        name={isExpanded ? "keyboard-arrow-up" : "keyboard-arrow-down"}
+                        size={22}
+                        color={isExpanded ? colors.accent : colors.textMuted}
                       />
-                      <Text style={[styles.punchBtnText, hasCheckIn && styles.punchBtnTextRecorded]}>
-                        {hasCheckIn ? `In: ${formatDisplayTime(statusRecord?.checkIn)}` : 'Check-In'}
-                      </Text>
                     </TouchableOpacity>
+                  </View>
+                </View>
 
-                    {/* Check Out Action */}
-                    <TouchableOpacity
-                      style={[styles.punchBtn, hasCheckOut && styles.punchBtnRecordedOut]}
-                      onPress={() => handleCheckOut(worker.id)}
-                      activeOpacity={0.75}
-                    >
-                      <MaterialIcons
-                        name={hasCheckOut ? "logout" : "more-time"}
-                        size={14}
-                        color={hasCheckOut ? colors.accentDark : colors.textMuted}
-                      />
-                      <Text style={[styles.punchBtnText, hasCheckOut && styles.punchBtnTextRecordedOut]}>
-                        {hasCheckOut ? `Out: ${formatDisplayTime(statusRecord?.checkOut)}` : 'Check-Out'}
-                      </Text>
-                    </TouchableOpacity>
+                {/* Expanded Details Drawer */}
+                {isExpanded && (
+                  <View style={styles.expandedDrawer}>
+                    {/* Status & Shift Meta Chips */}
+                    <View style={styles.expandedInfoRow}>
+                      <View style={[
+                        styles.statusBadge,
+                        currentStatus === 'present' && styles.statusBadgePresent,
+                        currentStatus === 'half-day' && styles.statusBadgeHalfDay,
+                        currentStatus === 'absent' && styles.statusBadgeAbsent,
+                        !currentStatus && styles.statusBadgeUnmarked,
+                      ]}>
+                        <MaterialIcons
+                          name={
+                            currentStatus === 'present' ? 'check-circle' :
+                            currentStatus === 'half-day' ? 'timelapse' :
+                            currentStatus === 'absent' ? 'cancel' : 'help-outline'
+                          }
+                          size={13}
+                          color={
+                            currentStatus === 'present' ? colors.successDark :
+                            currentStatus === 'half-day' ? colors.warningDark :
+                            currentStatus === 'absent' ? colors.errorDark : colors.textMuted
+                          }
+                        />
+                        <Text style={[
+                          styles.statusBadgeText,
+                          currentStatus === 'present' && styles.textSuccessDark,
+                          currentStatus === 'half-day' && styles.textWarningDark,
+                          currentStatus === 'absent' && styles.textErrorDark,
+                          !currentStatus && styles.textMutedDark,
+                        ]}>
+                          {currentStatus === 'present' ? t('attendance.present') : currentStatus === 'half-day' ? t('attendance.halfDay') : currentStatus === 'absent' ? t('attendance.absent') : '-'}
+                        </Text>
+                      </View>
 
-                    {/* Shift & OT pill */}
-                    <View style={styles.shiftTagPill}>
-                      <Text style={styles.shiftTagPillText}>
-                        {(statusRecord?.shift || '').toLowerCase().includes('night') ? '🌙 Night' : '☀️ Day'}
-                        {statusRecord?.overtimeHours ? ` • +${statusRecord.overtimeHours}h OT` : ''}
-                      </Text>
+                      <View style={styles.expandedChip}>
+                        <MaterialIcons
+                          name={(statusRecord?.shift || selectedShift).toLowerCase().includes('night') ? 'nightlight-round' : 'wb-sunny'}
+                          size={12}
+                          color={colors.textMuted}
+                        />
+                        <Text style={styles.expandedChipText}>
+                          {(statusRecord?.shift || selectedShift).toLowerCase().includes('night') ? t('attendance.nightShift') : t('attendance.dayShift')}
+                          {statusRecord?.overtimeHours ? ` • +${statusRecord.overtimeHours}h OT${statusRecord.overtimePayment ? ` (₹${statusRecord.overtimePayment})` : ''}` : ''}
+                        </Text>
+                      </View>
+
+                      <View style={[styles.expandedChip, { marginLeft: 'auto' }]}>
+                        <Text style={styles.expandedWageText}>
+                          {(() => {
+                            const baseRate = worker.dailyWage || statusRecord?.dailyWage || 0;
+                            if (!currentStatus) {
+                              return `₹${baseRate}/d`;
+                            }
+                            if (currentStatus === 'absent') {
+                              return '₹0/d';
+                            }
+                            const ot = statusRecord?.overtimePayment !== undefined && statusRecord.overtimePayment !== null && statusRecord.overtimePayment > 0
+                              ? statusRecord.overtimePayment
+                              : (statusRecord?.overtimeHours ? Math.round(Number(statusRecord.overtimeHours) * (statusRecord.overtimeRate || worker.overtimeRate || 100)) : 0);
+
+                            let baseEarned = 0;
+                            if (currentStatus === 'present' || (currentStatus as string) === 'overtime') {
+                              baseEarned = baseRate;
+                            } else if (currentStatus === 'half-day') {
+                              baseEarned = Math.round(baseRate / 2);
+                            }
+
+                            const total = (statusRecord?.totalPayment !== undefined && statusRecord.totalPayment !== null && statusRecord.totalPayment > 0)
+                              ? statusRecord.totalPayment
+                              : (baseEarned + ot);
+
+                            return `₹${total}/d`;
+                          })()}
+                        </Text>
+                      </View>
+                    </View>
+
+                    {/* Check In / Out Time Punch Actions */}
+                    {(currentStatus === 'present' || currentStatus === 'half-day') && (
+                      <View style={styles.expandedPunchRow}>
+                        <TouchableOpacity
+                          style={[styles.punchActionBtn, hasCheckIn && styles.punchActionBtnActive]}
+                          onPress={() => handleCheckIn(worker.id)}
+                          activeOpacity={0.75}
+                        >
+                          <MaterialIcons
+                            name={hasCheckIn ? "login" : "schedule"}
+                            size={14}
+                            color={hasCheckIn ? colors.successDark : colors.textMuted}
+                          />
+                          <Text style={[styles.punchActionText, hasCheckIn && styles.punchActionTextActive]}>
+                            {hasCheckIn ? `${t('attendance.checkIn')}: ${formatDisplayTime(statusRecord?.checkIn)}` : t('attendance.checkIn')}
+                          </Text>
+                        </TouchableOpacity>
+
+                        <TouchableOpacity
+                          style={[styles.punchActionBtn, hasCheckOut && styles.punchActionBtnActiveOut]}
+                          onPress={() => handleCheckOut(worker.id)}
+                          activeOpacity={0.75}
+                        >
+                          <MaterialIcons
+                            name={hasCheckOut ? "logout" : "more-time"}
+                            size={14}
+                            color={hasCheckOut ? colors.accentDark : colors.textMuted}
+                          />
+                          <Text style={[styles.punchActionText, hasCheckOut && styles.punchActionTextActiveOut]}>
+                            {hasCheckOut ? `${t('attendance.checkOut')}: ${formatDisplayTime(statusRecord?.checkOut)}` : t('attendance.checkOut')}
+                          </Text>
+                        </TouchableOpacity>
+                      </View>
+                    )}
+
+                    {/* Bottom Edit Action & Worker Contact */}
+                    <View style={styles.expandedBottomRow}>
+                      {statusRecord ? (
+                        <TouchableOpacity
+                          style={styles.expandedEditBtn}
+                          onPress={() => openEditModal(worker, statusRecord)}
+                          activeOpacity={0.7}
+                        >
+                          <MaterialIcons name="edit" size={13} color={colors.accent} />
+                          <Text style={styles.expandedEditBtnText}>{t('common.edit')}</Text>
+                        </TouchableOpacity>
+                      ) : (
+                        <Text style={styles.unmarkedHintText}>
+                          Tap P, 1/2, or A to mark attendance
+                        </Text>
+                      )}
+
+                      {worker.phone ? (
+                        <View style={styles.workerPhoneChip}>
+                          <MaterialIcons name="phone" size={12} color={colors.textMuted} />
+                          <Text style={styles.workerPhoneText}>{worker.phone}</Text>
+                        </View>
+                      ) : null}
                     </View>
                   </View>
                 )}
@@ -1215,7 +1435,7 @@ export function AttendanceTab({ accessToken }: AttendanceTabProps) {
           <View style={styles.modalSheet}>
             <View style={styles.modalHeader}>
               <View>
-                <Text style={styles.modalTitle}>Edit Attendance Record</Text>
+                <Text style={styles.modalTitle}>{t('attendance.markAttendance')}</Text>
                 <Text style={styles.modalSubtitle}>{editingWorker?.name} • {selectedDate}</Text>
               </View>
               <TouchableOpacity onPress={() => setShowEditModal(false)} style={styles.modalCloseCircle}>
@@ -1226,7 +1446,7 @@ export function AttendanceTab({ accessToken }: AttendanceTabProps) {
             <View style={styles.modalFormContent}>
               <View style={styles.modalTimeRow}>
                 <View style={{ flex: 1 }}>
-                  <Text style={styles.modalFieldLabel}>CHECK-IN TIME</Text>
+                  <Text style={styles.modalFieldLabel}>{t('attendance.inTime').toUpperCase()}</Text>
                   <TextInput
                     style={styles.modalTextInput}
                     value={customCheckIn}
@@ -1235,7 +1455,7 @@ export function AttendanceTab({ accessToken }: AttendanceTabProps) {
                   />
                 </View>
                 <View style={{ flex: 1 }}>
-                  <Text style={styles.modalFieldLabel}>CHECK-OUT TIME</Text>
+                  <Text style={styles.modalFieldLabel}>{t('attendance.outTime').toUpperCase()}</Text>
                   <TextInput
                     style={styles.modalTextInput}
                     value={customCheckOut}
@@ -1245,18 +1465,29 @@ export function AttendanceTab({ accessToken }: AttendanceTabProps) {
                 </View>
               </View>
 
-              <View style={{ marginTop: 12 }}>
-                <Text style={styles.modalFieldLabel}>OVERTIME HOURS (OT)</Text>
-                <TextInput
-                  style={styles.modalTextInput}
-                  value={customOvertime}
-                  onChangeText={setCustomOvertime}
-                  placeholder="e.g. 2.0"
-                  keyboardType="numeric"
-                />
+              <View style={[styles.modalTimeRow, { marginTop: 12 }]}>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.modalFieldLabel}>{t('attendance.otHours').toUpperCase()}</Text>
+                  <TextInput
+                    style={styles.modalTextInput}
+                    value={customOvertime}
+                    onChangeText={setCustomOvertime}
+                    placeholder="e.g. 2.0"
+                    keyboardType="numeric"
+                  />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.modalFieldLabel}>{t('workers.overtimeRate').toUpperCase()} (₹/HR)</Text>
+                  <TextInput
+                    style={styles.modalTextInput}
+                    value={customOvertimeRate}
+                    onChangeText={setCustomOvertimeRate}
+                    placeholder="100"
+                    keyboardType="numeric"
+                  />
+                </View>
               </View>
 
-              {/* Status Toggles in Modal */}
               <View style={styles.modalStatusRow}>
                 {(['present', 'half-day', 'absent'] as const).map((st) => (
                   <TouchableOpacity
@@ -1273,11 +1504,49 @@ export function AttendanceTab({ accessToken }: AttendanceTabProps) {
                         modalStatus === st && styles.modalStatusBtnTextActive,
                       ]}
                     >
-                      {st === 'present' ? 'Present' : st === 'half-day' ? 'Half-Day' : 'Absent'}
+                      {st === 'present' ? t('attendance.present') : st === 'half-day' ? t('attendance.halfDay') : t('attendance.absent')}
                     </Text>
                   </TouchableOpacity>
                 ))}
               </View>
+
+              {/* Live Overtime & Wage Calculation Card */}
+              {(() => {
+                const otH = parseFloat(customOvertime) || 0;
+                const otR = parseFloat(customOvertimeRate) || 0;
+                const otPay = Math.round(otH * otR);
+                const baseDaily = editingWorker?.dailyWage || editingRecord?.dailyWage || 0;
+                const basePay = modalStatus === 'present' ? baseDaily : modalStatus === 'half-day' ? Math.round(baseDaily / 2) : 0;
+                const totalDayPay = basePay + otPay;
+
+                return (
+                  <View style={styles.wageCalculationCard}>
+                    <View style={styles.wageCalcHeader}>
+                      <MaterialIcons name="calculate" size={15} color={colors.accent} />
+                      <Text style={styles.wageCalcTitle}>{t('attendance.dailyPayment').toUpperCase()}</Text>
+                    </View>
+                    <View style={styles.wageCalcRow}>
+                      <Text style={styles.wageCalcLabel}>
+                        {t('attendance.dailyPayment')} ({modalStatus === 'present' ? t('attendance.present') : modalStatus === 'half-day' ? t('attendance.halfDay') : t('attendance.absent')}):
+                      </Text>
+                      <Text style={styles.wageCalcVal}>₹{basePay}</Text>
+                    </View>
+                    {otH > 0 ? (
+                      <View style={styles.wageCalcRow}>
+                        <Text style={styles.wageCalcLabel}>
+                          {t('attendance.overtime')} ({otH} hrs × ₹{otR}/hr):
+                        </Text>
+                        <Text style={[styles.wageCalcVal, { color: colors.accent }]}>+ ₹{otPay}</Text>
+                      </View>
+                    ) : null}
+                    <View style={styles.wageCalcDivider} />
+                    <View style={styles.wageCalcRowTotal}>
+                      <Text style={styles.wageCalcTotalLabel}>{t('attendance.totalPayment')}:</Text>
+                      <Text style={styles.wageCalcTotalVal}>₹{totalDayPay}</Text>
+                    </View>
+                  </View>
+                );
+              })()}
 
               <View style={styles.modalFooterActions}>
                 <TouchableOpacity
@@ -1285,14 +1554,15 @@ export function AttendanceTab({ accessToken }: AttendanceTabProps) {
                   onPress={handleRemoveRecord}
                 >
                   <MaterialIcons name="delete-outline" size={16} color={colors.error} />
-                  <Text style={styles.modalDeleteBtnText}>Delete Entry</Text>
+                  <Text style={styles.modalDeleteBtnText}>{t('common.delete')}</Text>
                 </TouchableOpacity>
 
                 <TouchableOpacity
                   style={styles.modalSaveBtn}
                   onPress={handleSaveModalRecord}
                 >
-                  <Text style={styles.modalSaveBtnText}>Save Changes</Text>
+                  <MaterialIcons name="check" size={16} color="#FFFFFF" />
+                  <Text style={styles.modalSaveBtnText}>{t('common.save')}</Text>
                 </TouchableOpacity>
               </View>
             </View>
@@ -1307,11 +1577,13 @@ export function AttendanceTab({ accessToken }: AttendanceTabProps) {
             <View style={styles.iosDatePickerSheet}>
               <View style={styles.iosDatePickerHeader}>
                 <TouchableOpacity onPress={() => setShowDatePicker(false)}>
-                  <Text style={styles.iosDatePickerCancel}>Cancel</Text>
+                  <Text style={styles.iosDatePickerCancel}>{t('common.cancel')}</Text>
                 </TouchableOpacity>
-                <Text style={styles.iosDatePickerTitle}>Select Date</Text>
+                <Text style={styles.iosDatePickerTitle}>
+                  {language === 'hi' ? 'तारीख चुनें' : language === 'bn' ? 'তারিখ নির্বাচন করুন' : 'Select Date'}
+                </Text>
                 <TouchableOpacity onPress={() => setShowDatePicker(false)}>
-                  <Text style={styles.iosDatePickerDone}>Done</Text>
+                  <Text style={styles.iosDatePickerDone}>{t('common.confirm')}</Text>
                 </TouchableOpacity>
               </View>
               <DateTimePicker
@@ -1607,66 +1879,131 @@ const styles = StyleSheet.create({
   },
   workerCard: {
     backgroundColor: '#FFFFFF',
-    borderRadius: radii.lg,
-    padding: 14,
+    borderRadius: radii.md,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
     borderWidth: 1,
     borderColor: colors.border,
-    marginBottom: 10,
+    marginBottom: 8,
     ...shadows.sm,
   },
-  workerCardTop: {
+  workerCardMainRow: {
     flexDirection: 'row',
     alignItems: 'center',
   },
   workerAvatar: {
-    width: 38,
-    height: 38,
-    borderRadius: 19,
+    width: 36,
+    height: 36,
+    borderRadius: 18,
     backgroundColor: colors.primary,
     alignItems: 'center',
     justifyContent: 'center',
-    marginRight: 12,
+    marginRight: 10,
+    position: 'relative',
+    borderWidth: 1.5,
+    borderColor: 'transparent',
+  },
+  avatarPresent: {
+    borderColor: colors.success,
+  },
+  avatarHalfDay: {
+    borderColor: colors.warning,
+  },
+  avatarAbsent: {
+    borderColor: colors.error,
   },
   avatarText: {
-    fontSize: 16,
+    fontSize: 14,
     fontWeight: '800',
     color: '#FFFFFF',
   },
+  avatarStatusDot: {
+    position: 'absolute',
+    bottom: -1,
+    right: -1,
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    borderWidth: 1.5,
+    borderColor: '#FFFFFF',
+  },
+  dotPresent: {
+    backgroundColor: colors.success,
+  },
+  dotHalfDay: {
+    backgroundColor: colors.warning,
+  },
+  dotAbsent: {
+    backgroundColor: colors.error,
+  },
   workerInfo: {
     flex: 1,
+    marginRight: 8,
+    justifyContent: 'center',
   },
   workerName: {
-    fontSize: 15,
+    fontSize: 14,
     fontWeight: '700',
     color: colors.text,
   },
   workerMeta: {
     fontSize: 11,
     color: colors.textMuted,
-    marginTop: 2,
+    marginTop: 1,
     fontWeight: '500',
   },
-  editPencilBtn: {
+  quickMarkGroup: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 4,
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-    borderRadius: radii.pill,
-    backgroundColor: 'rgba(234, 88, 12, 0.1)',
+    gap: 5,
+  },
+  quickMarkBtn: {
+    width: 32,
+    height: 32,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: colors.surfaceMuted,
     borderWidth: 1,
-    borderColor: 'rgba(234, 88, 12, 0.3)',
+    borderColor: colors.border,
   },
-  editBtnText: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: colors.accent,
+  quickMarkText: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: colors.textMuted,
   },
-  statusPillLocked: {
-    opacity: 0.45,
+  btnPresentActive: {
+    backgroundColor: colors.success,
+    borderColor: colors.successDark,
   },
-  statusPillDisabled: {
-    opacity: 0.35,
+  btnHalfDayActive: {
+    backgroundColor: colors.warning,
+    borderColor: colors.warningDark,
+  },
+  btnAbsentActive: {
+    backgroundColor: colors.error,
+    borderColor: colors.errorDark,
+  },
+  quickMarkTextActive: {
+    color: '#FFFFFF',
+    fontWeight: '900',
+  },
+  quickMarkBtnMuted: {
+    opacity: 0.38,
+  },
+  quickMarkBtnDisabled: {
+    opacity: 0.3,
+  },
+  dropdownChevronBtn: {
+    width: 28,
+    height: 32,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 6,
+    marginLeft: 2,
+  },
+  dropdownChevronBtnActive: {
+    backgroundColor: colors.accentSoft,
   },
   btnDisabled: {
     opacity: 0.4,
@@ -1742,95 +2079,159 @@ const styles = StyleSheet.create({
     color: colors.accent,
     fontWeight: '700',
   },
-  statusToggleRow: {
-    flexDirection: 'row',
-    gap: 6,
-    marginTop: 10,
-    paddingTop: 10,
-    borderTopWidth: 1,
-    borderTopColor: colors.border,
-  },
-  statusPill: {
-    flex: 1,
-    paddingVertical: 8,
-    borderRadius: radii.md,
-    backgroundColor: colors.surfaceMuted,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 1,
-    borderColor: 'transparent',
-  },
-  statusPillText: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: colors.textMuted,
-  },
-  statusPresentActive: {
-    backgroundColor: colors.successLight,
-    borderColor: colors.success,
-  },
-  statusHalfDayActive: {
-    backgroundColor: colors.warningLight,
-    borderColor: colors.warning,
-  },
-  statusAbsentActive: {
-    backgroundColor: colors.errorLight,
-    borderColor: colors.error,
-  },
-  statusPillTextActive: {
-    color: colors.text,
-    fontWeight: '800',
-  },
-  punchRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
+  expandedDrawer: {
     marginTop: 8,
     paddingTop: 8,
     borderTopWidth: 1,
-    borderTopColor: colors.surfaceMuted,
+    borderTopColor: colors.border,
+    gap: 8,
   },
-  punchBtn: {
+  expandedInfoRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    flexWrap: 'wrap',
+  },
+  statusBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: radii.sm,
+    borderWidth: 1,
+  },
+  statusBadgePresent: {
+    backgroundColor: colors.successLight,
+    borderColor: '#A7F3D0',
+  },
+  statusBadgeHalfDay: {
+    backgroundColor: colors.warningLight,
+    borderColor: '#FDE68A',
+  },
+  statusBadgeAbsent: {
+    backgroundColor: colors.errorLight,
+    borderColor: '#FECACA',
+  },
+  statusBadgeUnmarked: {
+    backgroundColor: colors.surfaceMuted,
+    borderColor: colors.border,
+  },
+  statusBadgeText: {
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  textSuccessDark: {
+    color: colors.successDark,
+  },
+  textWarningDark: {
+    color: colors.warningDark,
+  },
+  textErrorDark: {
+    color: colors.errorDark,
+  },
+  textMutedDark: {
+    color: colors.textMuted,
+  },
+  expandedChip: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 4,
     backgroundColor: colors.surfaceMuted,
-    paddingHorizontal: 10,
-    paddingVertical: 5,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
     borderRadius: radii.sm,
     borderWidth: 1,
     borderColor: colors.border,
   },
-  punchBtnRecorded: {
+  expandedChipText: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: colors.textMuted,
+  },
+  expandedWageText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: colors.text,
+  },
+  expandedPunchRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  punchActionBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    backgroundColor: colors.surfaceMuted,
+    paddingVertical: 7,
+    paddingHorizontal: 10,
+    borderRadius: radii.sm,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  punchActionBtnActive: {
     backgroundColor: colors.successLight,
     borderColor: '#A7F3D0',
   },
-  punchBtnRecordedOut: {
+  punchActionBtnActiveOut: {
     backgroundColor: colors.accentLight,
     borderColor: '#FED7AA',
   },
-  punchBtnText: {
+  punchActionText: {
     fontSize: 11,
     fontWeight: '700',
     color: colors.textMuted,
   },
-  punchBtnTextRecorded: {
+  punchActionTextActive: {
     color: colors.successDark,
   },
-  punchBtnTextRecordedOut: {
+  punchActionTextActiveOut: {
     color: colors.accentDark,
   },
-  shiftTagPill: {
-    marginLeft: 'auto',
-    backgroundColor: colors.surfaceMuted,
+  expandedBottomRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingTop: 2,
+  },
+  expandedEditBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: radii.pill,
+    backgroundColor: 'rgba(234, 88, 12, 0.08)',
+    borderWidth: 1,
+    borderColor: 'rgba(234, 88, 12, 0.25)',
+  },
+  expandedEditBtnText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: colors.accent,
+  },
+  unmarkedHintText: {
+    fontSize: 11,
+    fontStyle: 'italic',
+    color: colors.textMuted,
+  },
+  workerPhoneChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
     paddingHorizontal: 8,
     paddingVertical: 4,
+    backgroundColor: colors.surfaceMuted,
     borderRadius: radii.sm,
+    marginLeft: 'auto',
   },
-  shiftTagPillText: {
-    fontSize: 10,
-    fontWeight: '700',
+  workerPhoneText: {
+    fontSize: 11,
     color: colors.textMuted,
+    fontWeight: '600',
   },
   modalOverlay: {
     flex: 1,
@@ -1956,5 +2357,60 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     fontWeight: '800',
     fontSize: 13,
+  },
+  wageCalculationCard: {
+    backgroundColor: '#F8FAFC',
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    padding: 12,
+    marginTop: 12,
+  },
+  wageCalcHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    marginBottom: 6,
+  },
+  wageCalcTitle: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: colors.primary,
+    letterSpacing: 0.5,
+  },
+  wageCalcRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    paddingVertical: 2,
+  },
+  wageCalcLabel: {
+    fontSize: 12,
+    color: colors.textMuted,
+  },
+  wageCalcVal: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: colors.text,
+  },
+  wageCalcDivider: {
+    height: 1,
+    backgroundColor: '#E2E8F0',
+    marginVertical: 6,
+  },
+  wageCalcRowTotal: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingTop: 2,
+  },
+  wageCalcTotalLabel: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: colors.primary,
+  },
+  wageCalcTotalVal: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: colors.successDark,
   },
 });

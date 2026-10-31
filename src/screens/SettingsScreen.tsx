@@ -1,4 +1,4 @@
-import React, { useState, useContext } from 'react';
+import React, { useState, useContext, useEffect, useCallback } from 'react';
 import {
   View,
   Text,
@@ -11,57 +11,304 @@ import {
   Modal,
   FlatList,
   Alert,
+  TextInput,
+  ActivityIndicator,
+  Share,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import * as LocalAuthentication from 'expo-local-authentication';
 import { AppContext, AppContextType } from '../context/AppContext';
 import Toast from 'react-native-toast-message';
 import { MaterialIcons } from '@expo/vector-icons';
-import { theme } from '@/styles/theme';
+import { theme, colors, shadows, radii } from '@/styles/theme';
 import { BrandLogo } from '@/components/shared/BrandLogo';
+import { useTranslation, SUPPORTED_LANGUAGES, LanguageOption } from '../i18n';
+import { projectId } from '@/utils/supabase/info';
 
-interface LanguageOption {
-  code: string;
-  label: string;
-  nativeLabel: string;
-}
-
-const LANGUAGES: LanguageOption[] = [
-  { code: 'en', label: 'English', nativeLabel: 'English' },
-  { code: 'hi', label: 'Hindi', nativeLabel: 'हिन्दी' },
-  { code: 'mr', label: 'Marathi', nativeLabel: 'मराठी' },
-  { code: 'gu', label: 'Gujarati', nativeLabel: 'ગુજરાતી' },
-  { code: 'kn', label: 'Kannada', nativeLabel: 'ಕನ್ನಡ' },
-];
+const SUPPORT_PHONE = '9835812224';
+const SUPPORT_PHONE_DISPLAY = '+91 98358 12224';
 
 export function SettingsScreen() {
   const context = useContext(AppContext) as AppContextType | null;
   const user = context?.user;
   const logout = context?.logout;
+  const { language, setLanguage, t, currentLanguageOption } = useTranslation();
 
+  // 1. Persistent Switch States
   const [isAppLockEnabled, setIsAppLockEnabled] = useState(false);
   const [isNotificationsEnabled, setIsNotificationsEnabled] = useState(true);
   const [isOfflineSyncEnabled, setIsOfflineSyncEnabled] = useState(true);
-  const [selectedLanguage, setSelectedLanguage] = useState(LANGUAGES[0]);
-  const [isLanguageModalOpen, setIsLanguageModalOpen] = useState(false);
 
-  const handleLanguageSelect = (lang: LanguageOption) => {
-    setSelectedLanguage(lang);
-    setIsLanguageModalOpen(false);
+  // 2. Modals Visibility
+  const [isLanguageModalOpen, setIsLanguageModalOpen] = useState(false);
+  const [isSupportModalOpen, setIsSupportModalOpen] = useState(false);
+  const [isEditProfileModalOpen, setIsEditProfileModalOpen] = useState(false);
+  const [isProModalOpen, setIsProModalOpen] = useState(false);
+  const [isComplianceModalOpen, setIsComplianceModalOpen] = useState(false);
+  const [isPrivacyModalOpen, setIsPrivacyModalOpen] = useState(false);
+  const [isTermsModalOpen, setIsTermsModalOpen] = useState(false);
+
+  // 3. Edit Profile Form State
+  const [editName, setEditName] = useState(user?.name || '');
+  const [editPhone, setEditPhone] = useState(user?.phone || '');
+  const [editEmail, setEditEmail] = useState(user?.email || '');
+  const [isSavingProfile, setIsSavingProfile] = useState(false);
+
+  // Load preferences from AsyncStorage on mount
+  useEffect(() => {
+    const loadPreferences = async () => {
+      try {
+        const [appLock, notifs, offlineSync] = await Promise.all([
+          AsyncStorage.getItem('@constlabour_app_lock'),
+          AsyncStorage.getItem('@constlabour_notifications'),
+          AsyncStorage.getItem('@constlabour_offline_sync'),
+        ]);
+
+        if (appLock !== null) setIsAppLockEnabled(appLock === 'true');
+        if (notifs !== null) setIsNotificationsEnabled(notifs === 'true');
+        if (offlineSync !== null) setIsOfflineSyncEnabled(offlineSync === 'true');
+      } catch (e) {
+        console.error('Failed to load local preferences:', e);
+      }
+    };
+    loadPreferences();
+  }, []);
+
+  // Sync profile form state when user changes
+  useEffect(() => {
+    if (user) {
+      setEditName(user.name || '');
+      setEditPhone(user.phone || '');
+      setEditEmail(user.email || '');
+    }
+  }, [user]);
+
+  // Preference Handlers with persistence & biometric security
+  const handleToggleAppLock = async (val: boolean) => {
+    try {
+      const hasHardware = await LocalAuthentication.hasHardwareAsync();
+      const isEnrolled = await LocalAuthentication.isEnrolledAsync();
+
+      if (val) {
+        if (!hasHardware) {
+          Alert.alert(
+            'Hardware Not Supported',
+            'Your device does not support biometric or device lock authentication.'
+          );
+          return;
+        }
+        if (!isEnrolled) {
+          Alert.alert(
+            'Security Lock Required',
+            'No fingerprint, Face ID, or device screen PIN is set up on this device. Please enable screen lock or biometrics in your phone Settings first.'
+          );
+          return;
+        }
+
+        const result = await LocalAuthentication.authenticateAsync({
+          promptMessage: 'Verify identity to enable App Lock',
+          fallbackLabel: 'Use Device PIN / Password',
+          disableDeviceFallback: false,
+        });
+
+        if (result.success) {
+          setIsAppLockEnabled(true);
+          await AsyncStorage.setItem('@constlabour_app_lock', 'true');
+          Toast.show({
+            type: 'success',
+            text1: 'App Lock Enabled',
+            text2: 'Fingerprint, Face ID or PIN required when opening app',
+          });
+        }
+      } else {
+        const result = await LocalAuthentication.authenticateAsync({
+          promptMessage: 'Verify identity to disable App Lock',
+          fallbackLabel: 'Use Device PIN / Password',
+          disableDeviceFallback: false,
+        });
+
+        if (result.success) {
+          setIsAppLockEnabled(false);
+          await AsyncStorage.setItem('@constlabour_app_lock', 'false');
+          Toast.show({
+            type: 'info',
+            text1: 'App Lock Disabled',
+            text2: 'Standard direct access restored',
+          });
+        }
+      }
+    } catch (e: any) {
+      console.error('App lock toggle error:', e);
+      Toast.show({
+        type: 'error',
+        text1: 'Authentication Error',
+        text2: e.message || 'Could not verify biometric identity',
+      });
+    }
+  };
+
+  const handleToggleNotifications = async (val: boolean) => {
+    setIsNotificationsEnabled(val);
+    await AsyncStorage.setItem('@constlabour_notifications', val ? 'true' : 'false');
     Toast.show({
       type: 'success',
-      text1: 'Language Updated',
-      text2: `Portal interface language set to ${lang.label} (${lang.nativeLabel})`,
+      text1: val ? 'Shift Alerts Active' : 'Alerts Muted',
+      text2: val ? 'Real-time attendance & wage notices enabled' : 'Notifications turned off',
     });
   };
 
+  const handleToggleOfflineSync = async (val: boolean) => {
+    setIsOfflineSyncEnabled(val);
+    await AsyncStorage.setItem('@constlabour_offline_sync', val ? 'true' : 'false');
+    Toast.show({
+      type: 'success',
+      text1: val ? 'Offline First Sync Active' : 'Offline Sync Disabled',
+      text2: val
+        ? 'Field shifts cached locally and synced when online'
+        : 'Direct internet connection required',
+    });
+  };
+
+  // Language Select Handler
+  const handleLanguageSelect = async (lang: LanguageOption) => {
+    await setLanguage(lang.code);
+    setIsLanguageModalOpen(false);
+    Toast.show({
+      type: 'success',
+      text1: t('common.success'),
+      text2: `${t('settings.chooseLanguage')}: ${lang.label} (${lang.nativeLabel})`,
+    });
+  };
+
+  // Profile Save Handler (using real backend endpoint PUT /auth/profile)
+  const handleSaveProfile = async () => {
+    if (!editName.trim()) {
+      Toast.show({
+        type: 'error',
+        text1: 'Validation Error',
+        text2: 'Please enter a valid full name',
+      });
+      return;
+    }
+
+    setIsSavingProfile(true);
+    try {
+      const { data: sessionData } = (await context?.supabase.auth.getSession()) || {};
+      const token = sessionData?.session?.access_token;
+
+      const res = await fetch(
+        `https://${projectId}.supabase.co/functions/v1/make-server-689d7d60/auth/profile`,
+        {
+          method: 'PUT',
+          headers: {
+            'Content-Type': 'application/json',
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          },
+          body: JSON.stringify({
+            name: editName.trim(),
+            email: editEmail.trim(),
+          }),
+        }
+      );
+
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to update profile');
+
+      // Refresh application context so headers & dashboards update immediately
+      if (context?.refreshUser) {
+        await context.refreshUser();
+      }
+
+      setIsEditProfileModalOpen(false);
+      Toast.show({
+        type: 'success',
+        text1: t('common.success'),
+        text2: t('settings.profileUpdated'),
+      });
+    } catch (err: any) {
+      console.error('Profile update error:', err);
+      Toast.show({
+        type: 'error',
+        text1: t('common.error'),
+        text2: err.message || 'Could not update profile',
+      });
+    } finally {
+      setIsSavingProfile(false);
+    }
+  };
+
+  // WhatsApp Support Launcher (Target: 9835812224)
+  const openWhatsAppSupport = async () => {
+    const supportMessage = `Hello ConstLabour Support, I need assistance with my account: ${
+      user?.name || ''
+    } (${user?.phone || user?.email || ''}).`;
+    const cleanNumber = `91${SUPPORT_PHONE}`;
+
+    // Universal web link works across all browsers & native app
+    const waUniversal = `https://wa.me/${cleanNumber}?text=${encodeURIComponent(supportMessage)}`;
+    const waAppUrl = `whatsapp://send?phone=${cleanNumber}&text=${encodeURIComponent(
+      supportMessage
+    )}`;
+
+    setIsSupportModalOpen(false);
+
+    try {
+      const canOpenApp = await Linking.canOpenURL(waAppUrl).catch(() => false);
+      if (canOpenApp) {
+        await Linking.openURL(waAppUrl);
+        return;
+      }
+      // Fallback to universal WhatsApp web link
+      await Linking.openURL(waUniversal);
+    } catch (err) {
+      console.error('WhatsApp redirect error:', err);
+      // Fallback to direct phone dialer
+      Linking.openURL(`tel:+91${SUPPORT_PHONE}`).catch(() => {
+        Toast.show({
+          type: 'info',
+          text1: 'Support Helpline',
+          text2: `WhatsApp / Call: ${SUPPORT_PHONE_DISPLAY}`,
+        });
+      });
+    }
+  };
+
+  // Direct Phone Call Launcher (Target: 9835812224)
+  const callSupportHelpline = () => {
+    setIsSupportModalOpen(false);
+    Linking.openURL(`tel:+91${SUPPORT_PHONE}`).catch(() => {
+      Toast.show({
+        type: 'info',
+        text1: 'Support Helpline',
+        text2: `Helpline: ${SUPPORT_PHONE_DISPLAY}`,
+      });
+    });
+  };
+
+  // Native Multi-App Referral Share
+  const handleReferFriend = async () => {
+    const shareMessage =
+      'Track site attendance, wage payouts, and generate statutory Form D/B with ConstLabour Pro. Download the app today: https://constlabour.com';
+    try {
+      await Share.share({
+        message: shareMessage,
+        title: 'Recommend ConstLabour Pro',
+      });
+    } catch (error) {
+      console.error('Sharing error:', error);
+    }
+  };
+
+  // Logout Confirmation
   const handleLogout = () => {
     Alert.alert(
-      'Sign Out of ConstLabour',
-      'Are you sure you want to log out of your session on this device?',
+      t('auth.logoutConfirmTitle'),
+      t('auth.logoutConfirmMessage'),
       [
-        { text: 'Cancel', style: 'cancel' },
+        { text: t('common.cancel'), style: 'cancel' },
         {
-          text: 'Sign Out',
+          text: t('auth.logout'),
           style: 'destructive',
           onPress: () => {
             if (logout) {
@@ -73,48 +320,8 @@ export function SettingsScreen() {
     );
   };
 
-  const handleReferFriend = async () => {
-    const shareMessage =
-      'Track site attendance, wage payouts, and generate statutory Form D/B with ConstLabour Pro. Download the app today: https://constlabour.com';
-    const whatsappUrl = `whatsapp://send?text=${encodeURIComponent(shareMessage)}`;
-
-    try {
-      const supported = await Linking.canOpenURL(whatsappUrl);
-      if (supported) {
-        await Linking.openURL(whatsappUrl);
-      } else {
-        Toast.show({
-          type: 'info',
-          text1: 'WhatsApp Not Installed',
-          text2: 'Could not open WhatsApp. Link copied to clipboard.',
-        });
-      }
-    } catch (error) {
-      console.error('Sharing error:', error);
-    }
-  };
-
-  const handleContactSupport = async () => {
-    const supportMessage = `Hello ConstLabour Support, I need assistance with account ${user?.email || user?.name || ''}.`;
-    const whatsappUrl = `whatsapp://send?phone=919876543210&text=${encodeURIComponent(supportMessage)}`;
-    try {
-      const supported = await Linking.canOpenURL(whatsappUrl);
-      if (supported) {
-        await Linking.openURL(whatsappUrl);
-      } else {
-        Toast.show({
-          type: 'info',
-          text1: 'Support Helpline',
-          text2: 'Helpline: +91 98765 43210 (9 AM - 7 PM)',
-        });
-      }
-    } catch (error) {
-      console.error('Support link error:', error);
-    }
-  };
-
   const renderLanguageItem = ({ item }: { item: LanguageOption }) => {
-    const isSelected = item.code === selectedLanguage.code;
+    const isSelected = item.code === language;
     return (
       <TouchableOpacity
         style={[styles.langItem, isSelected && styles.langItemActive]}
@@ -126,7 +333,7 @@ export function SettingsScreen() {
             {item.nativeLabel}
           </Text>
           <Text style={[styles.langLabelText, isSelected && styles.langLabelTextActive]}>
-            {item.label}
+            {item.label} {item.subLabel ? `• ${item.subLabel}` : ''}
           </Text>
         </View>
         {isSelected ? (
@@ -145,8 +352,8 @@ export function SettingsScreen() {
       {/* Top Header */}
       <View style={styles.headerRow}>
         <View>
-          <Text style={styles.headerTitle}>Account & Settings</Text>
-          <Text style={styles.headerSubtitle}>System configuration, security & compliance</Text>
+          <Text style={styles.headerTitle}>{t('settings.title')}</Text>
+          <Text style={styles.headerSubtitle}>{t('settings.subtitle')}</Text>
         </View>
 
         {/* Language Selection Pill */}
@@ -156,23 +363,16 @@ export function SettingsScreen() {
           activeOpacity={0.75}
         >
           <MaterialIcons name="language" size={15} color={theme.colors.safetyOrange} />
-          <Text style={styles.langToggleText}>
-            {selectedLanguage.code.toUpperCase()}
-          </Text>
+          <Text style={styles.langToggleText}>{currentLanguageOption.nativeLabel}</Text>
         </TouchableOpacity>
       </View>
 
-      <ScrollView
-        contentContainerStyle={styles.scrollContent}
-        showsVerticalScrollIndicator={false}
-      >
-        {/* 1. CONTRACTOR IDENTITY HERO CARD */}
+      <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
+        {/* 1. CONTRACTOR IDENTITY HERO CARD WITH EDIT ACTION */}
         <View style={styles.profileHeroCard}>
           <View style={styles.heroTopRow}>
             <View style={styles.avatarBox}>
-              <Text style={styles.avatarText}>
-                {(user?.name || 'C').charAt(0).toUpperCase()}
-              </Text>
+              <Text style={styles.avatarText}>{(user?.name || 'C').charAt(0).toUpperCase()}</Text>
             </View>
             <View style={styles.heroTexts}>
               <View style={styles.nameBadgeRow}>
@@ -187,23 +387,32 @@ export function SettingsScreen() {
                 {user?.email || 'admin@constlabour.com'}
               </Text>
               {user?.phone ? (
-                <Text style={styles.profilePhone}>
-                  📱 +91 {user.phone}
-                </Text>
+                <Text style={styles.profilePhone}>📱 +91 {user.phone}</Text>
               ) : null}
             </View>
+
+            {/* Quick Edit Profile Button */}
+            <TouchableOpacity
+              style={styles.editHeroPill}
+              onPress={() => setIsEditProfileModalOpen(true)}
+              activeOpacity={0.75}
+            >
+              <MaterialIcons name="edit" size={16} color={colors.accent} />
+            </TouchableOpacity>
           </View>
 
           <View style={styles.complianceRibbon}>
             <MaterialIcons name="verified-user" size={14} color={theme.colors.emerald[600]} />
-            <Text style={styles.complianceText}>
-              Labour Code 2020 Compliant • Verified Entity
-            </Text>
+            <Text style={styles.complianceText}>{t('settings.complianceRibbon')}</Text>
           </View>
         </View>
 
-        {/* 2. CONSTLABOUR PRO ENTERPRISE PASS */}
-        <View style={styles.proCard}>
+        {/* 2. CONSTLABOUR PRO ENTERPRISE PASS (INTERACTIVE) */}
+        <TouchableOpacity
+          style={styles.proCard}
+          onPress={() => setIsProModalOpen(true)}
+          activeOpacity={0.85}
+        >
           <View style={styles.proLeft}>
             <View style={styles.proBadgeIcon}>
               <MaterialIcons name="star" size={20} color="#ffffff" />
@@ -212,18 +421,17 @@ export function SettingsScreen() {
               <View style={styles.proTitleRow}>
                 <Text style={styles.proTitle}>ConstLabour Pro Enterprise</Text>
                 <View style={styles.proActiveTag}>
-                  <Text style={styles.proActiveTagText}>ACTIVE</Text>
+                  <Text style={styles.proActiveTagText}>{t('settings.enterprisePass')}</Text>
                 </View>
               </View>
-              <Text style={styles.proSubtitle}>
-                Automated Form D/B Registers • Direct UPI Disbursals
-              </Text>
+              <Text style={styles.proSubtitle}>{t('dashboard.complianceBadge')}</Text>
             </View>
+            <MaterialIcons name="chevron-right" size={20} color="#94A3B8" />
           </View>
-        </View>
+        </TouchableOpacity>
 
-        {/* 3. SECTION: PREFERENCES & DISPLAY */}
-        <Text style={styles.sectionLabel}>System Preferences</Text>
+        {/* 3. SECTION: SYSTEM PREFERENCES & CONTROLS */}
+        <Text style={styles.sectionLabel}>{t('settings.systemPreferences')}</Text>
         <View style={styles.cardGroup}>
           {/* Row 1: App Interface Language */}
           <TouchableOpacity
@@ -236,9 +444,9 @@ export function SettingsScreen() {
                 <MaterialIcons name="translate" size={18} color={theme.colors.slate[700]} />
               </View>
               <View style={styles.rowTexts}>
-                <Text style={styles.rowTitle}>Language / भाषा</Text>
+                <Text style={styles.rowTitle}>{t('settings.language')}</Text>
                 <Text style={styles.rowSubTitle}>
-                  {selectedLanguage.nativeLabel} ({selectedLanguage.label})
+                  {currentLanguageOption.nativeLabel} ({currentLanguageOption.label})
                 </Text>
               </View>
             </View>
@@ -256,15 +464,13 @@ export function SettingsScreen() {
                 <MaterialIcons name="fingerprint" size={18} color={theme.colors.slate[700]} />
               </View>
               <View style={styles.rowTexts}>
-                <Text style={styles.rowTitle}>Biometric App Lock</Text>
-                <Text style={styles.rowSubTitle}>
-                  {Platform.OS === 'ios' ? 'Face ID / Touch ID on launch' : 'Fingerprint security on launch'}
-                </Text>
+                <Text style={styles.rowTitle}>{t('settings.appLock')}</Text>
+                <Text style={styles.rowSubTitle}>{t('settings.appLockSub')}</Text>
               </View>
             </View>
             <Switch
               value={isAppLockEnabled}
-              onValueChange={setIsAppLockEnabled}
+              onValueChange={handleToggleAppLock}
               trackColor={{ false: theme.colors.slate[300], true: theme.colors.safetyOrange }}
               thumbColor="#ffffff"
             />
@@ -276,16 +482,20 @@ export function SettingsScreen() {
           <View style={styles.rowItem}>
             <View style={styles.rowLeft}>
               <View style={styles.iconCircleSlate}>
-                <MaterialIcons name="notifications-none" size={18} color={theme.colors.slate[700]} />
+                <MaterialIcons
+                  name="notifications-none"
+                  size={18}
+                  color={theme.colors.slate[700]}
+                />
               </View>
               <View style={styles.rowTexts}>
-                <Text style={styles.rowTitle}>Attendance & Shift Alerts</Text>
-                <Text style={styles.rowSubTitle}>Notify upon shift check-in or duty updates</Text>
+                <Text style={styles.rowTitle}>{t('settings.notifications')}</Text>
+                <Text style={styles.rowSubTitle}>{t('settings.notificationsSub')}</Text>
               </View>
             </View>
             <Switch
               value={isNotificationsEnabled}
-              onValueChange={setIsNotificationsEnabled}
+              onValueChange={handleToggleNotifications}
               trackColor={{ false: theme.colors.slate[300], true: theme.colors.emerald[500] }}
               thumbColor="#ffffff"
             />
@@ -300,13 +510,13 @@ export function SettingsScreen() {
                 <MaterialIcons name="cloud-sync" size={18} color={theme.colors.slate[700]} />
               </View>
               <View style={styles.rowTexts}>
-                <Text style={styles.rowTitle}>Offline First Sync</Text>
-                <Text style={styles.rowSubTitle}>Store attendance offline & push when connected</Text>
+                <Text style={styles.rowTitle}>{t('settings.offlineSync')}</Text>
+                <Text style={styles.rowSubTitle}>{t('settings.offlineSyncSub')}</Text>
               </View>
             </View>
             <Switch
               value={isOfflineSyncEnabled}
-              onValueChange={setIsOfflineSyncEnabled}
+              onValueChange={handleToggleOfflineSync}
               trackColor={{ false: theme.colors.slate[300], true: theme.colors.safetyOrange }}
               thumbColor="#ffffff"
             />
@@ -314,27 +524,21 @@ export function SettingsScreen() {
         </View>
 
         {/* 4. SECTION: STATUTORY & LEGAL COMPLIANCE */}
-        <Text style={styles.sectionLabel}>Statutory Compliance & Legal</Text>
+        <Text style={styles.sectionLabel}>{t('reports.statutoryCompliance')}</Text>
         <View style={styles.cardGroup}>
-          {/* Row 1: Labour Code 2020 */}
+          {/* Row 1: Labour Code 2020 Guidelines */}
           <TouchableOpacity
             style={styles.rowItem}
             activeOpacity={0.65}
-            onPress={() => {
-              Toast.show({
-                type: 'info',
-                text1: 'Statutory Guidelines',
-                text2: 'Muster rolls formatted to Contract Labour (R&A) Act 1970 standards.',
-              });
-            }}
+            onPress={() => setIsComplianceModalOpen(true)}
           >
             <View style={styles.rowLeft}>
               <View style={styles.iconCircleEmerald}>
                 <MaterialIcons name="gavel" size={18} color={theme.colors.emerald[700]} />
               </View>
               <View style={styles.rowTexts}>
-                <Text style={styles.rowTitle}>Labour Law Standards (Form D & B)</Text>
-                <Text style={styles.rowSubTitle}>Compliant statutory muster format</Text>
+                <Text style={styles.rowTitle}>{t('dashboard.complianceBadge')}</Text>
+                <Text style={styles.rowSubTitle}>{t('dashboard.complianceSub')}</Text>
               </View>
             </View>
             <MaterialIcons name="chevron-right" size={20} color={theme.colors.slate[400]} />
@@ -346,17 +550,15 @@ export function SettingsScreen() {
           <TouchableOpacity
             style={styles.rowItem}
             activeOpacity={0.65}
-            onPress={() => {
-              Linking.openURL('https://constlabour.com/privacy').catch(() => {});
-            }}
+            onPress={() => setIsPrivacyModalOpen(true)}
           >
             <View style={styles.rowLeft}>
               <View style={styles.iconCircleSlate}>
                 <MaterialIcons name="shield" size={18} color={theme.colors.slate[700]} />
               </View>
               <View style={styles.rowTexts}>
-                <Text style={styles.rowTitle}>Privacy Policy & Data Security</Text>
-                <Text style={styles.rowSubTitle}>Encrypted Aadhaar & wage records</Text>
+                <Text style={styles.rowTitle}>{t('settings.privacyPolicy')}</Text>
+                <Text style={styles.rowSubTitle}>{t('settings.privacyPolicySub')}</Text>
               </View>
             </View>
             <MaterialIcons name="chevron-right" size={20} color={theme.colors.slate[400]} />
@@ -368,30 +570,28 @@ export function SettingsScreen() {
           <TouchableOpacity
             style={styles.rowItem}
             activeOpacity={0.65}
-            onPress={() => {
-              Linking.openURL('https://constlabour.com/terms').catch(() => {});
-            }}
+            onPress={() => setIsTermsModalOpen(true)}
           >
             <View style={styles.rowLeft}>
               <View style={styles.iconCircleSlate}>
                 <MaterialIcons name="menu-book" size={18} color={theme.colors.slate[700]} />
               </View>
               <View style={styles.rowTexts}>
-                <Text style={styles.rowTitle}>Terms of Service</Text>
-                <Text style={styles.rowSubTitle}>Contractor software licensing terms</Text>
+                <Text style={styles.rowTitle}>{t('settings.terms')}</Text>
+                <Text style={styles.rowSubTitle}>{t('settings.termsSub')}</Text>
               </View>
             </View>
             <MaterialIcons name="chevron-right" size={20} color={theme.colors.slate[400]} />
           </TouchableOpacity>
         </View>
 
-        {/* 5. SECTION: SUPPORT & COMMUNITY */}
-        <Text style={styles.sectionLabel}>Help & Contractor Community</Text>
+        {/* 5. SECTION: SUPPORT & COMMUNITY (WHATSAPP 9835812224) */}
+        <Text style={styles.sectionLabel}>{t('settings.support')}</Text>
         <View style={styles.cardGroup}>
-          {/* Row 1: 24/7 WhatsApp Field Support */}
+          {/* Row 1: WhatsApp Support (Redirects to 9835812224) */}
           <TouchableOpacity
             style={styles.rowItem}
-            onPress={handleContactSupport}
+            onPress={() => setIsSupportModalOpen(true)}
             activeOpacity={0.65}
           >
             <View style={styles.rowLeft}>
@@ -399,8 +599,10 @@ export function SettingsScreen() {
                 <MaterialIcons name="support-agent" size={18} color="#059669" />
               </View>
               <View style={styles.rowTexts}>
-                <Text style={styles.rowTitle}>24/7 WhatsApp Field Support</Text>
-                <Text style={styles.rowSubTitle}>Direct chat with labor desk specialists</Text>
+                <Text style={styles.rowTitle}>{t('settings.support')}</Text>
+                <Text style={styles.rowSubTitle}>
+                  {SUPPORT_PHONE_DISPLAY} • {t('settings.supportSub')}
+                </Text>
               </View>
             </View>
             <MaterialIcons name="chevron-right" size={20} color={theme.colors.slate[400]} />
@@ -415,12 +617,17 @@ export function SettingsScreen() {
             activeOpacity={0.65}
           >
             <View style={styles.rowLeft}>
-              <View style={[styles.iconCircleSlate, { backgroundColor: theme.colors.safetyOrangeLight }]}>
+              <View
+                style={[
+                  styles.iconCircleSlate,
+                  { backgroundColor: theme.colors.safetyOrangeLight },
+                ]}
+              >
                 <MaterialIcons name="share" size={18} color={theme.colors.safetyOrange} />
               </View>
               <View style={styles.rowTexts}>
-                <Text style={styles.rowTitle}>Share App with Contractors</Text>
-                <Text style={styles.rowSubTitle}>Recommend ConstLabour to site managers</Text>
+                <Text style={styles.rowTitle}>{t('settings.referFriend')}</Text>
+                <Text style={styles.rowSubTitle}>{t('settings.referFriendSub')}</Text>
               </View>
             </View>
             <MaterialIcons name="chevron-right" size={20} color={theme.colors.slate[400]} />
@@ -428,27 +635,414 @@ export function SettingsScreen() {
         </View>
 
         {/* 6. SIGN OUT BUTTON */}
-        <TouchableOpacity
-          style={styles.logoutButton}
-          onPress={handleLogout}
-          activeOpacity={0.8}
-        >
+        <TouchableOpacity style={styles.logoutButton} onPress={handleLogout} activeOpacity={0.8}>
           <MaterialIcons name="logout" size={18} color={theme.colors.red[600]} />
-          <Text style={styles.logoutButtonText}>Sign Out from ConstLabour</Text>
+          <Text style={styles.logoutButtonText}>{t('auth.logout')}</Text>
         </TouchableOpacity>
 
         {/* 7. FOOTER BRAND LOGO & SYSTEM INFO */}
         <View style={styles.footerBrand}>
           <BrandLogo size={42} showText={true} />
-          <Text style={styles.versionText}>Version 2.4.0 (Industrial Swiss Edition)</Text>
+          <Text style={styles.versionText}>{t('settings.version')}</Text>
           <View style={styles.secureBadge}>
             <MaterialIcons name="security" size={13} color={theme.colors.emerald[600]} />
-            <Text style={styles.secureText}>256-Bit Encrypted Data • Made in India 🇮🇳</Text>
+            <Text style={styles.secureText}>
+              {language === 'hi'
+                ? '256-बिट एन्क्रिप्टेड डेटा • भारत में निर्मित 🇮🇳'
+                : language === 'bn'
+                ? '২৫৬-বিট এনক্রিপ্ট করা ডেটা • ভারতে নির্মিত 🇮🇳'
+                : '256-Bit Encrypted Data • Made in India 🇮🇳'}
+            </Text>
           </View>
         </View>
       </ScrollView>
 
-      {/* Language Selection Modal */}
+      {/* ======================================================== */}
+      {/* MODAL 1: WHATSAPP & PHONE SUPPORT MODAL (9835812224) */}
+      {/* ======================================================== */}
+      <Modal
+        visible={isSupportModalOpen}
+        transparent={true}
+        animationType="fade"
+        onRequestClose={() => setIsSupportModalOpen(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <View style={styles.modalHeaderRow}>
+              <View>
+                <Text style={styles.modalHeaderTitle}>{t('settings.supportModalTitle')}</Text>
+                <Text style={styles.modalHeaderSubtitle}>
+                  {SUPPORT_PHONE_DISPLAY} (Mon - Sat, 9 AM - 8 PM)
+                </Text>
+              </View>
+              <TouchableOpacity
+                onPress={() => setIsSupportModalOpen(false)}
+                style={styles.modalCloseCircle}
+              >
+                <MaterialIcons name="close" size={18} color={theme.colors.slate[600]} />
+              </TouchableOpacity>
+            </View>
+
+            <View style={{ padding: 20, gap: 12 }}>
+              {/* WhatsApp Option */}
+              <TouchableOpacity
+                style={styles.supportWaBtn}
+                onPress={openWhatsAppSupport}
+                activeOpacity={0.85}
+              >
+                <MaterialIcons name="chat" size={20} color="#FFFFFF" />
+                <View style={{ flex: 1, marginLeft: 10 }}>
+                  <Text style={styles.supportWaTitle}>{t('settings.chatWhatsApp')}</Text>
+                  <Text style={styles.supportWaSub}>Instant Chat with Labor Specialist</Text>
+                </View>
+                <MaterialIcons name="arrow-forward" size={18} color="#FFFFFF" />
+              </TouchableOpacity>
+
+              {/* Direct Call Option */}
+              <TouchableOpacity
+                style={styles.supportCallBtn}
+                onPress={callSupportHelpline}
+                activeOpacity={0.85}
+              >
+                <MaterialIcons name="phone" size={20} color={colors.primary} />
+                <View style={{ flex: 1, marginLeft: 10 }}>
+                  <Text style={styles.supportCallTitle}>{t('settings.callSupport')}</Text>
+                  <Text style={styles.supportCallSub}>Direct Voice Call Helpline</Text>
+                </View>
+                <MaterialIcons name="arrow-forward" size={18} color={colors.primary} />
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* ======================================================== */}
+      {/* MODAL 2: EDIT PROFILE MODAL */}
+      {/* ======================================================== */}
+      <Modal
+        visible={isEditProfileModalOpen}
+        transparent={true}
+        animationType="fade"
+        onRequestClose={() => setIsEditProfileModalOpen(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <View style={styles.modalHeaderRow}>
+              <View>
+                <Text style={styles.modalHeaderTitle}>{t('settings.editProfile')}</Text>
+                <Text style={styles.modalHeaderSubtitle}>Update contractor identity & contact</Text>
+              </View>
+              <TouchableOpacity
+                onPress={() => setIsEditProfileModalOpen(false)}
+                style={styles.modalCloseCircle}
+              >
+                <MaterialIcons name="close" size={18} color={theme.colors.slate[600]} />
+              </TouchableOpacity>
+            </View>
+
+            <View style={{ padding: 20, gap: 14 }}>
+              <View>
+                <Text style={styles.inputLabel}>{t('forms.fullName')}</Text>
+                <TextInput
+                  style={styles.textInput}
+                  value={editName}
+                  onChangeText={setEditName}
+                  placeholder="Enter full name / organization"
+                  placeholderTextColor={colors.textMuted}
+                />
+              </View>
+
+              <View>
+                <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
+                  <Text style={styles.inputLabel}>{t('forms.mobileNumber')}</Text>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: '#F1F5F9', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 }}>
+                    <MaterialIcons name="lock" size={12} color="#64748B" />
+                    <Text style={{ fontSize: 11, color: '#64748B', fontWeight: '600' }}>Non-editable</Text>
+                  </View>
+                </View>
+                <TextInput
+                  style={[styles.textInput, { backgroundColor: '#F1F5F9', color: '#64748B', borderColor: '#CBD5E1' }]}
+                  value={editPhone}
+                  editable={false}
+                  placeholder="10-digit mobile number"
+                  placeholderTextColor={colors.textMuted}
+                  keyboardType="phone-pad"
+                  maxLength={10}
+                />
+                <Text style={{ fontSize: 11, color: '#94A3B8', marginTop: 4 }}>
+                  Mobile number is locked to your verified account identity.
+                </Text>
+              </View>
+
+              <View>
+                <Text style={styles.inputLabel}>{t('forms.emailAddress')}</Text>
+                <TextInput
+                  style={[styles.textInput, { backgroundColor: '#F8FAFC' }]}
+                  value={editEmail}
+                  onChangeText={setEditEmail}
+                  placeholder="contractor@domain.com"
+                  placeholderTextColor={colors.textMuted}
+                  keyboardType="email-address"
+                  autoCapitalize="none"
+                />
+              </View>
+
+              <View style={styles.modalActionButtons}>
+                <TouchableOpacity
+                  style={styles.cancelModalBtn}
+                  onPress={() => setIsEditProfileModalOpen(false)}
+                  activeOpacity={0.8}
+                >
+                  <Text style={styles.cancelModalBtnText}>{t('common.cancel')}</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={styles.saveModalBtn}
+                  onPress={handleSaveProfile}
+                  disabled={isSavingProfile}
+                  activeOpacity={0.85}
+                >
+                  {isSavingProfile ? (
+                    <ActivityIndicator size="small" color="#FFFFFF" />
+                  ) : (
+                    <Text style={styles.saveModalBtnText}>{t('forms.saveChanges')}</Text>
+                  )}
+                </TouchableOpacity>
+              </View>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* ======================================================== */}
+      {/* MODAL 3: PRO ENTERPRISE PASS DETAILS */}
+      {/* ======================================================== */}
+      <Modal
+        visible={isProModalOpen}
+        transparent={true}
+        animationType="fade"
+        onRequestClose={() => setIsProModalOpen(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <View style={styles.modalHeaderRow}>
+              <View>
+                <Text style={styles.modalHeaderTitle}>ConstLabour Pro Enterprise</Text>
+                <Text style={styles.modalHeaderSubtitle}>Industrial License Details</Text>
+              </View>
+              <TouchableOpacity
+                onPress={() => setIsProModalOpen(false)}
+                style={styles.modalCloseCircle}
+              >
+                <MaterialIcons name="close" size={18} color={theme.colors.slate[600]} />
+              </TouchableOpacity>
+            </View>
+
+            <View style={{ padding: 20 }}>
+              <View style={styles.proBadgeRow}>
+                <MaterialIcons name="workspace-premium" size={28} color={colors.accent} />
+                <View style={{ marginLeft: 12, flex: 1 }}>
+                  <Text style={{ fontSize: 16, fontWeight: '800', color: colors.primary }}>
+                    Active Enterprise Tier
+                  </Text>
+                  <Text style={{ fontSize: 11, color: colors.success, fontWeight: '700' }}>
+                    ● Lifetime Active Field License
+                  </Text>
+                </View>
+              </View>
+
+              <View style={styles.featureList}>
+                <View style={styles.featureItem}>
+                  <MaterialIcons name="check-circle" size={16} color={colors.success} />
+                  <Text style={styles.featureItemText}>Unlimited Construction Sites & Workers</Text>
+                </View>
+                <View style={styles.featureItem}>
+                  <MaterialIcons name="check-circle" size={16} color={colors.success} />
+                  <Text style={styles.featureItemText}>
+                    Labour Code 2020 Form A, B & D PDF Exports
+                  </Text>
+                </View>
+                <View style={styles.featureItem}>
+                  <MaterialIcons name="check-circle" size={16} color={colors.success} />
+                  <Text style={styles.featureItemText}>Direct UPI & Bank Wage Disbursements</Text>
+                </View>
+                <View style={styles.featureItem}>
+                  <MaterialIcons name="check-circle" size={16} color={colors.success} />
+                  <Text style={styles.featureItemText}>
+                    Priority 24/7 WhatsApp Desk (+91 98358 12224)
+                  </Text>
+                </View>
+              </View>
+
+              <TouchableOpacity
+                style={styles.proCloseBtn}
+                onPress={() => setIsProModalOpen(false)}
+                activeOpacity={0.85}
+              >
+                <Text style={styles.proCloseBtnText}>{t('common.close')}</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* ======================================================== */}
+      {/* MODAL 4: STATUTORY LABOUR CODE COMPLIANCE MODAL */}
+      {/* ======================================================== */}
+      <Modal
+        visible={isComplianceModalOpen}
+        transparent={true}
+        animationType="fade"
+        onRequestClose={() => setIsComplianceModalOpen(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <View style={styles.modalHeaderRow}>
+              <View>
+                <Text style={styles.modalHeaderTitle}>{t('dashboard.complianceBadge')}</Text>
+                <Text style={styles.modalHeaderSubtitle}>Official Statutory Guidelines</Text>
+              </View>
+              <TouchableOpacity
+                onPress={() => setIsComplianceModalOpen(false)}
+                style={styles.modalCloseCircle}
+              >
+                <MaterialIcons name="close" size={18} color={theme.colors.slate[600]} />
+              </TouchableOpacity>
+            </View>
+
+            <ScrollView style={{ maxHeight: 360, padding: 18 }} showsVerticalScrollIndicator={false}>
+              <View style={styles.guidelineCard}>
+                <Text style={styles.guidelineHeading}>Code on Wages, 2019 (Section 43)</Text>
+                <Text style={styles.guidelineBody}>
+                  Mandates all registered contractors to maintain electronic registers of wages
+                  (Form B) and attendance muster rolls (Form A), ensuring itemized wage slip
+                  delivery.
+                </Text>
+              </View>
+
+              <View style={styles.guidelineCard}>
+                <Text style={styles.guidelineHeading}>Working Hours & Overtime Regulation</Text>
+                <Text style={styles.guidelineBody}>
+                  Standard daily shift limit is 8 hours (48 hours/week). Overtime is calculated at
+                  200% (2x) the standard hourly wage rate.
+                </Text>
+              </View>
+
+              <View style={styles.guidelineCard}>
+                <Text style={styles.guidelineHeading}>Contract Labour (R&A) Act, 1970</Text>
+                <Text style={styles.guidelineBody}>
+                  Requires digital proof of wage disbursement through UPI or Bank Transfer to
+                  protect contractor indemnification.
+                </Text>
+              </View>
+
+              <TouchableOpacity
+                style={[styles.proCloseBtn, { marginTop: 12, marginBottom: 16 }]}
+                onPress={() => setIsComplianceModalOpen(false)}
+                activeOpacity={0.85}
+              >
+                <Text style={styles.proCloseBtnText}>{t('common.close')}</Text>
+              </TouchableOpacity>
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
+
+      {/* ======================================================== */}
+      {/* MODAL 5: PRIVACY POLICY & DATA SECURITY */}
+      {/* ======================================================== */}
+      <Modal
+        visible={isPrivacyModalOpen}
+        transparent={true}
+        animationType="fade"
+        onRequestClose={() => setIsPrivacyModalOpen(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <View style={styles.modalHeaderRow}>
+              <View>
+                <Text style={styles.modalHeaderTitle}>{t('settings.privacyPolicy')}</Text>
+                <Text style={styles.modalHeaderSubtitle}>DPDP Act 2023 Compliant Storage</Text>
+              </View>
+              <TouchableOpacity
+                onPress={() => setIsPrivacyModalOpen(false)}
+                style={styles.modalCloseCircle}
+              >
+                <MaterialIcons name="close" size={18} color={theme.colors.slate[600]} />
+              </TouchableOpacity>
+            </View>
+
+            <ScrollView style={{ maxHeight: 360, padding: 18 }} showsVerticalScrollIndicator={false}>
+              <Text style={styles.legalBody}>
+                ConstLabour Pro employs AES-256 bit encryption for all contractor and worker
+                records. Worker Aadhaar numbers are cryptographically hashed using SHA-256 with
+                only the final 4 digits displayed for verification.
+              </Text>
+              <Text style={styles.legalBody}>
+                Geolocation data is captured solely during shift check-in and check-out to verify
+                site geofencing limits and is never shared with third parties.
+              </Text>
+              <TouchableOpacity
+                style={[styles.proCloseBtn, { marginTop: 14, marginBottom: 16 }]}
+                onPress={() => setIsPrivacyModalOpen(false)}
+                activeOpacity={0.85}
+              >
+                <Text style={styles.proCloseBtnText}>{t('common.close')}</Text>
+              </TouchableOpacity>
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
+
+      {/* ======================================================== */}
+      {/* MODAL 6: TERMS OF SERVICE */}
+      {/* ======================================================== */}
+      <Modal
+        visible={isTermsModalOpen}
+        transparent={true}
+        animationType="fade"
+        onRequestClose={() => setIsTermsModalOpen(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <View style={styles.modalHeaderRow}>
+              <View>
+                <Text style={styles.modalHeaderTitle}>{t('settings.terms')}</Text>
+                <Text style={styles.modalHeaderSubtitle}>Software Service & Usage Terms</Text>
+              </View>
+              <TouchableOpacity
+                onPress={() => setIsTermsModalOpen(false)}
+                style={styles.modalCloseCircle}
+              >
+                <MaterialIcons name="close" size={18} color={theme.colors.slate[600]} />
+              </TouchableOpacity>
+            </View>
+
+            <ScrollView style={{ maxHeight: 360, padding: 18 }} showsVerticalScrollIndicator={false}>
+              <Text style={styles.legalBody}>
+                By using ConstLabour Pro, the contractor confirms authorization to manage site
+                attendances, calculate statutory deductions, and process worker wages.
+              </Text>
+              <Text style={styles.legalBody}>
+                The platform generates official statutory registers in accordance with applicable
+                Indian labour legislation. Contractors are responsible for ensuring timely wage
+                settlements.
+              </Text>
+              <TouchableOpacity
+                style={[styles.proCloseBtn, { marginTop: 14, marginBottom: 16 }]}
+                onPress={() => setIsTermsModalOpen(false)}
+                activeOpacity={0.85}
+              >
+                <Text style={styles.proCloseBtnText}>{t('common.close')}</Text>
+              </TouchableOpacity>
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
+
+      {/* ======================================================== */}
+      {/* MODAL 7: LANGUAGE SELECTION MODAL */}
+      {/* ======================================================== */}
       <Modal
         visible={isLanguageModalOpen}
         transparent={true}
@@ -459,8 +1053,12 @@ export function SettingsScreen() {
           <View style={styles.modalContent}>
             <View style={styles.modalHeaderRow}>
               <View>
-                <Text style={styles.modalHeaderTitle}>Select Language</Text>
-                <Text style={styles.modalHeaderSubtitle}>Choose your preferred interface language</Text>
+                <Text style={styles.modalHeaderTitle}>
+                  {t('settings.selectLanguageModalTitle')}
+                </Text>
+                <Text style={styles.modalHeaderSubtitle}>
+                  {t('settings.selectLanguageModalSubtitle')}
+                </Text>
               </View>
               <TouchableOpacity
                 onPress={() => setIsLanguageModalOpen(false)}
@@ -471,7 +1069,7 @@ export function SettingsScreen() {
             </View>
 
             <FlatList
-              data={LANGUAGES}
+              data={SUPPORTED_LANGUAGES}
               renderItem={renderLanguageItem}
               keyExtractor={(item) => item.code}
               contentContainerStyle={{ paddingVertical: 8 }}
@@ -484,6 +1082,9 @@ export function SettingsScreen() {
   );
 }
 
+// ==========================================
+// STYLES
+// ==========================================
 const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
@@ -574,6 +1175,13 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     color: theme.colors.slate[900],
     flex: 1,
+  },
+  editHeroPill: {
+    padding: 8,
+    borderRadius: radii.md,
+    backgroundColor: colors.surfaceSubtle,
+    borderWidth: 1,
+    borderColor: colors.border,
   },
   roleTag: {
     backgroundColor: theme.colors.safetyOrangeLight,
@@ -857,5 +1465,156 @@ const styles = StyleSheet.create({
     height: 1,
     backgroundColor: theme.colors.slate[100],
     marginHorizontal: 16,
+  },
+  // WhatsApp Support Modal Styles
+  supportWaBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#10B981',
+    borderRadius: radii.lg,
+    padding: 14,
+    ...shadows.sm,
+  },
+  supportWaTitle: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: '#FFFFFF',
+  },
+  supportWaSub: {
+    fontSize: 11,
+    color: '#ECFDF5',
+    marginTop: 1,
+  },
+  supportCallBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: colors.surfaceSubtle,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: radii.lg,
+    padding: 14,
+  },
+  supportCallTitle: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: colors.primary,
+  },
+  supportCallSub: {
+    fontSize: 11,
+    color: colors.textMuted,
+    marginTop: 1,
+  },
+  // Edit Profile Modal Styles
+  inputLabel: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: colors.textMuted,
+    marginBottom: 6,
+    textTransform: 'uppercase',
+  },
+  textInput: {
+    backgroundColor: colors.surfaceSubtle,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: radii.md,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    fontSize: 14,
+    color: colors.text,
+    fontWeight: '600',
+  },
+  modalActionButtons: {
+    flexDirection: 'row',
+    gap: 10,
+    marginTop: 8,
+  },
+  cancelModalBtn: {
+    flex: 1,
+    paddingVertical: 12,
+    borderRadius: radii.md,
+    backgroundColor: colors.surfaceSubtle,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  cancelModalBtnText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: colors.textMuted,
+  },
+  saveModalBtn: {
+    flex: 2,
+    paddingVertical: 12,
+    borderRadius: radii.md,
+    backgroundColor: colors.accent,
+    alignItems: 'center',
+    ...shadows.sm,
+  },
+  saveModalBtnText: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: '#FFFFFF',
+  },
+  // Pro Modal Styles
+  proBadgeRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFF7ED',
+    padding: 12,
+    borderRadius: radii.md,
+    borderWidth: 1,
+    borderColor: '#FFEDD5',
+    marginBottom: 16,
+  },
+  featureList: {
+    gap: 10,
+    marginBottom: 20,
+  },
+  featureItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  featureItemText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: colors.text,
+  },
+  proCloseBtn: {
+    backgroundColor: colors.primary,
+    paddingVertical: 12,
+    borderRadius: radii.md,
+    alignItems: 'center',
+  },
+  proCloseBtnText: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: '#FFFFFF',
+  },
+  // Guidelines & Legal Styles
+  guidelineCard: {
+    backgroundColor: colors.surfaceSubtle,
+    borderRadius: radii.md,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: colors.border,
+    marginBottom: 10,
+  },
+  guidelineHeading: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: colors.primary,
+    marginBottom: 4,
+  },
+  guidelineBody: {
+    fontSize: 11,
+    color: colors.textMuted,
+    lineHeight: 16,
+  },
+  legalBody: {
+    fontSize: 12,
+    color: colors.textMuted,
+    lineHeight: 18,
+    marginBottom: 12,
   },
 });

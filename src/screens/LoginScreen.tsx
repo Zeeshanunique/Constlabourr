@@ -31,25 +31,26 @@ import {
 } from 'lucide-react-native';
 import { colors, shadows, radii } from '../styles/theme';
 import { BrandLogo } from '../components/shared/BrandLogo';
+import { projectId, publicAnonKey } from '../utils/supabase/info';
+import { useTranslation, SupportedLanguage } from '../i18n';
 
 interface LoginScreenProps {
   onLogin?: (email: string, password: string) => Promise<void>;
   onRegister?: (email: string, password: string, name: string) => Promise<void>;
 }
 
-type AuthMode = 'login' | 'otp' | 'register';
+type AuthMode = 'login' | 'register';
 type LoginTab = 'phone' | 'email';
 
 export function LoginScreen({ onLogin, onRegister }: LoginScreenProps) {
+  const { language, setLanguage, t } = useTranslation();
   const [authMode, setAuthMode] = useState<AuthMode>('login');
   const [loginTab, setLoginTab] = useState<LoginTab>('phone');
 
-  // Phone & OTP states
+  // Phone login states
   const [phoneNumber, setPhoneNumber] = useState('');
-  const [otpDigits, setOtpDigits] = useState<string[]>(['', '', '', '', '', '']);
-  const [activePinIndex, setActivePinIndex] = useState(0);
-  const [resendTimer, setResendTimer] = useState(45);
-  const otpInputRefs = useRef<any[]>([]);
+  const [phonePassword, setPhonePassword] = useState('');
+  const [showPhonePassword, setShowPhonePassword] = useState(false);
 
   // Email login states
   const [email, setEmail] = useState('');
@@ -69,104 +70,35 @@ export function LoginScreen({ onLogin, onRegister }: LoginScreenProps) {
   const [loading, setLoading] = useState(false);
   const context = useContext(AppContext) as AppContextType | null;
 
-  // Countdown timer for OTP
-  useEffect(() => {
-    let interval: any;
-    if (authMode === 'otp' && resendTimer > 0) {
-      interval = setInterval(() => {
-        setResendTimer((prev) => (prev > 0 ? prev - 1 : 0));
-      }, 1000);
-    }
-    return () => clearInterval(interval);
-  }, [authMode, resendTimer]);
-
-  const handleSendOTP = () => {
-    if (!phoneNumber || phoneNumber.length < 10) {
+  const handlePhonePasswordLogin = async () => {
+    const cleanPhone = phoneNumber.replace(/\D/g, '').slice(0, 10);
+    if (!cleanPhone || cleanPhone.length !== 10) {
       Toast.show({
         type: 'error',
-        text1: 'Invalid Phone Number',
+        text1: 'Invalid Mobile Number',
         text2: 'Please enter a valid 10-digit mobile number.',
       });
       return;
     }
 
-    setLoading(true);
-    setTimeout(() => {
-      setLoading(false);
-      setAuthMode('otp');
-      setResendTimer(45);
-      // Pre-fill demo digits for seamless testing
-      setOtpDigits(['1', '2', '3', '4', '', '']);
-      setActivePinIndex(4);
-      Toast.show({
-        type: 'success',
-        text1: 'Verification Code Sent',
-        text2: 'Use 123456 to verify on this demo build.',
-      });
-    }, 800);
-  };
-
-  const handleOtpChange = (val: string, index: number) => {
-    const newDigits = [...otpDigits];
-    newDigits[index] = val;
-    setOtpDigits(newDigits);
-
-    if (val && index < 5) {
-      otpInputRefs.current[index + 1]?.focus();
-      setActivePinIndex(index + 1);
-    }
-  };
-
-  const handleOtpKeyPress = (e: any, index: number) => {
-    if (e.nativeEvent.key === 'Backspace' && !otpDigits[index] && index > 0) {
-      otpInputRefs.current[index - 1]?.focus();
-      setActivePinIndex(index - 1);
-    }
-  };
-
-  const handleVerifyOTP = async () => {
-    const fullOtp = otpDigits.join('');
-    if (fullOtp.length < 6) {
+    if (!phonePassword) {
       Toast.show({
         type: 'error',
-        text1: 'Incomplete Code',
-        text2: 'Please enter all 6 digits.',
-      });
-      return;
-    }
-
-    if (fullOtp !== '123456') {
-      Toast.show({
-        type: 'error',
-        text1: 'Verification Failed',
-        text2: 'Invalid OTP code. Try entering 123456.',
+        text1: 'Password Required',
+        text2: 'Please enter your account password.',
       });
       return;
     }
 
     setLoading(true);
     try {
-      const loginHandler = onLogin || context?.handleLogin;
-      if (loginHandler) {
-        // Sign into contractor demo account
-        await loginHandler('contractor@example.com', 'password');
-        Toast.show({
-          type: 'success',
-          text1: 'Login Successful',
-          text2: 'Welcome to ConstLabour Pro.',
-        });
+      if (context?.handleLoginWithPhone) {
+        await context.handleLoginWithPhone(cleanPhone, phonePassword);
       } else {
-        throw new Error('Login handler not found');
+        throw new Error('Login service unavailable');
       }
-    } catch (error: any) {
-      console.error('OTP demo login error:', error);
-      Toast.show({
-        type: 'info',
-        text1: 'Phone Verified',
-        text2: 'Please use Email Login to access your specific registered account.',
-      });
-      setAuthMode('login');
-      setLoginTab('email');
+    } catch (error) {
+      console.error('Phone login error:', error);
     } finally {
       setLoading(false);
     }
@@ -196,11 +128,39 @@ export function LoginScreen({ onLogin, onRegister }: LoginScreenProps) {
   };
 
   const handleRegisterContractor = async () => {
-    if (!companyName || !contractorName || !registerEmail || !registerPassword) {
+    if (!companyName.trim() || !contractorName.trim() || !registerPhone.trim() || !registerPassword.trim()) {
       Toast.show({
         type: 'error',
-        text1: 'Required Fields',
-        text2: 'Please complete all required fields.',
+        text1: t('common.error'),
+        text2: t('auth.fillRequired'),
+      });
+      return;
+    }
+
+    const cleanPhone = registerPhone.replace(/\D/g, '').slice(0, 10);
+    if (cleanPhone.length !== 10) {
+      Toast.show({
+        type: 'error',
+        text1: t('common.error'),
+        text2: t('auth.invalidPhone'),
+      });
+      return;
+    }
+
+    if (registerPassword.length < 6) {
+      Toast.show({
+        type: 'error',
+        text1: t('common.error'),
+        text2: t('auth.invalidPassword'),
+      });
+      return;
+    }
+
+    if (registerEmail.trim() && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(registerEmail.trim())) {
+      Toast.show({
+        type: 'error',
+        text1: t('common.error'),
+        text2: 'Invalid Email address',
       });
       return;
     }
@@ -208,39 +168,36 @@ export function LoginScreen({ onLogin, onRegister }: LoginScreenProps) {
     if (!agreeTerms) {
       Toast.show({
         type: 'error',
-        text1: 'Agreement Required',
-        text2: 'Please accept the Terms of Service & Labour Code compliance.',
+        text1: t('common.error'),
+        text2: t('auth.termsRequired'),
       });
       return;
     }
 
-    const registerHandler = onRegister || context?.handleRegister;
+    const registerHandler = context?.handleRegister;
     if (!registerHandler) return;
 
     setLoading(true);
     try {
-      const combinedName = `${companyName} (${contractorName})`;
-      await registerHandler(registerEmail.trim(), registerPassword, combinedName);
-      
-      // Reset form and transition to login
-      setEmail(registerEmail.trim());
+      const combinedName = `${companyName.trim()} (${contractorName.trim()})`;
+      await registerHandler({
+        phone: cleanPhone,
+        email: registerEmail.trim() || undefined,
+        password: registerPassword,
+        name: combinedName,
+        role: 'contractor',
+      });
+
+      // Switch to login tab and prefill phone
+      setPhoneNumber(cleanPhone);
+      setPhonePassword(registerPassword);
       setAuthMode('login');
-      setLoginTab('email');
+      setLoginTab('phone');
     } catch (error) {
       console.error('Registration error:', error);
     } finally {
       setLoading(false);
     }
-  };
-
-  const handleTruecallerLogin = () => {
-    setPhoneNumber('9876543210');
-    Toast.show({
-      type: 'info',
-      text1: 'Truecaller Profile Verified',
-      text2: 'Sending SMS verification code to +91 9876543210',
-    });
-    handleSendOTP();
   };
 
   return (
@@ -258,9 +215,17 @@ export function LoginScreen({ onLogin, onRegister }: LoginScreenProps) {
           <View style={styles.headerBar}>
             <BrandLogo size={42} showText={true} subtitle="FIELD OPERATIONS OS v3.4" />
             <View style={styles.langPill}>
-              <Text style={styles.langActive}>EN</Text>
+              <TouchableOpacity onPress={() => setLanguage('en')} hitSlop={{ top: 6, bottom: 6, left: 4, right: 4 }}>
+                <Text style={language === 'en' ? styles.langActive : styles.langInactive}>EN</Text>
+              </TouchableOpacity>
               <Text style={styles.langDivider}>|</Text>
-              <Text style={styles.langInactive}>हिंदी</Text>
+              <TouchableOpacity onPress={() => setLanguage('hi')} hitSlop={{ top: 6, bottom: 6, left: 4, right: 4 }}>
+                <Text style={language === 'hi' ? styles.langActive : styles.langInactive}>हिन्दी</Text>
+              </TouchableOpacity>
+              <Text style={styles.langDivider}>|</Text>
+              <TouchableOpacity onPress={() => setLanguage('bn')} hitSlop={{ top: 6, bottom: 6, left: 4, right: 4 }}>
+                <Text style={language === 'bn' ? styles.langActive : styles.langInactive}>বাংলা</Text>
+              </TouchableOpacity>
             </View>
           </View>
 
@@ -268,9 +233,9 @@ export function LoginScreen({ onLogin, onRegister }: LoginScreenProps) {
           {authMode === 'login' && (
             <View style={styles.mainCard}>
               <View style={styles.titleSection}>
-                <Text style={styles.screenHeading}>Welcome Back</Text>
+                <Text style={styles.screenHeading}>{t('auth.loginTitle')}</Text>
                 <Text style={styles.screenSubtitle}>
-                  Sign in to manage sites, daily attendance & payroll records.
+                  {t('auth.loginSubtitle')}
                 </Text>
               </View>
 
@@ -283,7 +248,7 @@ export function LoginScreen({ onLogin, onRegister }: LoginScreenProps) {
                 >
                   <Phone size={16} color={loginTab === 'phone' ? '#FFFFFF' : colors.textMuted} />
                   <Text style={[styles.tabText, loginTab === 'phone' && styles.tabTextActive]}>
-                    Mobile & OTP
+                    {t('auth.phoneTab')}
                   </Text>
                 </TouchableOpacity>
 
@@ -294,15 +259,15 @@ export function LoginScreen({ onLogin, onRegister }: LoginScreenProps) {
                 >
                   <Mail size={16} color={loginTab === 'email' ? '#FFFFFF' : colors.textMuted} />
                   <Text style={[styles.tabText, loginTab === 'email' && styles.tabTextActive]}>
-                    Email & Password
+                    {t('auth.emailTab')}
                   </Text>
                 </TouchableOpacity>
               </View>
 
-              {/* METHOD A: PHONE NUMBER & OTP */}
+              {/* METHOD A: PHONE NUMBER & PASSWORD (WITH GET OTP OPTION) */}
               {loginTab === 'phone' && (
                 <View style={styles.formSection}>
-                  <Text style={styles.inputLabel}>REGISTERED MOBILE NUMBER</Text>
+                  <Text style={styles.inputLabel}>{t('auth.phoneLabel').toUpperCase()}</Text>
                   <View style={styles.phoneInputRow}>
                     <View style={styles.countryCodeBadge}>
                       <Text style={styles.flagEmoji}>🇮🇳</Text>
@@ -310,21 +275,41 @@ export function LoginScreen({ onLogin, onRegister }: LoginScreenProps) {
                     </View>
                     <TextInput
                       style={styles.phoneInput}
-                      placeholder="98765 43210"
+                      placeholder={t('auth.phonePlaceholder')}
                       value={phoneNumber}
-                      onChangeText={setPhoneNumber}
+                      onChangeText={(val) => setPhoneNumber(val.replace(/[^0-9]/g, '').slice(0, 10))}
                       keyboardType="phone-pad"
                       maxLength={10}
                       placeholderTextColor={colors.textLight}
                     />
                   </View>
-                  <Text style={styles.fieldHint}>
-                    Foremen and workers: enter the phone number provided to your contractor.
-                  </Text>
+
+                  <Text style={[styles.inputLabel, { marginTop: 14 }]}>{t('auth.passwordLabel').toUpperCase()}</Text>
+                  <View style={styles.inputWrapper}>
+                    <Lock size={18} color={colors.textLight} style={styles.inputLeadingIcon} />
+                    <TextInput
+                      style={styles.textInput}
+                      placeholder={t('auth.passwordPlaceholder')}
+                      value={phonePassword}
+                      onChangeText={setPhonePassword}
+                      secureTextEntry={!showPhonePassword}
+                      placeholderTextColor={colors.textLight}
+                    />
+                    <TouchableOpacity
+                      onPress={() => setShowPhonePassword(!showPhonePassword)}
+                      style={styles.passwordToggle}
+                    >
+                      {showPhonePassword ? (
+                        <EyeOff size={18} color={colors.textMuted} />
+                      ) : (
+                        <Eye size={18} color={colors.textMuted} />
+                      )}
+                    </TouchableOpacity>
+                  </View>
 
                   <TouchableOpacity
                     style={styles.primaryActionButton}
-                    onPress={handleSendOTP}
+                    onPress={handlePhonePasswordLogin}
                     disabled={loading}
                     activeOpacity={0.85}
                   >
@@ -332,26 +317,10 @@ export function LoginScreen({ onLogin, onRegister }: LoginScreenProps) {
                       <ActivityIndicator size="small" color="#FFFFFF" />
                     ) : (
                       <>
-                        <Text style={styles.primaryActionText}>Get 6-Digit OTP</Text>
+                        <Text style={styles.primaryActionText}>{t('auth.loginWithPhone')}</Text>
                         <Text style={styles.arrowIcon}>➔</Text>
                       </>
                     )}
-                  </TouchableOpacity>
-
-                  {/* Fast Sign In Alternative */}
-                  <View style={styles.dividerRow}>
-                    <View style={styles.dividerLine} />
-                    <Text style={styles.dividerText}>or fast track with</Text>
-                    <View style={styles.dividerLine} />
-                  </View>
-
-                  <TouchableOpacity
-                    style={styles.truecallerButton}
-                    onPress={handleTruecallerLogin}
-                    activeOpacity={0.8}
-                  >
-                    <Phone size={16} color="#0284C7" />
-                    <Text style={styles.truecallerText}>Instant Sign In with Truecaller</Text>
                   </TouchableOpacity>
                 </View>
               )}
@@ -359,12 +328,12 @@ export function LoginScreen({ onLogin, onRegister }: LoginScreenProps) {
               {/* METHOD B: EMAIL & PASSWORD */}
               {loginTab === 'email' && (
                 <View style={styles.formSection}>
-                  <Text style={styles.inputLabel}>OFFICIAL EMAIL ADDRESS</Text>
+                  <Text style={styles.inputLabel}>{t('auth.emailLabel').toUpperCase()}</Text>
                   <View style={styles.inputWrapper}>
                     <Mail size={18} color={colors.textLight} style={styles.inputLeadingIcon} />
                     <TextInput
                       style={styles.textInput}
-                      placeholder="contractor@example.com"
+                      placeholder={t('auth.emailPlaceholder')}
                       value={email}
                       onChangeText={setEmail}
                       keyboardType="email-address"
@@ -373,12 +342,12 @@ export function LoginScreen({ onLogin, onRegister }: LoginScreenProps) {
                     />
                   </View>
 
-                  <Text style={[styles.inputLabel, { marginTop: 14 }]}>PASSWORD</Text>
+                  <Text style={[styles.inputLabel, { marginTop: 14 }]}>{t('auth.passwordLabel').toUpperCase()}</Text>
                   <View style={styles.inputWrapper}>
                     <Lock size={18} color={colors.textLight} style={styles.inputLeadingIcon} />
                     <TextInput
                       style={styles.textInput}
-                      placeholder="Enter account password"
+                      placeholder={t('auth.passwordPlaceholder')}
                       value={password}
                       onChangeText={setPassword}
                       secureTextEntry={!showPassword}
@@ -406,7 +375,7 @@ export function LoginScreen({ onLogin, onRegister }: LoginScreenProps) {
                       <ActivityIndicator size="small" color="#FFFFFF" />
                     ) : (
                       <>
-                        <Text style={styles.primaryActionText}>Sign In to Dashboard</Text>
+                        <Text style={styles.primaryActionText}>{t('auth.loginWithEmail')}</Text>
                         <Text style={styles.arrowIcon}>➔</Text>
                       </>
                     )}
@@ -422,123 +391,14 @@ export function LoginScreen({ onLogin, onRegister }: LoginScreenProps) {
                 <View style={styles.noticeTextContainer}>
                   <TouchableOpacity onPress={() => setAuthMode('register')}>
                     <Text style={styles.noticeTitle}>
-                      New Contractor? <Text style={styles.linkHighlight}>Register your Company ➔</Text>
+                      {t('auth.dontHaveAccount')} <Text style={styles.linkHighlight}>{t('auth.registerTitle')} ➔</Text>
                     </Text>
                   </TouchableOpacity>
                   <Text style={styles.noticeDesc}>
-                    Foremen and workers are added directly by their registered contractor.
+                    {t('auth.registerSubtitle')}
                   </Text>
                 </View>
               </View>
-            </View>
-          )}
-
-          {/* VIEW 2: 6-DIGIT OTP VERIFICATION */}
-          {authMode === 'otp' && (
-            <View style={styles.mainCard}>
-              <TouchableOpacity
-                style={styles.backButton}
-                onPress={() => setAuthMode('login')}
-                activeOpacity={0.8}
-              >
-                <ArrowLeft size={18} color={colors.textMuted} />
-                <Text style={styles.backButtonText}>Back to Sign In</Text>
-              </TouchableOpacity>
-
-              <View style={styles.titleSection}>
-                <View style={styles.securityBadge}>
-                  <ShieldCheck size={20} color={colors.success} />
-                  <Text style={styles.securityBadgeText}>SECURE OTP VERIFICATION</Text>
-                </View>
-                <Text style={styles.screenHeading}>Verify Mobile Number</Text>
-                <Text style={styles.screenSubtitle}>
-                  Enter the 6-digit code sent to{' '}
-                  <Text style={styles.phoneHighlight}>+91 {phoneNumber || '98765 43210'}</Text>
-                </Text>
-              </View>
-
-              {/* 6-PIN Boxes Component */}
-              <View style={styles.otpBoxesRow}>
-                {otpDigits.map((digit, idx) => {
-                  const isActive = idx === activePinIndex;
-                  return (
-                    <View
-                      key={idx}
-                      style={[
-                        styles.otpBox,
-                        digit ? styles.otpBoxFilled : null,
-                        isActive && styles.otpBoxActive,
-                      ]}
-                    >
-                      <TextInput
-                        ref={(ref) => {
-                          otpInputRefs.current[idx] = ref;
-                        }}
-                        style={styles.otpDigitInput}
-                        value={digit}
-                        onChangeText={(val) => handleOtpChange(val, idx)}
-                        onKeyPress={(e) => handleOtpKeyPress(e, idx)}
-                        onFocus={() => setActivePinIndex(idx)}
-                        keyboardType="number-pad"
-                        maxLength={1}
-                        selectTextOnFocus
-                      />
-                    </View>
-                  );
-                })}
-              </View>
-
-              {/* Auto-detect SMS indicator */}
-              <View style={styles.autoDetectRow}>
-                <View style={styles.pulseDot} />
-                <Text style={styles.autoDetectText}>Auto-detecting SMS verification code...</Text>
-              </View>
-
-              {/* Submit CTA */}
-              <TouchableOpacity
-                style={styles.primaryActionButton}
-                onPress={handleVerifyOTP}
-                disabled={loading}
-                activeOpacity={0.85}
-              >
-                {loading ? (
-                  <ActivityIndicator size="small" color="#FFFFFF" />
-                ) : (
-                  <>
-                    <Text style={styles.primaryActionText}>Verify & Access Portal</Text>
-                    <Text style={styles.arrowIcon}>➔</Text>
-                  </>
-                )}
-              </TouchableOpacity>
-
-              {/* Resend & WhatsApp Option */}
-              <View style={styles.resendRow}>
-                {resendTimer > 0 ? (
-                  <Text style={styles.resendTimerText}>
-                    Resend code in <Text style={styles.timerBold}>00:{resendTimer < 10 ? `0${resendTimer}` : resendTimer}</Text>
-                  </Text>
-                ) : (
-                  <TouchableOpacity onPress={handleSendOTP}>
-                    <Text style={styles.resendActionText}>Resend SMS Code</Text>
-                  </TouchableOpacity>
-                )}
-              </View>
-
-              <TouchableOpacity
-                style={styles.whatsappButton}
-                onPress={() => {
-                  Toast.show({
-                    type: 'info',
-                    text1: 'WhatsApp Delivery',
-                    text2: 'Verification code resent via WhatsApp.',
-                  });
-                  setResendTimer(45);
-                }}
-                activeOpacity={0.8}
-              >
-                <MessageSquare size={16} color="#059669" />
-                <Text style={styles.whatsappButtonText}>Send Code via WhatsApp</Text>
-              </TouchableOpacity>
             </View>
           )}
 
@@ -551,17 +411,17 @@ export function LoginScreen({ onLogin, onRegister }: LoginScreenProps) {
                 activeOpacity={0.8}
               >
                 <ArrowLeft size={18} color={colors.textMuted} />
-                <Text style={styles.backButtonText}>Back to Sign In</Text>
+                <Text style={styles.backButtonText}>{t('common.back')}</Text>
               </TouchableOpacity>
 
               <View style={styles.titleSection}>
                 <View style={styles.contractorOnlyTag}>
                   <Building size={14} color="#EA580C" />
-                  <Text style={styles.contractorOnlyText}>CONTRACTOR PORTAL ONLY</Text>
+                  <Text style={styles.contractorOnlyText}>{t('auth.contractorRole').toUpperCase()}</Text>
                 </View>
-                <Text style={styles.screenHeading}>Contractor Registration</Text>
+                <Text style={styles.screenHeading}>{t('auth.registerTitle')}</Text>
                 <Text style={styles.screenSubtitle}>
-                  Register your company to set up sites, assign foremen & disburse payroll.
+                  {t('auth.registerSubtitle')}
                 </Text>
               </View>
 
@@ -569,45 +429,64 @@ export function LoginScreen({ onLogin, onRegister }: LoginScreenProps) {
               <View style={styles.architectureAlert}>
                 <HelpCircle size={18} color="#EA580C" style={{ marginTop: 2 }} />
                 <View style={{ flex: 1, marginLeft: 8 }}>
-                  <Text style={styles.alertNoticeTitle}>Contractor Accounts Only</Text>
+                  <Text style={styles.alertNoticeTitle}>{t('auth.contractorRole')}</Text>
                   <Text style={styles.alertNoticeBody}>
-                    Foremen and workers cannot register on their own; they are added to sites directly by the registered contractor.
+                    {t('auth.registerSubtitle')}
                   </Text>
                 </View>
               </View>
 
               {/* Registration Form */}
               <View style={styles.formSection}>
-                <Text style={styles.inputLabel}>CONSTRUCTION COMPANY / FIRM NAME *</Text>
+                <Text style={styles.inputLabel}>{t('auth.companyName').toUpperCase()} *</Text>
                 <View style={styles.inputWrapper}>
                   <Building size={18} color={colors.textLight} style={styles.inputLeadingIcon} />
                   <TextInput
                     style={styles.textInput}
-                    placeholder="e.g. Apex Infra Projects Pvt Ltd"
+                    placeholder={t('auth.companyNamePlaceholder')}
                     value={companyName}
                     onChangeText={setCompanyName}
                     placeholderTextColor={colors.textLight}
                   />
                 </View>
 
-                <Text style={[styles.inputLabel, { marginTop: 12 }]}>CONTRACTOR FULL NAME *</Text>
+                <Text style={[styles.inputLabel, { marginTop: 12 }]}>{t('auth.contractorFullName').toUpperCase()} *</Text>
                 <View style={styles.inputWrapper}>
                   <UserIcon size={18} color={colors.textLight} style={styles.inputLeadingIcon} />
                   <TextInput
                     style={styles.textInput}
-                    placeholder="e.g. Rajesh Sharma"
+                    placeholder={t('auth.contractorFullNamePlaceholder')}
                     value={contractorName}
                     onChangeText={setContractorName}
                     placeholderTextColor={colors.textLight}
                   />
                 </View>
 
-                <Text style={[styles.inputLabel, { marginTop: 12 }]}>OFFICIAL EMAIL ADDRESS *</Text>
+                <Text style={[styles.inputLabel, { marginTop: 12 }]}>{t('auth.phoneLabel').toUpperCase()} *</Text>
+                <View style={styles.phoneInputRow}>
+                  <View style={styles.countryCodeBadge}>
+                    <Text style={styles.flagEmoji}>🇮🇳</Text>
+                    <Text style={styles.countryCodeText}>+91</Text>
+                  </View>
+                  <TextInput
+                    style={styles.phoneInput}
+                    placeholder={t('auth.phonePlaceholder')}
+                    value={registerPhone}
+                    onChangeText={(val) => setRegisterPhone(val.replace(/[^0-9]/g, '').slice(0, 10))}
+                    keyboardType="phone-pad"
+                    maxLength={10}
+                    placeholderTextColor={colors.textLight}
+                  />
+                </View>
+
+                <Text style={[styles.inputLabel, { marginTop: 12 }]}>
+                  {t('auth.emailLabel').toUpperCase()} <Text style={styles.optionalTag}>({t('common.optional').toUpperCase()})</Text>
+                </Text>
                 <View style={styles.inputWrapper}>
                   <Mail size={18} color={colors.textLight} style={styles.inputLeadingIcon} />
                   <TextInput
                     style={styles.textInput}
-                    placeholder="contractor@company.in"
+                    placeholder={t('auth.emailPlaceholder')}
                     value={registerEmail}
                     onChangeText={setRegisterEmail}
                     keyboardType="email-address"
@@ -616,31 +495,14 @@ export function LoginScreen({ onLogin, onRegister }: LoginScreenProps) {
                   />
                 </View>
 
-                <Text style={[styles.inputLabel, { marginTop: 12 }]}>CONTACT MOBILE NUMBER</Text>
-                <View style={styles.phoneInputRow}>
-                  <View style={styles.countryCodeBadge}>
-                    <Text style={styles.flagEmoji}>🇮🇳</Text>
-                    <Text style={styles.countryCodeText}>+91</Text>
-                  </View>
-                  <TextInput
-                    style={styles.phoneInput}
-                    placeholder="98765 43210"
-                    value={registerPhone}
-                    onChangeText={setRegisterPhone}
-                    keyboardType="phone-pad"
-                    maxLength={10}
-                    placeholderTextColor={colors.textLight}
-                  />
-                </View>
-
                 <Text style={[styles.inputLabel, { marginTop: 12 }]}>
-                  GSTIN / CONTRACTOR LICENSE # <Text style={styles.optionalTag}>(OPTIONAL)</Text>
+                  {t('auth.gstinOptional').toUpperCase()} <Text style={styles.optionalTag}>({t('common.optional').toUpperCase()})</Text>
                 </Text>
                 <View style={styles.inputWrapper}>
                   <FileText size={18} color={colors.textLight} style={styles.inputLeadingIcon} />
                   <TextInput
                     style={styles.textInput}
-                    placeholder="27AAAAA0000A1Z5"
+                    placeholder={t('auth.gstinPlaceholder')}
                     value={licenseGstin}
                     onChangeText={setLicenseGstin}
                     autoCapitalize="characters"
@@ -648,12 +510,12 @@ export function LoginScreen({ onLogin, onRegister }: LoginScreenProps) {
                   />
                 </View>
 
-                <Text style={[styles.inputLabel, { marginTop: 12 }]}>CREATE PASSWORD *</Text>
+                <Text style={[styles.inputLabel, { marginTop: 12 }]}>{t('auth.createPassword').toUpperCase()} *</Text>
                 <View style={styles.inputWrapper}>
                   <Lock size={18} color={colors.textLight} style={styles.inputLeadingIcon} />
                   <TextInput
                     style={styles.textInput}
-                    placeholder="Minimum 6 characters"
+                    placeholder={t('auth.passwordPlaceholder')}
                     value={registerPassword}
                     onChangeText={setRegisterPassword}
                     secureTextEntry={!showRegisterPassword}
@@ -681,7 +543,7 @@ export function LoginScreen({ onLogin, onRegister }: LoginScreenProps) {
                     {agreeTerms && <CheckCircle size={14} color="#FFFFFF" />}
                   </View>
                   <Text style={styles.checkboxText}>
-                    I agree to the Terms of Service & Indian Labour Code 2020 Compliance standards.
+                    {t('auth.agreeTerms')}
                   </Text>
                 </TouchableOpacity>
 
@@ -695,7 +557,7 @@ export function LoginScreen({ onLogin, onRegister }: LoginScreenProps) {
                     <ActivityIndicator size="small" color="#FFFFFF" />
                   ) : (
                     <>
-                      <Text style={styles.primaryActionText}>Register Contractor Account</Text>
+                      <Text style={styles.primaryActionText}>{t('auth.registerButton')}</Text>
                       <Text style={styles.arrowIcon}>➔</Text>
                     </>
                   )}
@@ -914,6 +776,23 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     marginTop: 12,
     ...shadows.hero,
+  },
+  otpOptionButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    paddingVertical: 12,
+    marginTop: 10,
+    borderRadius: radii.md,
+    backgroundColor: 'rgba(234, 88, 12, 0.08)',
+    borderWidth: 1,
+    borderColor: 'rgba(234, 88, 12, 0.25)',
+  },
+  otpOptionText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: colors.accent,
   },
   primaryActionText: {
     fontSize: 15,

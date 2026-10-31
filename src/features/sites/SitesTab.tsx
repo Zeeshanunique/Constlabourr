@@ -11,12 +11,14 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { FormModal } from '@/components/shared/FormModal';
 import { FormField } from '@/components/shared/FormField';
+import { formStyles } from '@/components/shared/form-styles';
 import { MaterialIcons } from '@expo/vector-icons';
 import { projectId } from '@/utils/supabase/info';
 import { useRoute } from '@react-navigation/native';
 import Toast from 'react-native-toast-message';
 import Svg, { Circle, Line } from 'react-native-svg';
 import { colors, shadows, radii } from '@/styles/theme';
+import { useTranslation } from '@/i18n';
 
 interface Site {
   id: string;
@@ -39,6 +41,7 @@ interface SitesTabProps {
 
 export function SitesTab({ accessToken }: SitesTabProps) {
   const route = useRoute();
+  const { t, language } = useTranslation();
   const token = accessToken || (route.params as any)?.accessToken;
   const tokenRef = useRef(token);
 
@@ -236,8 +239,8 @@ export function SitesTab({ accessToken }: SitesTabProps) {
       <View style={styles.header}>
         <View style={styles.headerRow}>
           <View>
-            <Text style={styles.headerTitle}>Construction Sites</Text>
-            <Text style={styles.headerSubtitle}>Project locations, foremen & milestones</Text>
+            <Text style={styles.headerTitle}>{t('sites.directory')}</Text>
+            <Text style={styles.headerSubtitle}>{t('sites.directorySubtitle')}</Text>
           </View>
           <TouchableOpacity
             style={styles.addSiteButton}
@@ -248,31 +251,31 @@ export function SitesTab({ accessToken }: SitesTabProps) {
             activeOpacity={0.85}
           >
             <MaterialIcons name="add-location-alt" size={16} color="#FFFFFF" />
-            <Text style={styles.addSiteButtonText}>Add Site</Text>
+            <Text style={styles.addSiteButtonText}>{t('sites.addSite')}</Text>
           </TouchableOpacity>
         </View>
 
         {/* 2. SITES KPI BENTO STRIP */}
         <View style={styles.kpiRow}>
           <View style={styles.kpiCard}>
-            <Text style={styles.kpiLabel}>Active Sites</Text>
+            <Text style={styles.kpiLabel}>{t('sites.activeSites')}</Text>
             <Text style={styles.kpiValue}>{sites.length}</Text>
           </View>
           <View style={styles.kpiCard}>
-            <Text style={styles.kpiLabel}>Supervisors</Text>
+            <Text style={styles.kpiLabel}>{t('nav.foremen')}</Text>
             <Text style={[styles.kpiValue, { color: colors.accent }]}>
               {sites.filter((s) => s.foremanId).length}
             </Text>
           </View>
           <View style={styles.kpiCard}>
-            <Text style={styles.kpiLabel}>Scheduled</Text>
+            <Text style={styles.kpiLabel}>{t('sites.startDate')}</Text>
             <Text style={[styles.kpiValue, { color: colors.success }]}>
               {sites.filter((s) => s.startDate).length}
             </Text>
           </View>
           <View style={styles.kpiCard}>
-            <Text style={styles.kpiLabel}>Status</Text>
-            <Text style={[styles.kpiValue, { color: colors.primary }]}>Active</Text>
+            <Text style={styles.kpiLabel}>{t('common.status')}</Text>
+            <Text style={[styles.kpiValue, { color: colors.primary }]}>{t('common.active')}</Text>
           </View>
         </View>
       </View>
@@ -288,12 +291,16 @@ export function SitesTab({ accessToken }: SitesTabProps) {
           ListEmptyComponent={
             <View style={styles.emptyContainer}>
               <MaterialIcons name="location-off" size={48} color={colors.borderDark} />
-              <Text style={styles.emptyTitle}>No Construction Sites Registered</Text>
-              <Text style={styles.emptySubtitle}>Tap "+ Add Site" to register your first construction site.</Text>
+              <Text style={styles.emptyTitle}>{t('sites.noSitesFound')}</Text>
+              <Text style={styles.emptySubtitle}>
+                {language === 'hi' ? `"+ ${t('sites.addSite')}" दबाकर अपनी पहली निर्माण साइट दर्ज करें।` :
+                 language === 'bn' ? `"+ ${t('sites.addSite')}" ট্যাপ করে আপনার প্রথম নির্মাণ সাইট যোগ করুন।` :
+                 `Tap "+ ${t('sites.addSite')}" to register your first construction site.`}
+              </Text>
             </View>
           }
           renderItem={({ item }) => {
-            const foremanName = item.foremanId ? foremanMap.get(item.foremanId) || 'Assigned' : 'Unassigned';
+            const foremanName = item.foremanId ? foremanMap.get(item.foremanId) || t('common.active') : '-';
 
             return (
               <View style={styles.siteCard}>
@@ -304,12 +311,12 @@ export function SitesTab({ accessToken }: SitesTabProps) {
                     </View>
                     <View style={{ flex: 1 }}>
                       <Text style={styles.siteName}>{item.name}</Text>
-                      <Text style={styles.siteAddress}>📍 {item.address || 'Address pending'}</Text>
+                      <Text style={styles.siteAddress}>📍 {item.address || (language === 'hi' ? 'पता दर्ज नहीं' : language === 'bn' ? 'ঠিকানা নেই' : 'Address pending')}</Text>
                     </View>
                   </View>
                   <View style={styles.activePill}>
                     <View style={styles.greenDot} />
-                    <Text style={styles.activePillText}>OPERATIONAL</Text>
+                    <Text style={styles.activePillText}>{t('sites.running').toUpperCase()}</Text>
                   </View>
                 </View>
 
@@ -317,7 +324,7 @@ export function SitesTab({ accessToken }: SitesTabProps) {
                 <View style={styles.metaRow}>
                   <View style={styles.metaItem}>
                     <MaterialIcons name="engineering" size={15} color={colors.accent} />
-                    <Text style={styles.metaLabel}>Foreman: </Text>
+                    <Text style={styles.metaLabel}>{t('sites.assignedForeman')}: </Text>
                     <Text style={styles.metaVal}>{foremanName}</Text>
                   </View>
                   {item.startDate ? (
@@ -332,14 +339,14 @@ export function SitesTab({ accessToken }: SitesTabProps) {
                 <View style={styles.actionStrip}>
                   <TouchableOpacity style={styles.actionBtn} onPress={() => handleEdit(item)}>
                     <MaterialIcons name="edit" size={15} color={colors.primary} />
-                    <Text style={styles.actionBtnText}>Configure</Text>
+                    <Text style={styles.actionBtnText}>{t('common.edit')}</Text>
                   </TouchableOpacity>
                   <TouchableOpacity
                     style={[styles.actionBtn, { marginLeft: 8 }]}
                     onPress={() => handleDelete(item)}
                   >
                     <MaterialIcons name="delete-outline" size={15} color={colors.error} />
-                    <Text style={[styles.actionBtnText, { color: colors.error }]}>Delete</Text>
+                    <Text style={[styles.actionBtnText, { color: colors.error }]}>{t('common.delete')}</Text>
                   </TouchableOpacity>
                 </View>
               </View>
@@ -351,56 +358,66 @@ export function SitesTab({ accessToken }: SitesTabProps) {
       <FormModal
         isOpen={isModalOpen}
         onClose={() => setIsModalOpen(false)}
-        title={editingSite ? 'Configure Construction Site' : 'Create New Construction Site'}
-        subtitle={editingSite ? 'Modify site details or assigned supervisor' : 'Register project address and allocate site supervisor'}
-        submitLabel={editingSite ? 'Save Changes' : 'Establish Site'}
+        title={editingSite ? t('sites.editSite') : t('sites.addSite')}
+        subtitle={t('sites.directorySubtitle')}
+        submitLabel={editingSite ? t('common.save') : t('sites.addSite')}
         onSubmit={handleSubmit}
         loading={loading}
         submitDisabled={!formData.name.trim() || !formData.address.trim()}
       >
+        <Text style={formStyles.sectionHeader}>
+          {language === 'hi' ? 'साइट की जानकारी' : language === 'bn' ? 'সাইটের তথ্য' : 'Site Information'}
+        </Text>
+
         <FormField
-          label="Site Project Name"
+          label={t('sites.siteName')}
           required
           value={formData.name}
           onChangeText={(val) => setFormData({ ...formData, name: val })}
-          placeholder="e.g. Skyline Towers - Phase 2"
+          placeholder={t('sites.siteNamePlaceholder')}
         />
 
         <FormField
-          label="Site Location / Physical Address"
+          label={t('sites.siteAddress')}
           required
           value={formData.address}
           onChangeText={(val) => setFormData({ ...formData, address: val })}
-          placeholder="e.g. Plot 42, Sector 18, Navi Mumbai"
-          helperText="Physical address or project landmark"
+          placeholder={t('sites.siteAddressPlaceholder')}
+          helperText={language === 'hi' ? 'भौतिक पता या प्रोजेक्ट लैंडमार्क' : language === 'bn' ? 'ঠিকানা বা প্রকল্পের ল্যান্ডমার্ক' : 'Physical address or project landmark'}
         />
 
+        <Text style={formStyles.sectionHeader}>{t('sites.assignedForeman')}</Text>
+
         <FormField
-          label="Assign Site Foreman / Supervisor"
+          label={t('sites.assignedForeman')}
           type="select"
           value={formData.foremanId}
           onChangeText={(val) => setFormData({ ...formData, foremanId: val })}
           selectOptions={[
-            { label: 'Unassigned (No Supervisor Assigned)', value: '' },
+            { label: '-', value: '' },
             ...foremanOptions,
           ]}
-          placeholder="Select site supervisor"
+          placeholder={t('sites.selectForemanPlaceholder')}
         />
 
+        <Text style={formStyles.sectionHeader}>
+          {language === 'hi' ? 'परियोजना अनुसूची' : language === 'bn' ? 'প্রকল্প সময়সূচী' : 'Project Schedule'}
+        </Text>
+
         <FormField
-          label="Project Start Date"
+          label={t('sites.startDate')}
           type="date"
           value={formData.startDate}
           onChangeText={(val) => setFormData({ ...formData, startDate: val })}
-          placeholder="Select start date"
+          placeholder={t('sites.startDate')}
         />
 
         <FormField
-          label="Estimated Completion Date"
+          label={t('sites.endDate')}
           type="date"
           value={formData.endDate}
           onChangeText={(val) => setFormData({ ...formData, endDate: val })}
-          placeholder="Select completion date"
+          placeholder={t('sites.endDate')}
         />
       </FormModal>
     </SafeAreaView>

@@ -6,6 +6,7 @@ import { WorkerProfileTab } from '../features/profile/WorkerProfileTab';
 import { SettingsScreen } from '../screens/SettingsScreen';
 import { MaterialIcons } from '@expo/vector-icons';
 import { colors, shadows } from '../styles/theme';
+import { useTranslation } from '../i18n';
 
 export type LabourTabParamList = {
   Home: { accessToken: string };
@@ -18,6 +19,7 @@ const Tab = createBottomTabNavigator<LabourTabParamList>();
 
 export function LabourNavigator({ route }: { route: any }) {
   const accessToken = route.params?.accessToken;
+  const { t } = useTranslation();
   
   return (
     <Tab.Navigator
@@ -44,7 +46,7 @@ export function LabourNavigator({ route }: { route: any }) {
       <Tab.Screen
         name="Home"
         options={{
-          tabBarLabel: 'Dashboard',
+          tabBarLabel: t('nav.dashboard'),
           tabBarIcon: ({ color, size }) => <MaterialIcons name="dashboard" size={size} color={color} />,
         }}
       >
@@ -53,7 +55,7 @@ export function LabourNavigator({ route }: { route: any }) {
       <Tab.Screen
         name="Attendance"
         options={{
-          tabBarLabel: 'Attendance',
+          tabBarLabel: t('nav.attendance'),
           tabBarIcon: ({ color, size }) => <MaterialIcons name="calendar-month" size={size} color={color} />,
         }}
       >
@@ -62,7 +64,7 @@ export function LabourNavigator({ route }: { route: any }) {
       <Tab.Screen
         name="Profile"
         options={{
-          tabBarLabel: 'Wage Slip',
+          tabBarLabel: t('nav.wageSlip'),
           tabBarIcon: ({ color, size }) => <MaterialIcons name="badge" size={size} color={color} />,
         }}
       >
@@ -72,7 +74,7 @@ export function LabourNavigator({ route }: { route: any }) {
         name="Settings"
         component={SettingsScreen}
         options={{
-          tabBarLabel: 'Settings',
+          tabBarLabel: t('nav.settings'),
           tabBarIcon: ({ color, size }) => <MaterialIcons name="settings" size={size} color={color} />,
         }}
       />

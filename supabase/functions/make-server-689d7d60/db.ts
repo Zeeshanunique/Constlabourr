@@ -15,7 +15,23 @@ export async function getProfile(id: string) {
 }
 
 export async function getProfileByEmail(email: string) {
-  const { data } = await supabase.from('profiles').select('*').eq('email', email).maybeSingle();
+  if (!email) return null;
+  const { data, error } = await supabase.from('profiles').select('*').ilike('email', email.trim()).maybeSingle();
+  if (error) {
+    console.error('getProfileByEmail error:', error);
+    return null;
+  }
+  return data ? mapProfile(data) : null;
+}
+
+export async function getProfileByPhone(phone: string) {
+  if (!phone) return null;
+  const clean = phone.replace(/\D/g, '').slice(0, 10);
+  const { data, error } = await supabase.from('profiles').select('*').eq('phone', clean).maybeSingle();
+  if (error) {
+    console.error('getProfileByPhone error:', error);
+    return null;
+  }
   return data ? mapProfile(data) : null;
 }
 
@@ -81,17 +97,27 @@ export async function deleteSite(id: string) {
 }
 
 // ---- Attendance helpers ----
+export function normalizeShift(s?: string): 'day' | 'night' {
+  if (!s) return 'day';
+  const lower = String(s).toLowerCase();
+  return lower.includes('night') ? 'night' : 'day';
+}
+
 export async function getAttendanceById(id: string) {
   const { data, error } = await supabase.from('attendance').select('*').eq('id', id).maybeSingle();
   if (error) throw error;
   return data ? mapAttendance(data) : null;
 }
 
-export async function queryAttendance(filters: { workerId?: string; siteId?: string; date?: string; startDate?: string; endDate?: string }) {
+export async function queryAttendance(filters: { workerId?: string; siteId?: string; date?: string; shift?: string; startDate?: string; endDate?: string }) {
   let q = supabase.from('attendance').select('*');
   if (filters.workerId) q = q.eq('worker_id', filters.workerId);
   if (filters.siteId) q = q.eq('site_id', filters.siteId);
   if (filters.date) q = q.eq('date', filters.date);
+  if (filters.shift) {
+    const s = normalizeShift(filters.shift);
+    q = q.in('shift', [s, s === 'night' ? 'Night Shift' : 'Day Shift']);
+  }
   if (filters.startDate) q = q.gte('date', filters.startDate);
   if (filters.endDate) q = q.lte('date', filters.endDate);
   const { data, error } = await q;
@@ -99,9 +125,15 @@ export async function queryAttendance(filters: { workerId?: string; siteId?: str
   return (data || []).map(mapAttendance);
 }
 
-export async function findExistingAttendance(workerId: string, siteId: string, date: string) {
-  const { data } = await supabase.from('attendance').select('*')
-    .eq('worker_id', workerId).eq('site_id', siteId).eq('date', date).maybeSingle();
+export async function findExistingAttendance(workerId: string, siteId: string | null | undefined, date: string, shift?: string) {
+  const normShift = normalizeShift(shift);
+  let q = supabase.from('attendance').select('*')
+    .eq('worker_id', workerId).eq('date', date)
+    .in('shift', [normShift, normShift === 'night' ? 'Night Shift' : 'Day Shift']);
+  if (siteId) {
+    q = q.eq('site_id', siteId);
+  }
+  const { data } = await q.maybeSingle();
   return data ? mapAttendance(data) : null;
 }
 
@@ -145,6 +177,21 @@ export async function updateAdvanceStatus(id: string, status: string) {
   if (error) throw error;
 }
 
+export async function updateAdvance(id: string, updates: { amount?: number; reason?: string; status?: string; date?: string }) {
+  const row: any = {};
+  if (updates.amount !== undefined) row.amount = updates.amount;
+  if (updates.reason !== undefined) row.reason = updates.reason;
+  if (updates.status !== undefined) row.status = updates.status;
+  if (updates.date !== undefined) row.date = updates.date;
+  const { error } = await supabase.from('advances').update(row).eq('id', id);
+  if (error) throw error;
+}
+
+export async function deleteAdvance(id: string) {
+  const { error } = await supabase.from('advances').delete().eq('id', id);
+  if (error) throw error;
+}
+
 // ---- Payroll helpers ----
 export async function insertPayroll(p: any) {
   const row = { id: p.id, site_id: p.siteId, start_date: p.startDate, end_date: p.endDate, items: p.items, total_gross: p.totalGross, total_net: p.totalNet, status: p.status, created_by: p.createdBy, created_at: p.createdAt };
@@ -178,6 +225,33 @@ export async function insertPayment(p: any) {
   const row = { id: p.id, worker_id: p.workerId, amount: p.amount, payment_method: p.paymentMethod, transaction_ref: p.transactionRef, date: p.date, payroll_id: p.payrollId, notes: p.notes, status: p.status, created_by: p.createdBy, created_at: p.createdAt };
   const { error } = await supabase.from('payments').insert(row);
   if (error) throw error;
+}
+
+export async function queryPayments(filters: { workerId?: string; createdBy?: string; startDate?: string; endDate?: string }) {
+  let q = supabase.from('payments').select('*');
+  if (filters.workerId) q = q.eq('worker_id', filters.workerId);
+  if (filters.createdBy) q = q.eq('created_by', filters.createdBy);
+  if (filters.startDate) q = q.gte('date', filters.startDate);
+  if (filters.endDate) q = q.lte('date', filters.endDate);
+  const { data, error } = await q.order('created_at', { ascending: false });
+  if (error) throw error;
+  return (data || []).map(mapPayment);
+}
+
+export function mapPayment(r: any) {
+  return {
+    id: r.id,
+    workerId: r.worker_id,
+    amount: Number(r.amount),
+    paymentMethod: r.payment_method,
+    transactionRef: r.transaction_ref,
+    date: r.date,
+    payrollId: r.payroll_id,
+    notes: r.notes,
+    status: r.status,
+    createdBy: r.created_by,
+    createdAt: r.created_at,
+  };
 }
 
 // ---- Production helpers ----
@@ -248,24 +322,29 @@ export async function getAcceptancesByContractor(contractorId: string) {
 
 // ---- Mappers ----
 export function mapProfile(r: any) {
-  return { id: r.id, email: r.email, name: r.name, role: r.role, phone: r.phone, aadhaarHash: r.aadhaar_hash, bankDetails: r.bank_details, skillLevel: r.skill_level, dailyWage: Number(r.daily_wage), messCharge: Number(r.mess_charge), contractorId: r.contractor_id, siteId: r.site_id, status: r.status, createdAt: r.created_at, updatedAt: r.updated_at };
+  return { id: r.id, email: r.email, name: r.name, role: r.role, phone: r.phone, aadhaarHash: r.aadhaar_hash, bankDetails: r.bank_details, skillLevel: r.skill_level, dailyWage: Number(r.daily_wage), overtimeRate: Number(r.overtime_rate || 0), messCharge: Number(r.mess_charge), contractorId: r.contractor_id, siteId: r.site_id, status: r.status, upiId: r.upi_id, deviceSessionId: r.device_session_id, createdAt: r.created_at, updatedAt: r.updated_at };
 }
 
 function unmapProfile(p: any) {
   const row: any = {};
   if (p.id !== undefined) row.id = p.id;
-  if (p.email !== undefined) row.email = p.email;
+  if (p.email !== undefined) row.email = p.email ? p.email.trim().toLowerCase() : null;
   if (p.name !== undefined) row.name = p.name;
   if (p.role !== undefined) row.role = p.role;
-  if (p.phone !== undefined) row.phone = p.phone;
+  if (p.phone !== undefined) row.phone = p.phone ? p.phone.replace(/\D/g, '').slice(0, 10) : null;
   if (p.aadhaarHash !== undefined) row.aadhaar_hash = p.aadhaarHash;
   if (p.bankDetails !== undefined) row.bank_details = p.bankDetails;
   if (p.skillLevel !== undefined) row.skill_level = p.skillLevel;
   if (p.dailyWage !== undefined) row.daily_wage = p.dailyWage;
+  if (p.overtimeRate !== undefined) row.overtime_rate = p.overtimeRate;
   if (p.messCharge !== undefined) row.mess_charge = p.messCharge;
   if (p.contractorId !== undefined) row.contractor_id = p.contractorId;
   if (p.siteId !== undefined) row.site_id = p.siteId;
   if (p.status !== undefined) row.status = p.status;
+  if (p.upiId !== undefined) row.upi_id = p.upiId;
+  if (p.upi_id !== undefined) row.upi_id = p.upi_id;
+  if (p.deviceSessionId !== undefined) row.device_session_id = p.deviceSessionId;
+  if (p.device_session_id !== undefined) row.device_session_id = p.device_session_id;
   if (p.createdAt !== undefined) row.created_at = p.createdAt;
   if (p.updatedAt !== undefined) row.updated_at = p.updatedAt;
   return row;
@@ -292,7 +371,35 @@ function unmapSite(s: any) {
 }
 
 export function mapAttendance(r: any) {
-  return { id: r.id, workerId: r.worker_id, workerName: r.worker_name, siteId: r.site_id, date: r.date, checkIn: r.check_in, checkOut: r.check_out, breakStart: r.break_start, breakEnd: r.break_end, status: r.status, totalHours: Number(r.total_hours), breakHours: Number(r.break_hours), netWorkHours: Number(r.net_work_hours), regularHours: Number(r.regular_hours), overtimeHours: Number(r.overtime_hours), dailyWage: Number(r.daily_wage), hourlyRate: Number(r.hourly_rate), overtimeRate: Number(r.overtime_rate), dailyPayment: Number(r.daily_payment), overtimePayment: Number(r.overtime_payment), totalPayment: Number(r.total_payment), geoLocation: r.geo_location, notes: r.notes, markedBy: r.marked_by, createdAt: r.created_at, updatedAt: r.updated_at };
+  return {
+    id: r.id,
+    workerId: r.worker_id,
+    workerName: r.worker_name,
+    siteId: r.site_id,
+    date: r.date,
+    shift: normalizeShift(r.shift),
+    checkIn: r.check_in,
+    checkOut: r.check_out,
+    breakStart: r.break_start,
+    breakEnd: r.break_end,
+    status: r.status,
+    totalHours: Number(r.total_hours),
+    breakHours: Number(r.break_hours),
+    netWorkHours: Number(r.net_work_hours),
+    regularHours: Number(r.regular_hours),
+    overtimeHours: Number(r.overtime_hours),
+    dailyWage: Number(r.daily_wage),
+    hourlyRate: Number(r.hourly_rate),
+    overtimeRate: Number(r.overtime_rate),
+    dailyPayment: Number(r.daily_payment),
+    overtimePayment: Number(r.overtime_payment),
+    totalPayment: Number(r.total_payment),
+    geoLocation: r.geo_location,
+    notes: r.notes,
+    markedBy: r.marked_by,
+    createdAt: r.created_at,
+    updatedAt: r.updated_at
+  };
 }
 
 function unmapAttendance(a: any) {
@@ -302,6 +409,7 @@ function unmapAttendance(a: any) {
   if (a.workerName !== undefined) row.worker_name = a.workerName;
   if (a.siteId !== undefined) row.site_id = a.siteId;
   if (a.date !== undefined) row.date = a.date;
+  if (a.shift !== undefined) row.shift = normalizeShift(a.shift);
   if (a.checkIn !== undefined) row.check_in = a.checkIn;
   if (a.checkOut !== undefined) row.check_out = a.checkOut;
   if (a.breakStart !== undefined) row.break_start = a.breakStart;

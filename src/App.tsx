@@ -277,9 +277,78 @@ export default function App() {
     }
   };
 
-  const fetchUserProfile = async (token: string, isSilentCheck = false) => {
+  const takeOverSession = async (token?: string, userId?: string) => {
     try {
-      const localDeviceSessionId = await AsyncStorage.getItem('@constlabour_device_session_id');
+      let jwt = token || accessToken;
+      if (!jwt) {
+        const { data: { session } } = await supabase.auth.getSession();
+        jwt = session?.access_token || null;
+      }
+      if (!jwt) throw new Error('No active authentication session found');
+
+      const newSessionId = 'dev_' + Math.random().toString(36).substring(2) + Date.now().toString(36);
+      await AsyncStorage.setItem('@constlabour_device_session_id', newSessionId);
+
+      const uid = userId || user?.id;
+      if (uid) {
+        await supabase
+          .from('profiles')
+          .update({ device_session_id: newSessionId })
+          .eq('id', uid);
+      }
+
+      await fetch(
+        `https://${projectId}.supabase.co/functions/v1/make-server-689d7d60/auth/takeover-session`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${jwt}`,
+          },
+          body: JSON.stringify({ deviceSessionId: newSessionId }),
+        }
+      ).catch(console.error);
+
+      await fetchUserProfile(jwt, false, newSessionId);
+      Toast.show({
+        type: 'success',
+        text1: 'Session Active',
+        text2: 'Other device has been logged out.',
+      });
+    } catch (err: any) {
+      console.error('Error taking over session:', err);
+      Alert.alert('Error', 'Could not transfer session. Please try logging in again.');
+      await logout(true);
+    }
+  };
+
+  const promptDeviceTakeover = (token: string, userId?: string) => {
+    Alert.alert(
+      'Active on Another Device',
+      'Your ConstLabour account is currently logged in on another device. Would you like to log out of the other device and continue on this device?',
+      [
+        {
+          text: 'Cancel',
+          style: 'cancel',
+          onPress: async () => {
+            await logout(true);
+          },
+        },
+        {
+          text: 'Log Out Other Device',
+          style: 'default',
+          onPress: async () => {
+            await takeOverSession(token, userId);
+          },
+        },
+      ],
+      { cancelable: false }
+    );
+  };
+
+  const fetchUserProfile = async (token: string, isSilentCheck = false, overrideSessionId?: string) => {
+    try {
+      const localDeviceSessionId = overrideSessionId || (await AsyncStorage.getItem('@constlabour_device_session_id'));
       const response = await fetch(
         `https://${projectId}.supabase.co/functions/v1/make-server-689d7d60/auth/profile`,
         {
@@ -291,9 +360,9 @@ export default function App() {
       );
 
       if (response.status === 401 || response.status === 403) {
-        console.warn('Profile fetch returned 401/403: session revoked on backend.');
+        console.warn('Profile fetch returned 401/403: checking session takeover eligibility.');
         await handleUnauthorized(
-          'Your ConstLabour account was logged in from another device. Please log in again.'
+          'Your ConstLabour account is currently logged in on another device.'
         );
         return;
       }
@@ -307,16 +376,13 @@ export default function App() {
       const data = await response.json();
       const profile = data.profile;
 
-      // SINGLE-DEVICE LOGIN ENFORCEMENT
+      // SINGLE-DEVICE LOGIN ENFORCEMENT & TAKEOVER PROMPT
       if (
-        profile?.deviceSessionId &&
-        localDeviceSessionId &&
-        profile.deviceSessionId !== localDeviceSessionId
+        data.isDeviceMismatch ||
+        (profile?.deviceSessionId && localDeviceSessionId && profile.deviceSessionId !== localDeviceSessionId)
       ) {
-        console.warn('Single-device mismatch: DB has', profile.deviceSessionId, 'local is', localDeviceSessionId);
-        await handleUnauthorized(
-          'Your ConstLabour account was logged in from another device. For your security, only one active device is permitted at a time.'
-        );
+        console.warn('Single-device mismatch: DB has', profile?.deviceSessionId, 'local is', localDeviceSessionId);
+        promptDeviceTakeover(token, profile?.id);
         return;
       }
 
@@ -372,6 +438,10 @@ export default function App() {
       if (data.session?.access_token) {
         setAccessToken(data.session.access_token);
 
+        if (data.user?.id) {
+          await supabase.from('profiles').update({ device_session_id: deviceSessionId }).eq('id', data.user.id);
+        }
+
         // Sync deviceSessionId to backend profile
         await fetch(
           `https://${projectId}.supabase.co/functions/v1/make-server-689d7d60/auth/profile`,
@@ -380,12 +450,13 @@ export default function App() {
             headers: {
               'Content-Type': 'application/json',
               'Authorization': `Bearer ${data.session.access_token}`,
+              'x-device-session-id': deviceSessionId,
             },
             body: JSON.stringify({ deviceSessionId }),
           }
         ).catch(console.error);
 
-        await fetchUserProfile(data.session.access_token);
+        await fetchUserProfile(data.session.access_token, false, deviceSessionId);
         Toast.show({
           type: 'success',
           text1: 'Success',
@@ -449,7 +520,10 @@ export default function App() {
       if (data.session?.access_token) {
         await supabase.auth.setSession(data.session);
         setAccessToken(data.session.access_token);
-        await fetchUserProfile(data.session.access_token);
+        if (data.session.user?.id) {
+          await supabase.from('profiles').update({ device_session_id: deviceSessionId }).eq('id', data.session.user.id);
+        }
+        await fetchUserProfile(data.session.access_token, false, deviceSessionId);
         Toast.show({
           type: 'success',
           text1: 'Success',
@@ -561,7 +635,26 @@ export default function App() {
   };
 
   const handleUnauthorized = async (message?: string) => {
-    console.warn('Handling unauthorized session termination:', message);
+    console.warn('Handling unauthorized session:', message);
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (session?.access_token && session.user?.id) {
+        const { data: profile } = await supabase
+          .from('profiles')
+          .select('id, device_session_id')
+          .eq('id', session.user.id)
+          .maybeSingle();
+
+        const localDeviceSessionId = await AsyncStorage.getItem('@constlabour_device_session_id');
+        if (profile?.device_session_id && localDeviceSessionId && profile.device_session_id !== localDeviceSessionId) {
+          promptDeviceTakeover(session.access_token, session.user.id);
+          return;
+        }
+      }
+    } catch (e) {
+      console.error('Error during handleUnauthorized check:', e);
+    }
+
     await logout(true);
     Alert.alert(
       'Session Expired',
@@ -599,6 +692,8 @@ export default function App() {
     supabase,
     logout,
     handleUnauthorized,
+    takeOverSession,
+    promptDeviceTakeover,
     refreshUser,
     handleLogin,
     handleLoginWithPhone,

@@ -4,13 +4,29 @@ import * as db from "./db.ts";
 
 const app = new Hono();
 
-app.use("/*", cors({ origin: "*", allowHeaders: ["Content-Type", "Authorization"], allowMethods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"], exposeHeaders: ["Content-Length"], maxAge: 600 }));
+app.use("/*", cors({ origin: "*", allowHeaders: ["Content-Type", "Authorization", "x-device-session-id"], allowMethods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"], exposeHeaders: ["Content-Length"], maxAge: 600 }));
 
 async function authUser(c: any) {
   const t = c.req.header('Authorization')?.split(' ')[1];
   if (!t) return null;
   const { data: { user }, error } = await db.supabase.auth.getUser(t);
-  return (!error && user) ? user : null;
+  if (error || !user) return null;
+
+  // Single-device session enforcement
+  const clientSessionId = c.req.header('x-device-session-id');
+  if (clientSessionId) {
+    const { data: profile } = await db.supabase
+      .from('profiles')
+      .select('device_session_id')
+      .eq('id', user.id)
+      .maybeSingle();
+    if (profile?.device_session_id && profile.device_session_id !== clientSessionId) {
+      console.warn(`Device session mismatch for user ${user.id}: client=${clientSessionId}, db=${profile.device_session_id}`);
+      return null; // Triggers 401 Unauthorized for previous device!
+    }
+  }
+
+  return user;
 }
 
 async function getContractorId(userId: string) {
@@ -83,7 +99,7 @@ app.post("/make-server-689d7d60/auth/register", async (c) => {
 // LOGIN WITH PHONE & PASSWORD
 app.post("/make-server-689d7d60/auth/login-phone", async (c) => {
   try {
-    const { phone, password } = await c.req.json();
+    const { phone, password, deviceSessionId } = await c.req.json();
     if (!phone || !password) {
       return c.json({ error: 'Mobile number and password are required' }, 400);
     }
@@ -112,6 +128,11 @@ app.post("/make-server-689d7d60/auth/login-phone", async (c) => {
       return c.json({ error: 'Incorrect password. Please try again or login with OTP.' }, 401);
     }
 
+    if (deviceSessionId) {
+      await db.supabase.from('profiles').update({ device_session_id: deviceSessionId }).eq('id', profile.id);
+      profile.deviceSessionId = deviceSessionId;
+    }
+
     return c.json({
       success: true,
       session: signInData.session,
@@ -134,12 +155,72 @@ app.post("/make-server-689d7d60/auth/verify-otp", async (c) => {
 
 app.get("/make-server-689d7d60/auth/profile", async (c) => {
   try {
-    const user = await authUser(c);
-    if (!user) return c.json({ error: 'Unauthorized' }, 401);
+    const t = c.req.header('Authorization')?.split(' ')[1];
+    if (!t) return c.json({ error: 'Unauthorized' }, 401);
+    const { data: { user }, error } = await db.supabase.auth.getUser(t);
+    if (error || !user) return c.json({ error: 'Unauthorized' }, 401);
+
     let profile = await db.getProfile(user.id);
     if (!profile) profile = { id: user.id, email: user.email, role: 'contractor', name: user.email };
-    return c.json({ profile, user: profile });
+
+    const clientSessionId = c.req.header('x-device-session-id');
+    const isDeviceMismatch = Boolean(
+      clientSessionId &&
+      profile.deviceSessionId &&
+      profile.deviceSessionId !== clientSessionId
+    );
+
+    return c.json({
+      profile,
+      user: profile,
+      isDeviceMismatch,
+      activeDeviceSessionId: profile.deviceSessionId,
+    });
   } catch (e: any) { return c.json({ error: e.message }, 500); }
+});
+
+app.put("/make-server-689d7d60/auth/profile", async (c) => {
+  try {
+    const t = c.req.header('Authorization')?.split(' ')[1];
+    if (!t) return c.json({ error: 'Unauthorized' }, 401);
+    const { data: { user }, error } = await db.supabase.auth.getUser(t);
+    if (error || !user) return c.json({ error: 'Unauthorized' }, 401);
+
+    const body = await c.req.json();
+    let profile = await db.getProfile(user.id);
+    if (!profile) {
+      profile = { id: user.id, email: user.email, role: 'contractor', name: user.email };
+    }
+
+    if (body.name !== undefined) profile.name = String(body.name).trim();
+    if (body.deviceSessionId !== undefined) profile.deviceSessionId = body.deviceSessionId;
+    if (body.email !== undefined && String(body.email).trim()) {
+      profile.email = String(body.email).trim().toLowerCase();
+    }
+    // Mobile number is strictly non-editable as required by user
+
+    await db.upsertProfile(profile);
+    return c.json({ success: true, profile });
+  } catch (e: any) { return c.json({ error: e.message }, 500); }
+});
+
+// SINGLE-DEVICE SESSION TAKEOVER
+app.post("/make-server-689d7d60/auth/takeover-session", async (c) => {
+  try {
+    const t = c.req.header('Authorization')?.split(' ')[1];
+    if (!t) return c.json({ error: 'Unauthorized' }, 401);
+    const { data: { user }, error } = await db.supabase.auth.getUser(t);
+    if (error || !user) return c.json({ error: 'Unauthorized' }, 401);
+
+    const body = await c.req.json();
+    const newSessionId = body.deviceSessionId || ('dev_' + Math.random().toString(36).substring(2) + Date.now().toString(36));
+
+    await db.supabase.from('profiles').update({ device_session_id: newSessionId }).eq('id', user.id);
+    const profile = await db.getProfile(user.id);
+    return c.json({ success: true, deviceSessionId: newSessionId, profile });
+  } catch (e: any) {
+    return c.json({ error: e.message }, 500);
+  }
 });
 
 // WORKERS
@@ -493,12 +574,16 @@ app.post("/make-server-689d7d60/attendance", async (c) => {
       ? Number(body.overtimePayment)
       : (existing?.overtimePayment !== undefined ? Number(existing.overtimePayment) : Math.round(otHours * otRate));
 
-    const status = ((body.status || existing?.status || '') as string).toLowerCase();
+    let rawStatus = ((body.status || existing?.status || 'present') as string).toLowerCase().trim();
+    let status = rawStatus;
+    if (status === 'overtime') status = 'present';
+    if (status === 'half_day') status = 'half-day';
+
     let dailyPayment = body.dailyPayment !== undefined && body.dailyPayment !== null ? Number(body.dailyPayment) : undefined;
     if (dailyPayment === undefined) {
-      if (status === 'present' || status === 'overtime') {
+      if (rawStatus === 'present' || rawStatus === 'overtime') {
         dailyPayment = dailyWage;
-      } else if (status === 'half-day' || status === 'half_day') {
+      } else if (rawStatus === 'half-day' || rawStatus === 'half_day') {
         dailyPayment = Math.round(dailyWage / 2);
       } else {
         dailyPayment = 0;
@@ -512,6 +597,7 @@ app.post("/make-server-689d7d60/attendance", async (c) => {
     const record = {
       id: existing ? existing.id : crypto.randomUUID(),
       ...body,
+      status,
       shift: normShift,
       dailyWage,
       overtimeRate: otRate,
@@ -566,12 +652,16 @@ app.put("/make-server-689d7d60/attendance/:id", async (c) => {
       ? Number(body.overtimePayment)
       : (existing.overtimePayment !== undefined ? Number(existing.overtimePayment) : Math.round(otHours * otRate));
 
-    const status = ((body.status || existing.status || '') as string).toLowerCase();
+    let rawStatus = ((body.status || existing.status || 'present') as string).toLowerCase().trim();
+    let status = rawStatus;
+    if (status === 'overtime') status = 'present';
+    if (status === 'half_day') status = 'half-day';
+
     let dailyPayment = body.dailyPayment !== undefined && body.dailyPayment !== null ? Number(body.dailyPayment) : undefined;
     if (dailyPayment === undefined) {
-      if (status === 'present' || status === 'overtime') {
+      if (rawStatus === 'present' || rawStatus === 'overtime') {
         dailyPayment = dailyWage;
-      } else if (status === 'half-day' || status === 'half_day') {
+      } else if (rawStatus === 'half-day' || rawStatus === 'half_day') {
         dailyPayment = Math.round(dailyWage / 2);
       } else {
         dailyPayment = 0;
@@ -587,6 +677,7 @@ app.put("/make-server-689d7d60/attendance/:id", async (c) => {
     const updated = {
       ...existing,
       ...body,
+      status,
       shift,
       dailyWage,
       overtimeRate: otRate,
@@ -906,7 +997,7 @@ app.get("/make-server-689d7d60/dashboard/stats", async (c) => {
     if (siteIds.length > 0) {
       const { data: siteWorkers } = await db.supabase
         .from('profiles')
-        .select('*')
+        .select('id, name, phone, daily_wage, role, site_id, contractor_id, skill_level')
         .eq('role', 'labour')
         .in('site_id', siteIds);
       if (siteWorkers && siteWorkers.length > 0) {
@@ -942,7 +1033,7 @@ app.get("/make-server-689d7d60/dashboard/stats", async (c) => {
     if (relevantSiteIds.length > 0 || workerIds.length > 0) {
       let q = db.supabase
         .from('attendance')
-        .select('*')
+        .select('worker_id, status, daily_payment, total_payment, daily_wage')
         .eq('date', today);
 
       if (relevantSiteIds.length > 0 && workerIds.length > 0) {
@@ -1022,44 +1113,129 @@ app.get("/make-server-689d7d60/foreman/stats", async (c) => {
   try {
     const user = await authUser(c);
     if (!user) return c.json({ error: 'Unauthorized' }, 401);
-    const { data: sites } = await db.supabase.from('sites').select('*').eq('foreman_id', user.id);
-    const assignedSites = sites?.length || 0;
-    const siteIds = sites?.map((s: any) => s.id) || [];
-    const siteName = sites?.[0]?.name || 'Assigned Site';
 
-    let assignedWorkersCount = 0;
-    if (siteIds.length > 0) {
-      const { count } = await db.supabase.from('profiles').select('*', { count: 'exact', head: true }).eq('role', 'labour').in('site_id', siteIds);
-      assignedWorkersCount = count || 0;
+    // 1. Get foreman profile to check both profile.site_id and profile.contractor_id
+    const profile = await db.getProfile(user.id);
+    const foremanSiteId = profile?.siteId;
+    const contractorId = profile?.contractorId;
+
+    // 2. Query sites assigned to this foreman:
+    // A site is assigned to this foreman if:
+    // - sites.foreman_id == user.id OR
+    // - sites.id == foremanSiteId
+    let sites: any[] = [];
+    if (foremanSiteId) {
+      const { data: s1 } = await db.supabase
+        .from('sites')
+        .select('id, name, contractor_id')
+        .eq('id', foremanSiteId);
+      if (s1 && s1.length > 0) sites.push(...s1);
     }
+
+    const { data: s2 } = await db.supabase
+      .from('sites')
+      .select('id, name, contractor_id')
+      .eq('foreman_id', user.id);
+    if (s2 && s2.length > 0) {
+      for (const site of s2) {
+        if (!sites.some((s) => s.id === site.id)) {
+          sites.push(site);
+        }
+      }
+    }
+
+    // If still no site found, but foreman has contractor_id, check contractor's sites
+    if (sites.length === 0 && contractorId) {
+      const { data: s3 } = await db.supabase
+        .from('sites')
+        .select('id, name, contractor_id')
+        .eq('contractor_id', contractorId);
+      if (s3 && s3.length > 0) {
+        sites.push(...s3);
+      }
+    }
+
+    const assignedSites = sites.length;
+    const siteIds = sites.map((s: any) => s.id);
+    const siteName = sites[0]?.name || (foremanSiteId ? 'Assigned Site' : 'No Site Assigned');
+
+    // 3. Find assigned workers:
+    // Workers with role = 'labour' assigned to these sites OR contractor
+    let assignedWorkers: any[] = [];
+    if (siteIds.length > 0) {
+      const { data: workers } = await db.supabase
+        .from('profiles')
+        .select('id, name, daily_wage, role, site_id')
+        .eq('role', 'labour')
+        .in('site_id', siteIds);
+      if (workers) assignedWorkers = workers;
+    } else if (contractorId) {
+      const { data: workers } = await db.supabase
+        .from('profiles')
+        .select('id, name, daily_wage, role, site_id')
+        .eq('role', 'labour')
+        .eq('contractor_id', contractorId);
+      if (workers) assignedWorkers = workers;
+    }
+
+    const assignedWorkersCount = assignedWorkers.length;
+    const workerIds = assignedWorkers.map((w: any) => w.id);
+
+    // 4. Calculate today's attendance in IST
     const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata' }).format(new Date());
     let presentToday = 0;
     let halfDayToday = 0;
     let absentToday = 0;
     let totalWagesToday = 0;
 
+    let attRecords: any[] = [];
     if (siteIds.length > 0) {
-      const { data: att } = await db.supabase.from('attendance').select('*').in('site_id', siteIds).eq('date', today);
-      if (att) {
-        for (const a of att) {
-          const status = (a.status || '').toLowerCase();
-          const baseWage = Number(a.daily_wage || 0);
-          let payment = Number(a.total_payment || a.daily_payment || 0);
-          if (payment === 0 && baseWage > 0) {
-            payment = (status === 'present' || status === 'overtime') ? baseWage : (status === 'half-day' || status === 'half_day') ? Math.round(baseWage / 2) : 0;
-          }
-          if (status === 'present' || status === 'overtime') {
-            presentToday++;
-            totalWagesToday += payment;
-          } else if (status === 'half-day' || status === 'half_day') {
-            halfDayToday++;
-            totalWagesToday += payment;
-          } else if (status === 'absent') {
-            absentToday++;
+      const { data: attBySite } = await db.supabase
+        .from('attendance')
+        .select('id, worker_id, status, daily_wage, total_payment, daily_payment, site_id')
+        .in('site_id', siteIds)
+        .eq('date', today);
+      if (attBySite) attRecords.push(...attBySite);
+    }
+
+    if (workerIds.length > 0) {
+      const { data: attByWorker } = await db.supabase
+        .from('attendance')
+        .select('id, worker_id, status, daily_wage, total_payment, daily_payment, site_id')
+        .in('worker_id', workerIds)
+        .eq('date', today);
+      if (attByWorker) {
+        for (const a of attByWorker) {
+          if (!attRecords.some((existing) => existing.id === a.id)) {
+            attRecords.push(a);
           }
         }
       }
     }
+
+    for (const a of attRecords) {
+      const status = (a.status || '').toLowerCase().trim();
+      const baseWage = Number(a.daily_wage || 0);
+      let payment = Number(a.total_payment || a.daily_payment || 0);
+      if (payment === 0 && baseWage > 0) {
+        payment = (status === 'present' || status === 'overtime')
+          ? baseWage
+          : (status === 'half-day' || status === 'half_day')
+          ? Math.round(baseWage / 2)
+          : 0;
+      }
+
+      if (status === 'present' || status === 'overtime') {
+        presentToday++;
+        totalWagesToday += payment;
+      } else if (status === 'half-day' || status === 'half_day') {
+        halfDayToday++;
+        totalWagesToday += payment;
+      } else if (status === 'absent') {
+        absentToday++;
+      }
+    }
+
     const unmarkedToday = Math.max(0, assignedWorkersCount - (presentToday + halfDayToday + absentToday));
     const turnoutPercentage = assignedWorkersCount > 0
       ? Math.round(((presentToday + (halfDayToday * 0.5)) / assignedWorkersCount) * 100)
@@ -1068,7 +1244,7 @@ app.get("/make-server-689d7d60/foreman/stats", async (c) => {
     return c.json({
       stats: {
         assignedWorkers: assignedWorkersCount,
-        assignedSites,
+        assignedSites: assignedSites > 0 ? assignedSites : (foremanSiteId ? 1 : 0),
         presentToday,
         halfDayToday,
         absentToday,
@@ -1086,63 +1262,16 @@ app.get("/make-server-689d7d60/worker/stats", async (c) => {
   try {
     const user = await authUser(c);
     if (!user) return c.json({ error: 'Unauthorized' }, 401);
-    const profile = await db.getProfile(user.id);
-    const { data: att } = await db.supabase.from('attendance').select('*').eq('worker_id', user.id);
-
-    const todayStr = new Date().toISOString().slice(0, 10);
-    const todayRecord = att?.find(a => a.date === todayStr);
-
-    const fullPresentDays = att?.filter(a => a.status === 'present').length || 0;
-    const halfDays = att?.filter(a => a.status === 'half-day').length || 0;
+    const { data: att } = await db.supabase.from('attendance').select('status, total_payment, date').eq('worker_id', user.id);
+    const presentDays = att?.filter(a => a.status === 'present' || a.status === 'half-day').length || 0;
     const absentDays = att?.filter(a => a.status === 'absent').length || 0;
-    const totalDaysWorked = fullPresentDays + (halfDays * 0.5);
+    const totalDaysWorked = presentDays;
     const totalEarnings = att?.reduce((sum, a) => sum + Number(a.total_payment || 0), 0) || 0;
-
     const thisMonth = new Date().toISOString().slice(0, 7);
-    const thisMonthAtt = att?.filter(a => a.date && a.date.startsWith(thisMonth)) || [];
-    const thisMonthPresent = thisMonthAtt.filter(a => a.status === 'present').length;
-    const thisMonthHalf = thisMonthAtt.filter(a => a.status === 'half-day').length;
-    const thisMonthAbsent = thisMonthAtt.filter(a => a.status === 'absent').length;
-    const thisMonthWorkCredits = thisMonthPresent + (thisMonthHalf * 0.5);
-    const thisMonthEarnings = thisMonthAtt.reduce((sum, a) => sum + Number(a.total_payment || 0), 0);
-    const thisMonthOtHours = thisMonthAtt.reduce((sum, a) => sum + Number(a.overtime_hours || 0), 0);
-    const thisMonthOtPay = thisMonthAtt.reduce((sum, a) => sum + Number(a.overtime_payment || 0), 0);
-    const thisMonthBasePay = thisMonthEarnings - thisMonthOtPay;
-
-    const { data: adv } = await db.supabase.from('advances').select('*').eq('worker_id', user.id).order('date', { ascending: false });
-    const pendingAdvances = adv?.filter(a => a.status === 'pending').reduce((sum, a) => sum + Number(a.amount || 0), 0) || 0;
-    const deductedAdvances = adv?.filter(a => a.status === 'deducted').reduce((sum, a) => sum + Number(a.amount || 0), 0) || 0;
-    const recentAdvances = (adv || []).slice(0, 5).map(db.mapAdvance);
-
-    let siteName = 'Floating / Not Assigned';
-    if (profile?.siteId) {
-      const site = await db.getSite(profile.siteId);
-      if (site) siteName = site.name;
-    }
-
-    return c.json({
-      stats: {
-        profile,
-        siteName,
-        todayRecord: todayRecord ? db.mapAttendance(todayRecord) : null,
-        totalDaysWorked,
-        presentDays: fullPresentDays,
-        halfDays,
-        absentDays,
-        totalEarnings,
-        thisMonthPresent,
-        thisMonthHalf,
-        thisMonthAbsent,
-        thisMonthWorkCredits,
-        thisMonthEarnings,
-        thisMonthOtHours,
-        thisMonthOtPay,
-        thisMonthBasePay,
-        pendingAdvances,
-        deductedAdvances,
-        recentAdvances,
-      }
-    });
+    const thisMonthEarnings = att?.filter(a => a.date && a.date.startsWith(thisMonth)).reduce((sum, a) => sum + Number(a.total_payment || 0), 0) || 0;
+    const { data: adv } = await db.supabase.from('advances').select('amount').eq('worker_id', user.id).eq('status', 'pending');
+    const pendingAdvances = adv?.reduce((sum, a) => sum + Number(a.amount || 0), 0) || 0;
+    return c.json({ stats: { totalDaysWorked, presentDays, absentDays, totalEarnings, thisMonthEarnings, pendingAdvances }});
   } catch (e: any) { return c.json({ error: e.message }, 500); }
 });
 
@@ -1159,24 +1288,9 @@ app.get("/make-server-689d7d60/worker/attendance", async (c) => {
     } else if (year) {
       q = q.gte('date', `${year}-01-01`).lte('date', `${year}-12-31`);
     }
-    const { data, error } = await q.order('date', { ascending: false });
+    const { data, error } = await q;
     if (error) throw error;
-
-    const profile = await db.getProfile(user.id);
-    const contractorId = profile?.contractorId;
-    const sites = contractorId ? await db.getSitesByContractor(contractorId) : [];
-    const siteMap = new Map<string, string>();
-    sites.forEach((s: any) => siteMap.set(s.id, s.name));
-
-    const enriched = (data || []).map((r: any) => {
-      const mapped = db.mapAttendance(r);
-      return {
-        ...mapped,
-        siteName: siteMap.get(r.site_id) || mapped.siteName || ''
-      };
-    });
-
-    return c.json({ attendance: enriched });
+    return c.json({ attendance: (data || []).map(db.mapAttendance) });
   } catch (e: any) { return c.json({ error: e.message }, 500); }
 });
 

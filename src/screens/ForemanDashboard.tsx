@@ -55,6 +55,108 @@ export function ModernForemanDashboard({ accessToken }: ForemanDashboardProps) {
     }, [token])
   );
 
+  const fetchStatsDirectFromSupabase = async () => {
+    if (!context?.user?.id || !context?.supabase) return;
+    const userId = context.user.id;
+    const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata' }).format(new Date());
+
+    // 1. Get profile
+    const { data: prof } = await context.supabase
+      .from('profiles')
+      .select('id, site_id, contractor_id')
+      .eq('id', userId)
+      .maybeSingle();
+
+    const foremanSiteId = prof?.site_id || (context.user as any)?.siteId;
+    const contractorId = prof?.contractor_id || context.user.contractorId;
+
+    // 2. Resolve sites
+    let siteIds: string[] = [];
+    let siteName = '';
+
+    if (foremanSiteId) {
+      const { data: s1 } = await context.supabase.from('sites').select('id, name').eq('id', foremanSiteId);
+      if (s1 && s1.length > 0) {
+        siteIds.push(...s1.map((s: any) => s.id));
+        siteName = s1[0].name;
+      }
+    }
+    const { data: s2 } = await context.supabase.from('sites').select('id, name').eq('foreman_id', userId);
+    if (s2 && s2.length > 0) {
+      for (const s of s2) {
+        if (!siteIds.includes(s.id)) siteIds.push(s.id);
+      }
+      if (!siteName && s2[0]?.name) siteName = s2[0].name;
+    }
+
+    // 3. Resolve assigned workers
+    let workerCount = 0;
+    if (siteIds.length > 0) {
+      const { count } = await context.supabase
+        .from('profiles')
+        .select('*', { count: 'exact', head: true })
+        .eq('role', 'labour')
+        .in('site_id', siteIds);
+      workerCount = count || 0;
+    } else if (contractorId) {
+      const { count } = await context.supabase
+        .from('profiles')
+        .select('*', { count: 'exact', head: true })
+        .eq('role', 'labour')
+        .eq('contractor_id', contractorId);
+      workerCount = count || 0;
+    }
+
+    // 4. Resolve today's attendance
+    let presentToday = 0;
+    let halfDayToday = 0;
+    let absentToday = 0;
+    let totalWagesToday = 0;
+
+    if (siteIds.length > 0) {
+      const { data: att } = await context.supabase
+        .from('attendance')
+        .select('status, daily_wage, total_payment, daily_payment')
+        .in('site_id', siteIds)
+        .eq('date', today);
+
+      if (att) {
+        for (const a of att) {
+          const st = (a.status || '').toLowerCase().trim();
+          const baseWage = Number(a.daily_wage || 0);
+          let payment = Number(a.total_payment || a.daily_payment || 0);
+          if (payment === 0 && baseWage > 0) {
+            payment = (st === 'present' || st === 'overtime') ? baseWage : (st === 'half-day' || st === 'half_day') ? Math.round(baseWage / 2) : 0;
+          }
+          if (st === 'present' || st === 'overtime') {
+            presentToday++;
+            totalWagesToday += payment;
+          } else if (st === 'half-day' || st === 'half_day') {
+            halfDayToday++;
+            totalWagesToday += payment;
+          } else if (st === 'absent') {
+            absentToday++;
+          }
+        }
+      }
+    }
+
+    const turnoutPercentage = workerCount > 0
+      ? Math.round(((presentToday + (halfDayToday * 0.5)) / workerCount) * 100)
+      : 0;
+
+    setStats({
+      assignedWorkers: workerCount,
+      assignedSites: siteIds.length > 0 ? siteIds.length : (foremanSiteId ? 1 : 0),
+      presentToday,
+      absentToday,
+      siteName: siteName || (foremanSiteId ? 'Assigned Site' : 'No Site Assigned'),
+      totalWagesToday: Math.round(totalWagesToday),
+      turnoutPercentage,
+    });
+    setError(null);
+  };
+
   const fetchStats = async () => {
     if (!token) return;
     setLoading(true);
@@ -81,8 +183,13 @@ export function ModernForemanDashboard({ accessToken }: ForemanDashboardProps) {
       setStats(data.stats || null);
       setError(null);
     } catch (err: any) {
-      console.error('Error fetching foreman stats:', err);
-      setError(err?.message || 'Could not load site overview');
+      console.warn('Edge function stats fetch failed, falling back to direct database query:', err);
+      try {
+        await fetchStatsDirectFromSupabase();
+      } catch (fallbackErr: any) {
+        console.error('Direct stats fallback error:', fallbackErr);
+        setError(err?.message || 'Could not load site overview');
+      }
     } finally {
       setLoading(false);
     }
@@ -111,12 +218,14 @@ export function ModernForemanDashboard({ accessToken }: ForemanDashboardProps) {
 
   if (!context) return null;
 
-  const presentCount = stats?.presentToday || 0;
-  const absentCount = stats?.absentToday || 0;
-  const assignedWorkers = stats?.assignedWorkers || 0;
-  const assignedSites = stats?.assignedSites || 1;
+  const presentCount = stats?.presentToday ?? 0;
+  const absentCount = stats?.absentToday ?? 0;
+  const assignedWorkers = stats?.assignedWorkers ?? 0;
+  const assignedSites = stats?.assignedSites !== undefined ? stats.assignedSites : ((context.user as any)?.siteId ? 1 : 0);
 
-  const turnoutPercentage = assignedWorkers > 0 ? Math.round((presentCount / assignedWorkers) * 100) : 90;
+  const turnoutPercentage = stats?.turnoutPercentage !== undefined
+    ? stats.turnoutPercentage
+    : (assignedWorkers > 0 ? Math.round((presentCount / assignedWorkers) * 100) : 0);
 
   return (
     <SafeAreaView style={styles.container} edges={['top']}>

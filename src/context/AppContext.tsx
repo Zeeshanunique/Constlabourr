@@ -41,6 +41,8 @@ export interface AppContextType {
   supabase: typeof supabase;
   logout: (isForced?: boolean) => void;
   handleUnauthorized: (message?: string) => Promise<void>;
+  takeOverSession?: (token?: string, userId?: string) => Promise<void>;
+  promptDeviceTakeover?: (token: string, userId?: string) => void;
   refreshUser: () => Promise<void>;
   handleLogin: (email: string, password: string) => Promise<void>;
   handleLoginWithPhone: (phone: string, password: string) => Promise<void>;

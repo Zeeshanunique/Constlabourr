@@ -183,28 +183,20 @@ export function PayrollTab({ accessToken }: PayrollTabProps) {
 
   // Filters
   const [selectedSiteId, setSelectedSiteId] = useState<string>('all');
-  const [rangePreset, setRangePreset] = useState<RangePreset>('this-week');
+  const [rangePreset, setRangePreset] = useState<RangePreset>('this-month');
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
   const [searchQuery, setSearchQuery] = useState('');
 
-  // Date range defaults to current week (Monday to Sunday)
+  // Date range defaults to current month (1st to last day of current month)
   const [startDate, setStartDate] = useState<string>(() => {
     const curr = new Date();
-    const day = curr.getDay();
-    const diffToMonday = (day === 0 ? -6 : 1) - day;
-    const monday = new Date(curr);
-    monday.setDate(curr.getDate() + diffToMonday);
-    return formatDateKey(monday);
+    const firstDay = new Date(curr.getFullYear(), curr.getMonth(), 1);
+    return formatDateKey(firstDay);
   });
   const [endDate, setEndDate] = useState<string>(() => {
     const curr = new Date();
-    const day = curr.getDay();
-    const diffToMonday = (day === 0 ? -6 : 1) - day;
-    const monday = new Date(curr);
-    monday.setDate(curr.getDate() + diffToMonday);
-    const sunday = new Date(monday);
-    sunday.setDate(monday.getDate() + 6);
-    return formatDateKey(sunday);
+    const lastDay = new Date(curr.getFullYear(), curr.getMonth() + 1, 0);
+    return formatDateKey(lastDay);
   });
 
   // iOS DatePicker temporary target
@@ -603,52 +595,108 @@ export function PayrollTab({ accessToken }: PayrollTabProps) {
       const totalDeductedAdvanceAmount = deductedAdvances.reduce((sum, a) => sum + Number(a.amount || 0), 0);
       const totalCycleAdvances = totalPendingAdvanceAmount + totalDeductedAdvanceAmount;
 
-      // Find historical settlements for this worker that fall in this date range
-      const workerSettlements = allSettlements.filter((s) => {
-        if (s.workerId !== worker.id) return false;
-        // Check date overlap with cycle
-        return (
-          (s.startDate <= endDate && s.endDate >= startDate) ||
-          (s.settledAt >= startDate && s.settledAt.slice(0, 10) <= endDate)
-        );
+      // Find all historical settlements for this worker
+      const allWorkerSettlements = allSettlements.filter((s) => s.workerId === worker.id);
+
+      // Determine date-level settlement status for records in this cycle [startDate, endDate]
+      let settledGrossWagesInCycle = 0;
+      let unsettledGrossWagesInCycle = 0;
+      const markedMessDates = new Set<string>();
+      const unsettledMarkedMessDates = new Set<string>();
+
+      records.forEach((rec) => {
+        if (!rec.date) return;
+        const st = (rec.status || '').toLowerCase().trim();
+        const isMarked =
+          st === 'present' ||
+          st === 'half-day' ||
+          st === 'half_day' ||
+          st === 'absent' ||
+          st === 'overtime';
+        if (isMarked) {
+          markedMessDates.add(rec.date);
+        }
+
+        // Calculate gross earned for this day
+        const hours = Number(rec.overtimeHours || 0);
+        let otPay = Number(rec.overtimePayment || 0);
+        if (otPay === 0 && hours > 0) {
+          const rate = Number(rec.overtimeRate || workerOtRate);
+          otPay = hours * rate;
+        }
+        let dayGross = 0;
+        if (st === 'present' || st === 'overtime') {
+          dayGross = workerDailyWage + otPay;
+        } else if (st === 'half-day' || st === 'half_day') {
+          dayGross = Math.round(workerDailyWage / 2) + otPay;
+        }
+
+        // Check if this specific date is covered by ANY settlement for this worker
+        const isDateSettled = allWorkerSettlements.some((s) => {
+          const sStart = s.startDate || s.settledThroughDate;
+          const sEnd = s.endDate || s.settledThroughDate;
+          if (!sStart || !sEnd) return false;
+          return rec.date >= sStart && rec.date <= sEnd;
+        });
+
+        if (isDateSettled) {
+          settledGrossWagesInCycle += dayGross;
+        } else {
+          unsettledGrossWagesInCycle += dayGross;
+          if (isMarked) {
+            unsettledMarkedMessDates.add(rec.date);
+          }
+        }
       });
 
-      // Total net amount disbursed in historical settlements
-      const totalSettledPaid = workerSettlements.reduce((sum, s) => sum + Number(s.amount || 0), 0);
-      // Total gross wages that were covered in past settlements
-      const totalSettledGross = workerSettlements.reduce((sum, s) => sum + Number(s.grossWagesSettled || s.amount || 0), 0);
+      // Find settlements for this worker that overlap this cycle's wage period
+      const workerSettlements = allWorkerSettlements.filter((s) => {
+        const sStart = s.startDate || s.settledThroughDate;
+        const sEnd = s.endDate || s.settledThroughDate;
+        if (!sStart || !sEnd) return false;
+        return sStart <= endDate && sEnd >= startDate;
+      });
 
       // Mess Accounting:
       // Deduct mess charge whether worker is absent or half day or present.
       // Only unmarked days will NOT be calculated.
-      // Distinct calendar dates marked in cycle (present, half-day, absent, overtime):
-      const markedMessDates = new Set<string>();
-      records.forEach((rec) => {
-        if (!rec.date) return;
-        const st = (rec.status || '').toLowerCase().trim();
-        if (st === 'present' || st === 'half-day' || st === 'half_day' || st === 'absent' || st === 'overtime') {
-          markedMessDates.add(rec.date);
-        }
-      });
       const messDaysCount = markedMessDates.size;
       const messChargePerDay = Number(worker.messCharge || 0);
       const totalMessDeduction = messDaysCount * messChargePerDay;
+      const pendingMessDeduction = unsettledMarkedMessDates.size * messChargePerDay;
 
-      // Total Pending Deductions = Pending Advances + Mess Deductions
-      const totalPendingDeductions = totalPendingAdvanceAmount + totalMessDeduction;
+      // Pending Deductions = Pending Advances + Pending Mess Deductions (only on unsettled days)
+      const totalPendingDeductions = totalPendingAdvanceAmount + pendingMessDeduction;
 
-      // Remaining Gross Wages to settle = Gross minus already settled gross
-      const unsettledGrossWages = Math.max(0, grossWages - totalSettledGross);
+      // Remaining Gross Wages to settle = only the unsettled gross wages in this cycle
+      const unsettledGrossWages = unsettledGrossWagesInCycle;
+      const totalSettledGross = settledGrossWagesInCycle;
+
+      // Net amount disbursed for settled portion in this cycle
+      const totalSettledPaid = Math.max(
+        0,
+        totalSettledGross -
+          totalDeductedAdvanceAmount -
+          (messDaysCount - unsettledMarkedMessDates.size) * messChargePerDay
+      );
 
       // Balance Due = Unsettled Gross - Total Pending Deductions
       // If Gross >= Deductions: Net cash to pay worker
       // If Deductions > Gross: Worker has an outstanding advance/kharcha balance!
       const rawNet = unsettledGrossWages - totalPendingDeductions;
       const balanceDue = Math.max(0, rawNet);
-      const hasOutstandingAdvance = totalPendingDeductions > unsettledGrossWages;
+      const hasOutstandingAdvance =
+        totalPendingAdvanceAmount > 0 && totalPendingDeductions > unsettledGrossWages;
 
-      const isFullySettled = (totalSettledPaid > 0 || grossWages === 0) && balanceDue === 0 && !hasOutstandingAdvance;
-      const isPartiallySettled = totalSettledPaid > 0 && balanceDue > 0;
+      const isFullySettled =
+        (totalSettledGross > 0 || grossWages === 0) &&
+        unsettledGrossWages === 0 &&
+        balanceDue === 0 &&
+        totalPendingAdvanceAmount === 0;
+
+      const isPartiallySettled =
+        (totalSettledGross > 0 || totalSettledPaid > 0) &&
+        (balanceDue > 0 || unsettledGrossWages > 0);
 
       return {
         worker,
@@ -700,7 +748,7 @@ export function PayrollTab({ accessToken }: PayrollTabProps) {
 
     // Status filter
     if (statusFilter === 'pending') {
-      result = result.filter((s) => s.balanceDue > 0 || s.hasOutstandingAdvance);
+      result = result.filter((s) => s.balanceDue > 0 || s.totalPendingAdvanceAmount > 0);
     } else if (statusFilter === 'settled') {
       result = result.filter((s) => s.isFullySettled);
     }
@@ -733,7 +781,7 @@ export function PayrollTab({ accessToken }: PayrollTabProps) {
 
       if (s.isFullySettled) {
         settledCount++;
-      } else if (s.balanceDue > 0 || s.hasOutstandingAdvance) {
+      } else if (s.balanceDue > 0 || s.totalPendingAdvanceAmount > 0) {
         pendingCount++;
       }
     });
@@ -2116,7 +2164,7 @@ export function PayrollTab({ accessToken }: PayrollTabProps) {
                 </View>
               )}
             </View>
-            <Text style={styles.heroNetValue}>₹{totals.totalPendingDisbursable.toLocaleString()}</Text>
+            <Text style={styles.heroNetValue} numberOfLines={1} adjustsFontSizeToFit>₹{totals.totalPendingDisbursable.toLocaleString()}</Text>
             <Text style={styles.heroNetSub}>
               {totals.pendingCount > 0
                 ? 'Direct UPI • Cash Envelopes • Bank Transfer Settlement Ready'
@@ -2477,7 +2525,7 @@ export function PayrollTab({ accessToken }: PayrollTabProps) {
 
                 {/* Action Buttons Row */}
                 <View style={styles.entryActionRow}>
-                  {isFullySettled ? (
+                  {isFullySettled || (balanceDue === 0 && totalPendingAdvanceAmount === 0) ? (
                     <View style={styles.fullySettledBanner}>
                       <MaterialIcons name="verified" size={16} color={colors.successDark} />
                       <Text style={styles.fullySettledText}>
@@ -2501,21 +2549,23 @@ export function PayrollTab({ accessToken }: PayrollTabProps) {
                         </TouchableOpacity>
                       )}
 
-                      {/* Open Settle & Record Modal */}
-                      <TouchableOpacity
-                        style={[styles.settleBtn, balanceDue === 0 ? { backgroundColor: colors.accent } : null]}
-                        onPress={() => handleOpenSettleModal(summary)}
-                        activeOpacity={0.85}
-                      >
-                        <MaterialIcons name="check" size={16} color="#FFFFFF" />
-                        <Text style={styles.settleBtnText}>
-                          {isPartiallySettled
-                            ? `Disburse Remaining ₹${balanceDue.toLocaleString()}`
-                            : balanceDue > 0
-                            ? `Disburse ₹${balanceDue.toLocaleString()}`
-                            : 'Mark Advances Deducted'}
-                        </Text>
-                      </TouchableOpacity>
+                      {/* Open Settle & Record Modal - Only show if there is a balance due OR pending advances to deduct */}
+                      {(balanceDue > 0 || totalPendingAdvanceAmount > 0) && (
+                        <TouchableOpacity
+                          style={[styles.settleBtn, balanceDue === 0 ? { backgroundColor: colors.accent } : null]}
+                          onPress={() => handleOpenSettleModal(summary)}
+                          activeOpacity={0.85}
+                        >
+                          <MaterialIcons name="check" size={16} color="#FFFFFF" />
+                          <Text style={styles.settleBtnText}>
+                            {isPartiallySettled
+                              ? `Disburse Remaining ₹${balanceDue.toLocaleString()}`
+                              : balanceDue > 0
+                              ? `Disburse ₹${balanceDue.toLocaleString()}`
+                              : `Mark Advance Deducted (₹${totalPendingAdvanceAmount.toLocaleString()})`}
+                          </Text>
+                        </TouchableOpacity>
+                      )}
                     </View>
                   )}
                 </View>
@@ -2528,7 +2578,12 @@ export function PayrollTab({ accessToken }: PayrollTabProps) {
       {/* ==========================================
           5. SETTLE & DISBURSE MODAL
           ========================================== */}
-      <Modal visible={!!settleTarget} transparent animationType="fade">
+      <Modal
+        visible={!!settleTarget}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setSettleTarget(null)}
+      >
         <View style={styles.modalOverlay}>
           <View style={styles.modalSheet}>
             <View style={styles.modalHeader}>
@@ -2712,7 +2767,12 @@ export function PayrollTab({ accessToken }: PayrollTabProps) {
       {/* ==========================================
           6. ISSUE ADVANCE MODAL (WITH DROPDOWN)
           ========================================== */}
-      <Modal visible={showAdvanceModal} transparent animationType="fade">
+      <Modal
+        visible={showAdvanceModal}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowAdvanceModal(false)}
+      >
         <View style={styles.modalOverlay}>
           <View style={styles.modalSheet}>
             <View style={styles.modalHeader}>
@@ -2880,7 +2940,11 @@ export function PayrollTab({ accessToken }: PayrollTabProps) {
       {/* ==========================================
           ADVANCE & KHARCHA HISTORY FULL MODAL
           ========================================== */}
-      <Modal visible={showAdvanceHistory} animationType="slide">
+      <Modal
+        visible={showAdvanceHistory}
+        animationType="slide"
+        onRequestClose={() => setShowAdvanceHistory(false)}
+      >
         <SafeAreaView style={styles.historyContainer} edges={['top', 'bottom']}>
           {/* Header */}
           <View style={styles.historyHeader}>
@@ -3164,7 +3228,11 @@ export function PayrollTab({ accessToken }: PayrollTabProps) {
 
       {/* iOS DateTimePicker Modal */}
       {Platform.OS === 'ios' && pickerTarget && (
-        <Modal transparent animationType="slide">
+        <Modal
+          transparent
+          animationType="slide"
+          onRequestClose={() => setPickerTarget(null)}
+        >
           <View style={styles.iosPickerOverlay}>
             <View style={styles.iosPickerContainer}>
               <View style={styles.iosPickerHeader}>
@@ -3375,11 +3443,13 @@ const styles = StyleSheet.create({
   },
   bentoRow: {
     flexDirection: 'row',
+    flexWrap: 'wrap',
     gap: 8,
     marginBottom: 10,
   },
   bentoCard: {
     flex: 1,
+    minWidth: '22%',
     backgroundColor: colors.surface,
     borderRadius: radii.lg,
     padding: 10,
@@ -3416,6 +3486,8 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
+    flexWrap: 'wrap',
+    gap: 10,
     backgroundColor: colors.surface,
     borderRadius: radii.xl,
     padding: 14,
@@ -3426,6 +3498,7 @@ const styles = StyleSheet.create({
   },
   heroNetLeft: {
     flex: 1,
+    minWidth: 160,
   },
   heroBadgeRow: {
     flexDirection: 'row',
@@ -3466,8 +3539,8 @@ const styles = StyleSheet.create({
     backgroundColor: colors.primary,
     paddingHorizontal: 12,
     paddingVertical: 9,
+    minHeight: 40,
     borderRadius: radii.md,
-    marginLeft: 10,
   },
   settleAllBtnText: {
     fontSize: 12,

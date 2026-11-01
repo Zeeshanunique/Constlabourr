@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { View, StyleSheet, FlatList, TouchableOpacity, ScrollView, Linking } from 'react-native';
+import { View, StyleSheet, FlatList, TouchableOpacity, ScrollView, Linking, RefreshControl } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Text } from '@/components/ui/text';
 import { Input, InputField } from '@/components/ui/input';
@@ -11,6 +11,7 @@ import { Modal, ModalBackdrop, ModalContent, ModalHeader, ModalBody, ModalCloseB
 import { VStack } from '@/components/ui/vstack';
 import { theme } from '@/styles/theme';
 import { useTranslation } from '@/i18n';
+import { ListSkeleton } from '@/components/shared/Skeleton';
 
 interface Worker {
   id: string;
@@ -40,6 +41,8 @@ export function ForemanWorkersTab({ accessToken }: ForemanWorkersTabProps) {
   const { t } = useTranslation();
   const token = accessToken || (route.params as any)?.accessToken;
   const [workers, setWorkers] = useState<Worker[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedSkillFilter, setSelectedSkillFilter] = useState<string>('all');
   const [selectedWorker, setSelectedWorker] = useState<Worker | null>(null);
@@ -53,6 +56,7 @@ export function ForemanWorkersTab({ accessToken }: ForemanWorkersTabProps) {
 
   const fetchWorkers = async () => {
     if (!token) return;
+    setLoading(true);
     try {
       const response = await fetch(
         `https://${projectId}.supabase.co/functions/v1/make-server-689d7d60/workers`,
@@ -69,7 +73,15 @@ export function ForemanWorkersTab({ accessToken }: ForemanWorkersTabProps) {
         text1: 'Error',
         text2: 'Failed to fetch workers',
       });
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
     }
+  };
+
+  const onRefresh = async () => {
+    setRefreshing(true);
+    await fetchWorkers();
   };
 
   const filteredWorkers = workers.filter((worker) => {
@@ -185,11 +197,21 @@ export function ForemanWorkersTab({ accessToken }: ForemanWorkersTabProps) {
         </View>
 
         {/* Worker Cards */}
-        <FlatList
-          data={filteredWorkers}
-          keyExtractor={(item) => item.id}
-          showsVerticalScrollIndicator={false}
-          contentContainerStyle={styles.listContent}
+        {loading && workers.length === 0 ? (
+          <ListSkeleton count={5} />
+        ) : (
+          <FlatList
+            data={filteredWorkers}
+            keyExtractor={(item) => item.id}
+            showsVerticalScrollIndicator={false}
+            contentContainerStyle={styles.listContent}
+            refreshControl={
+              <RefreshControl
+                refreshing={refreshing}
+                onRefresh={onRefresh}
+                tintColor={theme.colors.safetyOrange}
+              />
+            }
           renderItem={({ item }) => {
             const skill = getSkillConfig(item.skillLevel);
             const isActive = item.status === 'active';
@@ -256,6 +278,7 @@ export function ForemanWorkersTab({ accessToken }: ForemanWorkersTabProps) {
             </View>
           }
         />
+        )}
       </View>
 
       {/* Worker Detail Modal */}

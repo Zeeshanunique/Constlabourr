@@ -59,7 +59,9 @@ export const formStyles = StyleSheet.create({
   fullScreenSubmitBtn: {
     backgroundColor: '#0F172A',
     borderRadius: 25,
-    height: 50,
+    minHeight: 50,
+    paddingVertical: 12,
+    paddingHorizontal: 16,
     alignItems: 'center',
     justifyContent: 'center',
     width: '100%',
@@ -262,6 +264,7 @@ export const formStyles = StyleSheet.create({
     fontWeight: '800',
     color: theme.colors.slate[900],
     letterSpacing: -0.3,
+    flexShrink: 1,
   },
   modalSubtitle: {
     fontSize: 12,

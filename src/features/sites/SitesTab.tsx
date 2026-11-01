@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import {
   View,
   StyleSheet,
@@ -7,6 +7,7 @@ import {
   TouchableOpacity,
   Text,
   ActivityIndicator,
+  Platform,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { FormModal } from '@/components/shared/FormModal';
@@ -19,6 +20,8 @@ import Toast from 'react-native-toast-message';
 import Svg, { Circle, Line } from 'react-native-svg';
 import { colors, shadows, radii } from '@/styles/theme';
 import { useTranslation } from '@/i18n';
+import { ListSkeleton } from '@/components/shared/Skeleton';
+import { EmptyState } from '@/components/shared/EmptyState';
 
 interface Site {
   id: string;
@@ -38,6 +41,77 @@ interface Foreman {
 interface SitesTabProps {
   accessToken?: string;
 }
+
+interface SiteCardItemProps {
+  item: Site;
+  foremanName: string;
+  onEdit: (site: Site) => void;
+  onDelete: (site: Site) => void;
+  t: (key: string) => string;
+  language: string;
+}
+
+// Extracted & memoized site card to eliminate redundant re-renders across list items
+const SiteCardItem = React.memo(function SiteCardItem({
+  item,
+  foremanName,
+  onEdit,
+  onDelete,
+  t,
+  language,
+}: SiteCardItemProps) {
+  return (
+    <View style={styles.siteCard}>
+      <View style={styles.siteCardHeader}>
+        <View style={styles.siteTitleContainer}>
+          <View style={styles.siteIconBox}>
+            <MaterialIcons name="apartment" size={20} color={colors.primary} />
+          </View>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.siteName}>{item.name}</Text>
+            <Text style={styles.siteAddress}>
+              📍 {item.address || (language === 'hi' ? 'पता दर्ज नहीं' : language === 'bn' ? 'ঠিকানা নেই' : 'Address pending')}
+            </Text>
+          </View>
+        </View>
+        <View style={styles.activePill}>
+          <View style={styles.greenDot} />
+          <Text style={styles.activePillText}>{t('sites.running').toUpperCase()}</Text>
+        </View>
+      </View>
+
+      {/* Foreman & Timeline Row */}
+      <View style={styles.metaRow}>
+        <View style={styles.metaItem}>
+          <MaterialIcons name="engineering" size={15} color={colors.accent} />
+          <Text style={styles.metaLabel}>{t('sites.assignedForeman')}: </Text>
+          <Text style={styles.metaVal}>{foremanName}</Text>
+        </View>
+        {item.startDate ? (
+          <View style={styles.metaItem}>
+            <MaterialIcons name="event" size={15} color={colors.textMuted} />
+            <Text style={styles.metaVal}>{item.startDate}</Text>
+          </View>
+        ) : null}
+      </View>
+
+      {/* Action Strip */}
+      <View style={styles.actionStrip}>
+        <TouchableOpacity style={styles.actionBtn} onPress={() => onEdit(item)}>
+          <MaterialIcons name="edit" size={15} color={colors.primary} />
+          <Text style={styles.actionBtnText}>{t('common.edit')}</Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={[styles.actionBtn, { marginLeft: 8 }]}
+          onPress={() => onDelete(item)}
+        >
+          <MaterialIcons name="delete-outline" size={15} color={colors.error} />
+          <Text style={[styles.actionBtnText, { color: colors.error }]}>{t('common.delete')}</Text>
+        </TouchableOpacity>
+      </View>
+    </View>
+  );
+});
 
 export function SitesTab({ accessToken }: SitesTabProps) {
   const route = useRoute();
@@ -173,7 +247,7 @@ export function SitesTab({ accessToken }: SitesTabProps) {
     }
   };
 
-  const handleDelete = (site: Site) => {
+  const handleDelete = useCallback((site: Site) => {
     Alert.alert(
       'Delete Construction Site',
       `Are you sure you want to delete ${site.name}?`,
@@ -203,9 +277,9 @@ export function SitesTab({ accessToken }: SitesTabProps) {
         },
       ]
     );
-  };
+  }, [token]);
 
-  const handleEdit = (site: Site) => {
+  const handleEdit = useCallback((site: Site) => {
     setEditingSite(site);
     setFormData({
       name: site.name,
@@ -215,7 +289,7 @@ export function SitesTab({ accessToken }: SitesTabProps) {
       foremanId: site.foremanId || '',
     });
     setIsModalOpen(true);
-  };
+  }, []);
 
   const resetForm = () => {
     setFormData({
@@ -228,10 +302,32 @@ export function SitesTab({ accessToken }: SitesTabProps) {
     setEditingSite(null);
   };
 
-  const foremanMap = new Map<string, string>();
-  foremen.forEach((f) => foremanMap.set(f.id, f.name));
+  const foremanMap = useMemo(() => {
+    const map = new Map<string, string>();
+    foremen.forEach((f) => map.set(f.id, f.name));
+    return map;
+  }, [foremen]);
 
-  const foremanOptions = foremen.map((f) => ({ label: f.name, value: f.id }));
+  const foremanOptions = useMemo(() => {
+    return foremen.map((f) => ({ label: f.name, value: f.id }));
+  }, [foremen]);
+
+  const renderItem = useCallback(
+    ({ item }: { item: Site }) => {
+      const foremanName = item.foremanId ? foremanMap.get(item.foremanId) || t('common.active') : '-';
+      return (
+        <SiteCardItem
+          item={item}
+          foremanName={foremanName}
+          onEdit={handleEdit}
+          onDelete={handleDelete}
+          t={t}
+          language={language}
+        />
+      );
+    },
+    [foremanMap, handleEdit, handleDelete, t, language]
+  );
 
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
@@ -259,100 +355,63 @@ export function SitesTab({ accessToken }: SitesTabProps) {
         <View style={styles.kpiRow}>
           <View style={styles.kpiCard}>
             <Text style={styles.kpiLabel}>{t('sites.activeSites')}</Text>
-            <Text style={styles.kpiValue}>{sites.length}</Text>
+            <Text style={styles.kpiValue} numberOfLines={1} adjustsFontSizeToFit>{sites.length}</Text>
           </View>
           <View style={styles.kpiCard}>
             <Text style={styles.kpiLabel}>{t('nav.foremen')}</Text>
-            <Text style={[styles.kpiValue, { color: colors.accent }]}>
+            <Text style={[styles.kpiValue, { color: colors.accent }]} numberOfLines={1} adjustsFontSizeToFit>
               {sites.filter((s) => s.foremanId).length}
             </Text>
           </View>
           <View style={styles.kpiCard}>
             <Text style={styles.kpiLabel}>{t('sites.startDate')}</Text>
-            <Text style={[styles.kpiValue, { color: colors.success }]}>
+            <Text style={[styles.kpiValue, { color: colors.success }]} numberOfLines={1} adjustsFontSizeToFit>
               {sites.filter((s) => s.startDate).length}
             </Text>
           </View>
           <View style={styles.kpiCard}>
             <Text style={styles.kpiLabel}>{t('common.status')}</Text>
-            <Text style={[styles.kpiValue, { color: colors.primary }]}>{t('common.active')}</Text>
+            <Text style={[styles.kpiValue, { color: colors.primary }]} numberOfLines={1} adjustsFontSizeToFit>{t('common.active')}</Text>
           </View>
         </View>
       </View>
 
       <View style={styles.content}>
-        <FlatList
-          data={sites}
-          keyExtractor={(item) => item.id}
-          showsVerticalScrollIndicator={false}
-          contentContainerStyle={styles.listContent}
-          refreshing={loading}
-          onRefresh={fetchSites}
-          ListEmptyComponent={
-            <View style={styles.emptyContainer}>
-              <MaterialIcons name="location-off" size={48} color={colors.borderDark} />
-              <Text style={styles.emptyTitle}>{t('sites.noSitesFound')}</Text>
-              <Text style={styles.emptySubtitle}>
-                {language === 'hi' ? `"+ ${t('sites.addSite')}" दबाकर अपनी पहली निर्माण साइट दर्ज करें।` :
-                 language === 'bn' ? `"+ ${t('sites.addSite')}" ট্যাপ করে আপনার প্রথম নির্মাণ সাইট যোগ করুন।` :
-                 `Tap "+ ${t('sites.addSite')}" to register your first construction site.`}
-              </Text>
-            </View>
-          }
-          renderItem={({ item }) => {
-            const foremanName = item.foremanId ? foremanMap.get(item.foremanId) || t('common.active') : '-';
-
-            return (
-              <View style={styles.siteCard}>
-                <View style={styles.siteCardHeader}>
-                  <View style={styles.siteTitleContainer}>
-                    <View style={styles.siteIconBox}>
-                      <MaterialIcons name="apartment" size={20} color={colors.primary} />
-                    </View>
-                    <View style={{ flex: 1 }}>
-                      <Text style={styles.siteName}>{item.name}</Text>
-                      <Text style={styles.siteAddress}>📍 {item.address || (language === 'hi' ? 'पता दर्ज नहीं' : language === 'bn' ? 'ঠিকানা নেই' : 'Address pending')}</Text>
-                    </View>
-                  </View>
-                  <View style={styles.activePill}>
-                    <View style={styles.greenDot} />
-                    <Text style={styles.activePillText}>{t('sites.running').toUpperCase()}</Text>
-                  </View>
-                </View>
-
-                {/* Foreman & Timeline Row */}
-                <View style={styles.metaRow}>
-                  <View style={styles.metaItem}>
-                    <MaterialIcons name="engineering" size={15} color={colors.accent} />
-                    <Text style={styles.metaLabel}>{t('sites.assignedForeman')}: </Text>
-                    <Text style={styles.metaVal}>{foremanName}</Text>
-                  </View>
-                  {item.startDate ? (
-                    <View style={styles.metaItem}>
-                      <MaterialIcons name="event" size={15} color={colors.textMuted} />
-                      <Text style={styles.metaVal}>{item.startDate}</Text>
-                    </View>
-                  ) : null}
-                </View>
-
-                {/* Action Strip */}
-                <View style={styles.actionStrip}>
-                  <TouchableOpacity style={styles.actionBtn} onPress={() => handleEdit(item)}>
-                    <MaterialIcons name="edit" size={15} color={colors.primary} />
-                    <Text style={styles.actionBtnText}>{t('common.edit')}</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    style={[styles.actionBtn, { marginLeft: 8 }]}
-                    onPress={() => handleDelete(item)}
-                  >
-                    <MaterialIcons name="delete-outline" size={15} color={colors.error} />
-                    <Text style={[styles.actionBtnText, { color: colors.error }]}>{t('common.delete')}</Text>
-                  </TouchableOpacity>
-                </View>
-              </View>
-            );
-          }}
-        />
+        {loading && sites.length === 0 ? (
+          <ListSkeleton count={4} />
+        ) : (
+          <FlatList
+            data={sites}
+            keyExtractor={(item) => item.id}
+            showsVerticalScrollIndicator={false}
+            contentContainerStyle={styles.listContent}
+            refreshing={loading}
+            onRefresh={fetchSites}
+            renderItem={renderItem}
+            initialNumToRender={6}
+            maxToRenderPerBatch={6}
+            windowSize={5}
+            removeClippedSubviews={Platform.OS === 'android'}
+            ListEmptyComponent={
+              <EmptyState
+                icon="location-off"
+                title={t('sites.noSitesFound')}
+                description={
+                  language === 'hi'
+                    ? `"+ ${t('sites.addSite')}" दबाकर अपनी पहली निर्माण साइट दर्ज करें।`
+                    : language === 'bn'
+                    ? `"+ ${t('sites.addSite')}" ট্যাপ করে আপনার প্রথম নির্মাণ সাইট যোগ করুন।`
+                    : 'Tap below to register your first construction site.'
+                }
+                actionLabel={`+ ${t('sites.addSite')}`}
+                onAction={() => {
+                  resetForm();
+                  setIsModalOpen(true);
+                }}
+              />
+            }
+          />
+        )}
       </View>
 
       <FormModal
@@ -440,6 +499,8 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
+    flexWrap: 'wrap',
+    gap: 8,
     marginBottom: 12,
   },
   headerTitle: {
@@ -447,6 +508,7 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     color: '#FFFFFF',
     letterSpacing: -0.3,
+    flexShrink: 1,
   },
   headerSubtitle: {
     fontSize: 11,
@@ -470,16 +532,20 @@ const styles = StyleSheet.create({
   },
   kpiRow: {
     flexDirection: 'row',
+    flexWrap: 'wrap',
     gap: 8,
   },
   kpiCard: {
     flex: 1,
+    minWidth: '22%',
+    minHeight: 56,
     backgroundColor: '#1E293B',
     borderRadius: radii.md,
     paddingVertical: 8,
-    paddingHorizontal: 10,
+    paddingHorizontal: 8,
     borderWidth: 1,
     borderColor: '#334155',
+    justifyContent: 'center',
   },
   kpiLabel: {
     fontSize: 9,

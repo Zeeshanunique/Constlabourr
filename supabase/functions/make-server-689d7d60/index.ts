@@ -4,13 +4,29 @@ import * as db from "./db.ts";
 
 const app = new Hono();
 
-app.use("/*", cors({ origin: "*", allowHeaders: ["Content-Type", "Authorization"], allowMethods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"], exposeHeaders: ["Content-Length"], maxAge: 600 }));
+app.use("/*", cors({ origin: "*", allowHeaders: ["Content-Type", "Authorization", "x-device-session-id"], allowMethods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"], exposeHeaders: ["Content-Length"], maxAge: 600 }));
 
 async function authUser(c: any) {
   const t = c.req.header('Authorization')?.split(' ')[1];
   if (!t) return null;
   const { data: { user }, error } = await db.supabase.auth.getUser(t);
-  return (!error && user) ? user : null;
+  if (error || !user) return null;
+
+  // Single-device session enforcement
+  const clientSessionId = c.req.header('x-device-session-id');
+  if (clientSessionId) {
+    const { data: profile } = await db.supabase
+      .from('profiles')
+      .select('device_session_id')
+      .eq('id', user.id)
+      .maybeSingle();
+    if (profile?.device_session_id && profile.device_session_id !== clientSessionId) {
+      console.warn(`Device session mismatch for user ${user.id}: client=${clientSessionId}, db=${profile.device_session_id}`);
+      return null; // Triggers 401 Unauthorized for previous device!
+    }
+  }
+
+  return user;
 }
 
 async function getContractorId(userId: string) {
@@ -520,12 +536,16 @@ app.post("/make-server-689d7d60/attendance", async (c) => {
       ? Number(body.overtimePayment)
       : (existing?.overtimePayment !== undefined ? Number(existing.overtimePayment) : Math.round(otHours * otRate));
 
-    const status = ((body.status || existing?.status || '') as string).toLowerCase();
+    let rawStatus = ((body.status || existing?.status || 'present') as string).toLowerCase().trim();
+    let status = rawStatus;
+    if (status === 'overtime') status = 'present';
+    if (status === 'half_day') status = 'half-day';
+
     let dailyPayment = body.dailyPayment !== undefined && body.dailyPayment !== null ? Number(body.dailyPayment) : undefined;
     if (dailyPayment === undefined) {
-      if (status === 'present' || status === 'overtime') {
+      if (rawStatus === 'present' || rawStatus === 'overtime') {
         dailyPayment = dailyWage;
-      } else if (status === 'half-day' || status === 'half_day') {
+      } else if (rawStatus === 'half-day' || rawStatus === 'half_day') {
         dailyPayment = Math.round(dailyWage / 2);
       } else {
         dailyPayment = 0;
@@ -539,6 +559,7 @@ app.post("/make-server-689d7d60/attendance", async (c) => {
     const record = {
       id: existing ? existing.id : crypto.randomUUID(),
       ...body,
+      status,
       shift: normShift,
       dailyWage,
       overtimeRate: otRate,
@@ -593,12 +614,16 @@ app.put("/make-server-689d7d60/attendance/:id", async (c) => {
       ? Number(body.overtimePayment)
       : (existing.overtimePayment !== undefined ? Number(existing.overtimePayment) : Math.round(otHours * otRate));
 
-    const status = ((body.status || existing.status || '') as string).toLowerCase();
+    let rawStatus = ((body.status || existing.status || 'present') as string).toLowerCase().trim();
+    let status = rawStatus;
+    if (status === 'overtime') status = 'present';
+    if (status === 'half_day') status = 'half-day';
+
     let dailyPayment = body.dailyPayment !== undefined && body.dailyPayment !== null ? Number(body.dailyPayment) : undefined;
     if (dailyPayment === undefined) {
-      if (status === 'present' || status === 'overtime') {
+      if (rawStatus === 'present' || rawStatus === 'overtime') {
         dailyPayment = dailyWage;
-      } else if (status === 'half-day' || status === 'half_day') {
+      } else if (rawStatus === 'half-day' || rawStatus === 'half_day') {
         dailyPayment = Math.round(dailyWage / 2);
       } else {
         dailyPayment = 0;
@@ -614,6 +639,7 @@ app.put("/make-server-689d7d60/attendance/:id", async (c) => {
     const updated = {
       ...existing,
       ...body,
+      status,
       shift,
       dailyWage,
       overtimeRate: otRate,
@@ -933,7 +959,7 @@ app.get("/make-server-689d7d60/dashboard/stats", async (c) => {
     if (siteIds.length > 0) {
       const { data: siteWorkers } = await db.supabase
         .from('profiles')
-        .select('*')
+        .select('id, name, phone, daily_wage, role, site_id, contractor_id, skill_level')
         .eq('role', 'labour')
         .in('site_id', siteIds);
       if (siteWorkers && siteWorkers.length > 0) {
@@ -969,7 +995,7 @@ app.get("/make-server-689d7d60/dashboard/stats", async (c) => {
     if (relevantSiteIds.length > 0 || workerIds.length > 0) {
       let q = db.supabase
         .from('attendance')
-        .select('*')
+        .select('worker_id, status, daily_payment, total_payment, daily_wage')
         .eq('date', today);
 
       if (relevantSiteIds.length > 0 && workerIds.length > 0) {
@@ -1049,7 +1075,7 @@ app.get("/make-server-689d7d60/foreman/stats", async (c) => {
   try {
     const user = await authUser(c);
     if (!user) return c.json({ error: 'Unauthorized' }, 401);
-    const { data: sites } = await db.supabase.from('sites').select('*').eq('foreman_id', user.id);
+    const { data: sites } = await db.supabase.from('sites').select('id, name').eq('foreman_id', user.id);
     const assignedSites = sites?.length || 0;
     const siteIds = sites?.map((s: any) => s.id) || [];
     const siteName = sites?.[0]?.name || 'Assigned Site';
@@ -1066,7 +1092,7 @@ app.get("/make-server-689d7d60/foreman/stats", async (c) => {
     let totalWagesToday = 0;
 
     if (siteIds.length > 0) {
-      const { data: att } = await db.supabase.from('attendance').select('*').in('site_id', siteIds).eq('date', today);
+      const { data: att } = await db.supabase.from('attendance').select('status, daily_wage, total_payment, daily_payment').in('site_id', siteIds).eq('date', today);
       if (att) {
         for (const a of att) {
           const status = (a.status || '').toLowerCase();
@@ -1113,7 +1139,7 @@ app.get("/make-server-689d7d60/worker/stats", async (c) => {
   try {
     const user = await authUser(c);
     if (!user) return c.json({ error: 'Unauthorized' }, 401);
-    const { data: att } = await db.supabase.from('attendance').select('*').eq('worker_id', user.id);
+    const { data: att } = await db.supabase.from('attendance').select('status, total_payment, date').eq('worker_id', user.id);
     const presentDays = att?.filter(a => a.status === 'present' || a.status === 'half-day').length || 0;
     const absentDays = att?.filter(a => a.status === 'absent').length || 0;
     const totalDaysWorked = presentDays;

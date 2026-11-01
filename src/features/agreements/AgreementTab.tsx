@@ -8,6 +8,7 @@ import {
   ActivityIndicator,
   TextInput,
   Modal,
+  RefreshControl,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { MaterialIcons } from '@expo/vector-icons';
@@ -159,7 +160,12 @@ export function AgreementTab({ accessToken }: AgreementTabProps) {
         </View>
       </View>
 
-      <ScrollView style={styles.scrollView} contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
+      <ScrollView
+        style={styles.scrollView}
+        contentContainerStyle={styles.scrollContent}
+        showsVerticalScrollIndicator={false}
+        refreshControl={<RefreshControl refreshing={loading} onRefresh={fetchAgreements} tintColor={colors.accent} />}
+      >
         {/* 2. STATUTORY NOTICE CARD */}
         <View style={styles.statutoryNotice}>
           <MaterialIcons name="verified-user" size={20} color={colors.success} style={{ marginTop: 2 }} />
@@ -241,7 +247,12 @@ export function AgreementTab({ accessToken }: AgreementTabProps) {
       </ScrollView>
 
       {/* 5. DRAFT AGREEMENT MODAL */}
-      <Modal visible={isModalOpen} transparent animationType="fade">
+      <Modal
+        visible={isModalOpen}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setIsModalOpen(false)}
+      >
         <View style={styles.modalOverlay}>
           <View style={styles.modalSheet}>
             <View style={styles.modalHeader}>

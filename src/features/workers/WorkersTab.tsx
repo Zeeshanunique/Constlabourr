@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   View,
   StyleSheet,
@@ -11,6 +11,7 @@ import {
   ScrollView,
   Linking,
   BackHandler,
+  Platform,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { FormModal } from '@/components/shared/FormModal';
@@ -23,6 +24,8 @@ import Toast from 'react-native-toast-message';
 import { colors, shadows, radii } from '@/styles/theme';
 import { WorkerDetailView } from './WorkerDetailView';
 import { useTranslation } from '@/i18n';
+import { ListSkeleton } from '@/components/shared/Skeleton';
+import { EmptyState } from '@/components/shared/EmptyState';
 
 interface Worker {
   id: string;
@@ -52,6 +55,157 @@ interface Site {
 interface WorkersTabProps {
   accessToken?: string;
 }
+
+interface WorkerCardItemProps {
+  item: Worker;
+  siteName: string;
+  onPress: (worker: Worker) => void;
+  onCall: (phone?: string) => void;
+  onEdit: (worker: Worker) => void;
+  onDelete: (worker: Worker) => void;
+  t: (key: any) => string;
+}
+
+const WorkerCardItem = React.memo(function WorkerCardItem({
+  item,
+  siteName,
+  onPress,
+  onCall,
+  onEdit,
+  onDelete,
+  t,
+}: WorkerCardItemProps) {
+  const isSkilled = item.skillLevel === 'skilled';
+  const skillLabel =
+    item.skillLevel === 'skilled'
+      ? t('workers.skilled')
+      : item.skillLevel === 'semi-skilled'
+      ? t('workers.semiSkilled')
+      : item.skillLevel === 'highly-skilled'
+      ? t('workers.highlySkilled')
+      : t('workers.unskilled');
+
+  return (
+    <TouchableOpacity
+      style={styles.workerCard}
+      onPress={() => onPress(item)}
+      activeOpacity={0.88}
+    >
+      <View style={styles.cardMain}>
+        <View style={styles.avatarBox}>
+          <Text style={styles.avatarInitials}>
+            {item.name.charAt(0).toUpperCase()}
+          </Text>
+        </View>
+
+        <View style={styles.workerDetails}>
+          <View style={styles.nameRow}>
+            <Text style={styles.workerNameText}>{item.name}</Text>
+            <View style={[styles.skillBadge, isSkilled && styles.skillBadgeHigh]}>
+              <Text style={[styles.skillBadgeText, isSkilled && styles.skillBadgeTextHigh]}>
+                {skillLabel.toUpperCase()}
+              </Text>
+            </View>
+
+            {/* Phone Call Icon Button on Card */}
+            <TouchableOpacity
+              style={styles.cardHeaderCallBtn}
+              onPress={(e) => {
+                e.stopPropagation();
+                onCall(item.phone);
+              }}
+              activeOpacity={0.7}
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+            >
+              <MaterialIcons name="phone" size={15} color="#16A34A" />
+            </TouchableOpacity>
+          </View>
+
+          <Text style={styles.workerContact}>
+            📞 {item.phone || '-'} • ✉️ {item.email || '-'}{item.upiId ? ` • ⚡ ${item.upiId}` : ''}
+          </Text>
+
+          <View style={styles.siteBadgeRow}>
+            <MaterialIcons name="location-on" size={13} color={colors.accent} />
+            <Text style={styles.siteBadgeText}>{siteName}</Text>
+          </View>
+
+          {/* Financial Row */}
+          <View style={styles.financeRow}>
+            <View style={styles.financePill}>
+              <Text style={styles.financePillLabel}>{t('attendance.ratePerDay')}:</Text>
+              <Text style={styles.financePillVal}>₹{item.dailyWage || 0}</Text>
+            </View>
+            <View style={styles.financePill}>
+              <Text style={styles.financePillLabel}>OT:</Text>
+              <Text style={[styles.financePillVal, { color: colors.accent }]}>
+                ₹{item.overtimeRate !== undefined ? item.overtimeRate : 100}/hr
+              </Text>
+            </View>
+            {item.messCharge ? (
+              <View style={[styles.financePill, { backgroundColor: colors.warningLight }]}>
+                <Text style={[styles.financePillLabel, { color: colors.warningDark }]}>Mess:</Text>
+                <Text style={[styles.financePillVal, { color: colors.warningDark }]}>-₹{item.messCharge}</Text>
+              </View>
+            ) : null}
+          </View>
+
+          {/* View Ledger Affordance */}
+          <View style={styles.viewLedgerRow}>
+            <Text style={styles.viewLedgerText}>{t('attendance.workerAttendanceLedger')}</Text>
+            <MaterialIcons name="chevron-right" size={15} color={colors.accent} />
+          </View>
+        </View>
+      </View>
+
+      {/* Card Action Strip */}
+      <View style={styles.cardActionsStrip}>
+        <View style={styles.kycStatusRow}>
+          <MaterialIcons name="verified" size={14} color={colors.success} />
+          <Text style={styles.kycStatusText}>{t('common.verified')}</Text>
+        </View>
+
+        <View style={styles.actionButtonsRow}>
+          <TouchableOpacity
+            style={[styles.actionIconButton, styles.callActionBtn]}
+            onPress={(e) => {
+              e.stopPropagation();
+              onCall(item.phone);
+            }}
+            activeOpacity={0.7}
+          >
+            <MaterialIcons name="phone" size={15} color="#16A34A" />
+            <Text style={[styles.actionButtonText, { color: '#16A34A' }]}>{t('common.call')}</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[styles.actionIconButton, { marginLeft: 8 }]}
+            onPress={(e) => {
+              e.stopPropagation();
+              onEdit(item);
+            }}
+            activeOpacity={0.7}
+          >
+            <MaterialIcons name="edit" size={15} color={colors.primary} />
+            <Text style={styles.actionButtonText}>{t('common.edit')}</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[styles.actionIconButton, { marginLeft: 8 }]}
+            onPress={(e) => {
+              e.stopPropagation();
+              onDelete(item);
+            }}
+            activeOpacity={0.7}
+          >
+            <MaterialIcons name="delete-outline" size={15} color={colors.error} />
+            <Text style={[styles.actionButtonText, { color: colors.error }]}>{t('common.delete')}</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+    </TouchableOpacity>
+  );
+});
 
 export function WorkersTab({ accessToken }: WorkersTabProps) {
   const route = useRoute();
@@ -336,28 +490,54 @@ export function WorkersTab({ accessToken }: WorkersTabProps) {
     setEditingWorker(null);
   };
 
-  // Filter workers by search and skill (null-safe for optional fields like email)
-  const filteredWorkers = workers.filter((w) => {
-    if (!w) return false;
+  // Memoized filtered workers by search and skill (null-safe for optional fields like email)
+  const filteredWorkers = useMemo(() => {
     const term = (searchTerm || '').trim().toLowerCase();
-    const nameMatch = (w.name || '').toLowerCase().includes(term);
-    const phoneMatch = (w.phone || '').includes(term);
-    const emailMatch = (w.email || '').toLowerCase().includes(term);
-    const matchesSearch = !term || nameMatch || phoneMatch || emailMatch;
-
-    const workerSkill = (w.skillLevel || 'unskilled').toLowerCase();
     const filterSkill = (selectedSkillFilter || 'All').toLowerCase();
-    const matchesSkill = filterSkill === 'all' || workerSkill === filterSkill;
 
-    return matchesSearch && matchesSkill;
-  });
+    return workers.filter((w) => {
+      if (!w) return false;
+      const nameMatch = (w.name || '').toLowerCase().includes(term);
+      const phoneMatch = (w.phone || '').includes(term);
+      const emailMatch = (w.email || '').toLowerCase().includes(term);
+      const matchesSearch = !term || nameMatch || phoneMatch || emailMatch;
 
-  const avgWage = workers.length > 0
-    ? Math.round(workers.reduce((acc, w) => acc + (w.dailyWage || 0), 0) / workers.length)
-    : 800;
+      const workerSkill = (w.skillLevel || 'unskilled').toLowerCase();
+      const matchesSkill = filterSkill === 'all' || workerSkill === filterSkill;
 
-  const siteMap = new Map<string, string>();
-  sites.forEach((s) => siteMap.set(s.id, s.name));
+      return matchesSearch && matchesSkill;
+    });
+  }, [workers, searchTerm, selectedSkillFilter]);
+
+  const avgWage = useMemo(() => {
+    return workers.length > 0
+      ? Math.round(workers.reduce((acc, w) => acc + (w.dailyWage || 0), 0) / workers.length)
+      : 800;
+  }, [workers]);
+
+  const siteMap = useMemo(() => {
+    const map = new Map<string, string>();
+    sites.forEach((s) => map.set(s.id, s.name));
+    return map;
+  }, [sites]);
+
+  const renderWorkerItem = useCallback(
+    ({ item }: { item: Worker }) => {
+      const siteName = item.siteId ? siteMap.get(item.siteId) || t('workers.assignedSite') : '-';
+      return (
+        <WorkerCardItem
+          item={item}
+          siteName={siteName}
+          onPress={setSelectedWorker}
+          onCall={handleCall}
+          onEdit={handleEdit}
+          onDelete={handleDelete}
+          t={t}
+        />
+      );
+    },
+    [siteMap, t, handleCall, handleEdit, handleDelete]
+  );
 
   const skillOptions = [
     { label: t('workers.unskilled'), value: 'unskilled' },
@@ -463,154 +643,56 @@ export function WorkersTab({ accessToken }: WorkersTabProps) {
               })}
             </ScrollView>
 
-            {/* 4. WORKER CARDS LIST */}
-            <FlatList
-              data={filteredWorkers}
-              keyExtractor={(item) => item.id}
-              showsVerticalScrollIndicator={false}
-              contentContainerStyle={styles.listContent}
-              refreshing={loading}
-              onRefresh={fetchWorkers}
-              ListEmptyComponent={
-                <View style={styles.emptyContainer}>
-                  <MaterialIcons name="people-outline" size={48} color={colors.borderDark} />
-                  <Text style={styles.emptyTitle}>{t('workers.noWorkersFound')}</Text>
-                  <Text style={styles.emptySubtitle}>
-                    {language === 'hi' ? `"+ ${t('workers.addWorker')}" दबाकर नए श्रमिक जोड़ें।` :
-                     language === 'bn' ? `"+ ${t('workers.addWorker')}" ট্যাপ করে নতুন শ্রমিক যোগ করুন।` :
-                     `Tap "+ ${t('workers.addWorker')}" to onboard crew members.`}
-                  </Text>
-                </View>
-              }
-              renderItem={({ item }) => {
-                const siteName = item.siteId ? siteMap.get(item.siteId) || t('workers.assignedSite') : '-';
-                const isSkilled = item.skillLevel === 'skilled';
-                const skillLabel = item.skillLevel === 'skilled' ? t('workers.skilled') :
-                  item.skillLevel === 'semi-skilled' ? t('workers.semiSkilled') :
-                  item.skillLevel === 'highly-skilled' ? t('workers.highlySkilled') : t('workers.unskilled');
-
-                return (
-                  <TouchableOpacity
-                    style={styles.workerCard}
-                    onPress={() => setSelectedWorker(item)}
-                    activeOpacity={0.88}
-                  >
-                    <View style={styles.cardMain}>
-                      <View style={styles.avatarBox}>
-                        <Text style={styles.avatarInitials}>
-                          {item.name.charAt(0).toUpperCase()}
-                        </Text>
-                      </View>
-
-                      <View style={styles.workerDetails}>
-                        <View style={styles.nameRow}>
-                          <Text style={styles.workerNameText}>{item.name}</Text>
-                          <View style={[styles.skillBadge, isSkilled && styles.skillBadgeHigh]}>
-                            <Text style={[styles.skillBadgeText, isSkilled && styles.skillBadgeTextHigh]}>
-                              {skillLabel.toUpperCase()}
-                            </Text>
-                          </View>
-
-                          {/* Phone Call Icon Button on Card */}
-                          <TouchableOpacity
-                            style={styles.cardHeaderCallBtn}
-                            onPress={(e) => {
-                              e.stopPropagation();
-                              handleCall(item.phone);
-                            }}
-                            activeOpacity={0.7}
-                            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                          >
-                            <MaterialIcons name="phone" size={15} color="#16A34A" />
-                          </TouchableOpacity>
-                        </View>
-
-                        <Text style={styles.workerContact}>
-                          📞 {item.phone || '-'} • ✉️ {item.email || '-'}{item.upiId ? ` • ⚡ ${item.upiId}` : ''}
-                        </Text>
-
-                        <View style={styles.siteBadgeRow}>
-                          <MaterialIcons name="location-on" size={13} color={colors.accent} />
-                          <Text style={styles.siteBadgeText}>{siteName}</Text>
-                        </View>
-
-                        {/* Financial Row */}
-                        <View style={styles.financeRow}>
-                          <View style={styles.financePill}>
-                            <Text style={styles.financePillLabel}>{t('attendance.ratePerDay')}:</Text>
-                            <Text style={styles.financePillVal}>₹{item.dailyWage || 0}</Text>
-                          </View>
-                          <View style={styles.financePill}>
-                            <Text style={styles.financePillLabel}>OT:</Text>
-                            <Text style={[styles.financePillVal, { color: colors.accent }]}>
-                              ₹{item.overtimeRate !== undefined ? item.overtimeRate : 100}/hr
-                            </Text>
-                          </View>
-                          {item.messCharge ? (
-                            <View style={[styles.financePill, { backgroundColor: colors.warningLight }]}>
-                              <Text style={[styles.financePillLabel, { color: colors.warningDark }]}>Mess:</Text>
-                              <Text style={[styles.financePillVal, { color: colors.warningDark }]}>-₹{item.messCharge}</Text>
-                            </View>
-                          ) : null}
-                        </View>
-
-                        {/* View Ledger Affordance */}
-                        <View style={styles.viewLedgerRow}>
-                          <Text style={styles.viewLedgerText}>{t('attendance.workerAttendanceLedger')}</Text>
-                          <MaterialIcons name="chevron-right" size={15} color={colors.accent} />
-                        </View>
-                      </View>
-                    </View>
-
-                    {/* Card Action Strip */}
-                    <View style={styles.cardActionsStrip}>
-                      <View style={styles.kycStatusRow}>
-                        <MaterialIcons name="verified" size={14} color={colors.success} />
-                        <Text style={styles.kycStatusText}>{t('common.verified')}</Text>
-                      </View>
-
-                      <View style={styles.actionButtonsRow}>
-                        <TouchableOpacity
-                          style={[styles.actionIconButton, styles.callActionBtn]}
-                          onPress={(e) => {
-                            e.stopPropagation();
-                            handleCall(item.phone);
-                          }}
-                          activeOpacity={0.7}
-                        >
-                          <MaterialIcons name="phone" size={15} color="#16A34A" />
-                          <Text style={[styles.actionButtonText, { color: '#16A34A' }]}>{t('common.call')}</Text>
-                        </TouchableOpacity>
-
-                        <TouchableOpacity
-                          style={[styles.actionIconButton, { marginLeft: 8 }]}
-                          onPress={(e) => {
-                            e.stopPropagation();
-                            handleEdit(item);
-                          }}
-                          activeOpacity={0.7}
-                        >
-                          <MaterialIcons name="edit" size={15} color={colors.primary} />
-                          <Text style={styles.actionButtonText}>{t('common.edit')}</Text>
-                        </TouchableOpacity>
-
-                        <TouchableOpacity
-                          style={[styles.actionIconButton, { marginLeft: 8 }]}
-                          onPress={(e) => {
-                            e.stopPropagation();
-                            handleDelete(item);
-                          }}
-                          activeOpacity={0.7}
-                        >
-                          <MaterialIcons name="delete-outline" size={15} color={colors.error} />
-                          <Text style={[styles.actionButtonText, { color: colors.error }]}>{t('common.delete')}</Text>
-                        </TouchableOpacity>
-                      </View>
-                    </View>
-                  </TouchableOpacity>
-                );
-              }}
-            />
+            {/* 4. WORKER CARDS LIST (OPTIMIZED) */}
+            {loading && workers.length === 0 ? (
+              <ListSkeleton count={5} />
+            ) : (
+              <FlatList
+                data={filteredWorkers}
+                keyExtractor={(item) => item.id}
+                renderItem={renderWorkerItem}
+                initialNumToRender={8}
+                maxToRenderPerBatch={8}
+                windowSize={5}
+                removeClippedSubviews={Platform.OS === 'android'}
+                showsVerticalScrollIndicator={false}
+                contentContainerStyle={styles.listContent}
+                refreshing={loading}
+                onRefresh={fetchWorkers}
+                ListEmptyComponent={
+                  searchTerm || selectedSkillFilter !== 'All' ? (
+                    <EmptyState
+                      icon="search-off"
+                      title={t('common.noResults') || 'No Workers Match'}
+                      description={
+                        searchTerm
+                          ? `No workers match "${searchTerm}". Check your spelling or clear filters.`
+                          : `No workers found in "${selectedSkillFilter}" skill level.`
+                      }
+                      actionLabel="Reset Filters"
+                      onAction={() => {
+                        setSearchTerm('');
+                        setSelectedSkillFilter('All');
+                      }}
+                    />
+                  ) : (
+                    <EmptyState
+                      icon="engineering"
+                      title={t('workers.noWorkersFound')}
+                      description={
+                        language === 'hi'
+                          ? `"+ ${t('workers.addWorker')}" दबाकर नए श्रमिक जोड़ें।`
+                          : language === 'bn'
+                          ? `"+ ${t('workers.addWorker')}" ট্যাপ করে নতুন শ্রমিক যোগ করুন।`
+                          : `Tap below to onboard your first construction worker.`
+                      }
+                      actionLabel={`+ ${t('workers.addWorker')}`}
+                      onAction={() => setIsModalOpen(true)}
+                    />
+                  )
+                }
+              />
+            )}
           </View>
         </>
       )}
@@ -853,7 +935,7 @@ const styles = StyleSheet.create({
     borderColor: colors.borderDark,
     borderRadius: radii.md,
     paddingHorizontal: 12,
-    height: 44,
+    minHeight: 44,
     marginBottom: 10,
     ...shadows.sm,
   },
@@ -862,7 +944,7 @@ const styles = StyleSheet.create({
   },
   searchInput: {
     flex: 1,
-    height: 44,
+    minHeight: 44,
     fontSize: 13,
     color: colors.text,
     fontWeight: '600',
@@ -937,6 +1019,8 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontWeight: '800',
     color: colors.text,
+    flexShrink: 1,
+    marginRight: 8,
   },
   skillBadge: {
     backgroundColor: colors.surfaceMuted,
@@ -973,6 +1057,7 @@ const styles = StyleSheet.create({
   },
   financeRow: {
     flexDirection: 'row',
+    flexWrap: 'wrap',
     gap: 8,
   },
   financePill: {
@@ -1011,6 +1096,7 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: colors.successDark,
     marginLeft: 4,
+    flexShrink: 1,
   },
   actionButtonsRow: {
     flexDirection: 'row',

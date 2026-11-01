@@ -414,7 +414,12 @@ function unmapAttendance(a: any) {
   if (a.checkOut !== undefined) row.check_out = a.checkOut;
   if (a.breakStart !== undefined) row.break_start = a.breakStart;
   if (a.breakEnd !== undefined) row.break_end = a.breakEnd;
-  if (a.status !== undefined) row.status = a.status;
+  if (a.status !== undefined) {
+    let st = String(a.status).toLowerCase().trim();
+    if (st === 'overtime') st = 'present';
+    if (st === 'half_day') st = 'half-day';
+    row.status = st;
+  }
   if (a.totalHours !== undefined) row.total_hours = a.totalHours;
   if (a.breakHours !== undefined) row.break_hours = a.breakHours;
   if (a.netWorkHours !== undefined) row.net_work_hours = a.netWorkHours;

@@ -12,6 +12,9 @@ import {
   Share,
   BackHandler,
   ScrollView,
+  KeyboardAvoidingView,
+  Platform,
+  Alert,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { MaterialIcons } from '@expo/vector-icons';
@@ -160,6 +163,13 @@ export function WorkerDetailView({
   const [savingAdvance, setSavingAdvance] = useState<boolean>(false);
   const [deletingAdvance, setDeletingAdvance] = useState<boolean>(false);
 
+  // Overtime Modal State
+  const [isOvertimeModalOpen, setIsOvertimeModalOpen] = useState<boolean>(false);
+  const [overtimeModalDate, setOvertimeModalDate] = useState<string>('');
+  const [overtimeModalHours, setOvertimeModalHours] = useState<string>('2');
+  const [overtimeModalRate, setOvertimeModalRate] = useState<string>('100');
+  const [savingOvertime, setSavingOvertime] = useState<boolean>(false);
+
   // Full Page Report View State
   const [isReportViewOpen, setIsReportViewOpen] = useState<boolean>(false);
 
@@ -178,6 +188,10 @@ export function WorkerDetailView({
   // Handle hardware / device back button
   useEffect(() => {
     const handleHardwareBack = () => {
+      if (isOvertimeModalOpen) {
+        setIsOvertimeModalOpen(false);
+        return true;
+      }
       if (isAdvanceModalOpen) {
         setIsAdvanceModalOpen(false);
         return true;
@@ -196,7 +210,7 @@ export function WorkerDetailView({
     );
 
     return () => backSubscription.remove();
-  }, [onBack, isAdvanceModalOpen, isReportViewOpen]);
+  }, [onBack, isAdvanceModalOpen, isReportViewOpen, isOvertimeModalOpen]);
 
   const loadMonthData = async () => {
     if (!accessToken) return;
@@ -395,13 +409,14 @@ export function WorkerDetailView({
     daysList.forEach((day) => {
       const rec = map[day.dateStr];
       if (rec) {
-        if (rec.status === 'present') present++;
+        const hasOt =
+          (rec.overtimeHours !== undefined && Number(rec.overtimeHours) > 0) ||
+          rec.status === 'overtime';
+        if (hasOt) ot++;
+
+        if (rec.status === 'present' || rec.status === 'overtime') present++;
         else if (rec.status === 'half-day') halfDay++;
         else if (rec.status === 'absent') absent++;
-        else if (rec.status === 'overtime') {
-          ot++;
-          present++; // Overtime counts as a worked day
-        }
 
         if (rec.overtimePayment !== undefined && rec.overtimePayment !== null && rec.overtimePayment > 0) {
           otPayment += Number(rec.overtimePayment);
@@ -457,7 +472,7 @@ export function WorkerDetailView({
   // Handle Mark Attendance
   const handleMarkAttendance = async (
     dateStr: string,
-    targetStatus: 'present' | 'half-day' | 'absent' | 'overtime'
+    targetStatus: 'present' | 'half-day' | 'absent'
   ) => {
     if (!accessToken) return;
 
@@ -479,27 +494,49 @@ export function WorkerDetailView({
 
     const currentMap = selectedShift === 'day' ? dayAttendanceMap : nightAttendanceMap;
     const existing = currentMap[dateStr];
-    const newStatus = existing?.status === targetStatus ? null : targetStatus;
+
+    let newStatus: 'present' | 'half-day' | 'absent' | null;
+    let otHours = 0;
+
+    if (targetStatus === 'present') {
+      if (existing?.status === 'present') {
+        newStatus = null; // toggle off
+        otHours = 0;
+      } else {
+        newStatus = 'present';
+        // Preserve any overtime hours already logged for this day
+        otHours = existing?.overtimeHours ? Number(existing.overtimeHours) : 0;
+      }
+    } else if (targetStatus === 'half-day') {
+      if (existing?.status === 'half-day' || existing?.status === 'half_day') {
+        newStatus = null; // toggle off
+        otHours = 0;
+      } else {
+        newStatus = 'half-day';
+        otHours = 0; // No overtime allowed for half-day
+      }
+    } else if (targetStatus === 'absent') {
+      if (existing?.status === 'absent') {
+        newStatus = null; // toggle off
+        otHours = 0;
+      } else {
+        newStatus = 'absent';
+        otHours = 0; // No overtime allowed for absent
+      }
+    } else {
+      newStatus = 'present';
+      otHours = 0;
+    }
 
     const baseDaily = worker.dailyWage || 0;
     let dailyPayment = 0;
-    if (newStatus === 'present' || newStatus === 'overtime') {
+    if (newStatus === 'present') {
       dailyPayment = baseDaily;
     } else if (newStatus === 'half-day') {
       dailyPayment = Math.round(baseDaily / 2);
     }
     const otRate = existing?.overtimeRate || worker.overtimeRate || 100;
-    let otHours = existing?.overtimeHours || 0;
-    if (newStatus === 'overtime') {
-      otHours = otHours > 0 ? otHours : 2;
-    } else {
-      otHours = 0;
-    }
-    const otPayment = newStatus === 'overtime'
-      ? (existing?.overtimePayment !== undefined && existing?.overtimePayment > 0
-          ? existing.overtimePayment
-          : Math.round(otHours * otRate))
-      : 0;
+    const otPayment = otHours > 0 ? Math.round(otHours * otRate) : 0;
     const totalPayment = dailyPayment + otPayment;
 
     // Optimistic Update
@@ -552,7 +589,7 @@ export function WorkerDetailView({
           workerId: worker.id,
           workerName: worker.name,
           date: dateStr,
-          status: newStatus,
+          status: newStatus, // 'present' | 'half-day' | 'absent' complying with DB check constraint
           shift: selectedShift,
           dailyWage: baseDaily,
           dailyPayment,
@@ -603,6 +640,271 @@ export function WorkerDetailView({
       loadMonthData();
     } finally {
       setSavingDate(null);
+    }
+  };
+
+  // Open Overtime Modal for a day
+  const handleOpenOvertimeModal = (dateStr: string) => {
+    if (dateStr > todayStr) {
+      Toast.show({ type: 'info', text1: 'Future Date', text2: 'Attendance cannot be marked for future dates' });
+      return;
+    }
+    const currentMap = selectedShift === 'day' ? dayAttendanceMap : nightAttendanceMap;
+    const existing = currentMap[dateStr];
+    setOvertimeModalDate(dateStr);
+    const existingHours = existing?.overtimeHours ? Number(existing.overtimeHours) : 2;
+    setOvertimeModalHours(String(existingHours));
+    const rate = existing?.overtimeRate || worker.overtimeRate || 100;
+    setOvertimeModalRate(String(rate));
+    setIsOvertimeModalOpen(true);
+  };
+
+  // Toggle or open overtime for a day (Independent from primary status!)
+  const handleToggleOvertime = (dateStr: string) => {
+    if (!accessToken) return;
+    if (dateStr > todayStr) {
+      Toast.show({ type: 'info', text1: 'Future Date', text2: 'Attendance cannot be marked for future dates' });
+      return;
+    }
+    const currentMap = selectedShift === 'day' ? dayAttendanceMap : nightAttendanceMap;
+    const existing = currentMap[dateStr];
+    const isAbsent = existing?.status === 'absent';
+    const isHalfDay = existing?.status === 'half-day' || existing?.status === 'half_day';
+
+    if (isAbsent) {
+      Toast.show({
+        type: 'info',
+        text1: 'Overtime Not Allowed',
+        text2: 'Worker is marked Absent. Overtime cannot be added.',
+      });
+      return;
+    }
+    if (isHalfDay) {
+      Toast.show({
+        type: 'info',
+        text1: 'Overtime Not Allowed',
+        text2: 'Worker is marked Half-Day. Overtime cannot be added.',
+      });
+      return;
+    }
+
+    const hasOvertime =
+      (existing?.overtimeHours !== undefined &&
+        existing?.overtimeHours !== null &&
+        Number(existing.overtimeHours) > 0) ||
+      existing?.status === 'overtime';
+
+    if (hasOvertime) {
+      // Tap active overtime hours -> open edit modal
+      handleOpenOvertimeModal(dateStr);
+    } else {
+      // Add standard 2h overtime, ensuring worker is marked Present
+      handleSaveOvertime(2, undefined, dateStr);
+    }
+  };
+
+  // Save / Update Overtime Hours for a day
+  const handleSaveOvertime = async (
+    hoursOverride?: number,
+    rateOverride?: number,
+    dateOverride?: string
+  ) => {
+    if (!accessToken) return;
+    const dateStr = dateOverride || overtimeModalDate;
+    if (!dateStr) return;
+
+    if (dateStr > todayStr) {
+      Toast.show({ type: 'info', text1: 'Future Date', text2: 'Attendance cannot be marked for future dates' });
+      return;
+    }
+
+    const hoursNum = hoursOverride !== undefined ? hoursOverride : parseFloat(overtimeModalHours);
+    if (isNaN(hoursNum) || hoursNum <= 0) {
+      Toast.show({ type: 'error', text1: 'Invalid Hours', text2: 'Please enter valid overtime hours (e.g. 2, 3)' });
+      return;
+    }
+
+    const rateNum = rateOverride !== undefined
+      ? rateOverride
+      : (parseFloat(overtimeModalRate) || worker.overtimeRate || 100);
+
+    setSavingOvertime(true);
+
+    const currentMap = selectedShift === 'day' ? dayAttendanceMap : nightAttendanceMap;
+    const existing = currentMap[dateStr];
+    const baseDaily = worker.dailyWage || 0;
+    const dailyPayment = baseDaily;
+    const otPayment = Math.round(hoursNum * rateNum);
+    const totalPayment = dailyPayment + otPayment;
+
+    // Optimistic Update: status is 'present' (complies with DB check constraint) with overtimeHours set
+    setAllAttendanceRecords((prev) => {
+      const matchShift = (r: AttendanceRecord) =>
+        ((r.shift || 'day').toLowerCase().includes('night') ? 'night' : 'day') === selectedShift;
+
+      const existingIdx = prev.findIndex((r) => r.date === dateStr && matchShift(r));
+      const updatedItem: AttendanceRecord = {
+        ...(existingIdx >= 0 ? prev[existingIdx] : {}),
+        workerId: worker.id,
+        workerName: worker.name,
+        siteId: worker.siteId || (sites.length > 0 ? sites[0].id : undefined),
+        date: dateStr,
+        status: 'present',
+        shift: selectedShift,
+        dailyWage: baseDaily,
+        dailyPayment,
+        overtimeHours: hoursNum,
+        overtimeRate: rateNum,
+        overtimePayment: otPayment,
+        totalPayment,
+      };
+      if (existingIdx >= 0) {
+        const copy = [...prev];
+        copy[existingIdx] = updatedItem;
+        return copy;
+      }
+      return [...prev, updatedItem];
+    });
+
+    try {
+      const targetSiteId = worker.siteId || (sites.length > 0 ? sites[0].id : null);
+      const payload: any = {
+        workerId: worker.id,
+        workerName: worker.name,
+        date: dateStr,
+        status: 'present', // Complies with DB check constraint ('present', 'absent', 'half-day')
+        shift: selectedShift,
+        dailyWage: baseDaily,
+        dailyPayment,
+        overtimeHours: hoursNum,
+        overtimeRate: rateNum,
+        overtimePayment: otPayment,
+        totalPayment,
+      };
+      if (targetSiteId) {
+        payload.siteId = targetSiteId;
+      }
+
+      const res = await fetch(
+        `https://${projectId}.supabase.co/functions/v1/make-server-689d7d60/attendance`,
+        {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${accessToken}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(payload),
+        }
+      );
+
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        throw new Error(errData.error || 'Failed to update overtime');
+      }
+
+      const data = await res.json();
+      if (data.attendance?.id) {
+        setAllAttendanceRecords((prev) => {
+          const matchShift = (r: AttendanceRecord) =>
+            ((r.shift || 'day').toLowerCase().includes('night') ? 'night' : 'day') === selectedShift;
+          const idx = prev.findIndex((r) => r.date === dateStr && matchShift(r));
+          if (idx >= 0) {
+            const copy = [...prev];
+            copy[idx] = { ...copy[idx], id: data.attendance.id };
+            return copy;
+          }
+          return [...prev, data.attendance];
+        });
+      }
+
+      Toast.show({
+        type: 'success',
+        text1: 'Overtime Saved',
+        text2: `${hoursNum} hrs overtime recorded for ${dateStr} (+₹${otPayment})`,
+      });
+      setIsOvertimeModalOpen(false);
+    } catch (error: any) {
+      console.error('Error saving overtime:', error);
+      Toast.show({ type: 'error', text1: 'Error', text2: error.message || 'Could not update overtime' });
+      loadMonthData();
+    } finally {
+      setSavingOvertime(false);
+    }
+  };
+
+  // Delete Overtime for a day - keeps worker marked as Present!
+  const handleDeleteOvertime = async () => {
+    if (!accessToken || !overtimeModalDate) return;
+    const dateStr = overtimeModalDate;
+    const currentMap = selectedShift === 'day' ? dayAttendanceMap : nightAttendanceMap;
+    const existing = currentMap[dateStr];
+
+    setSavingOvertime(true);
+    const baseDaily = worker.dailyWage || 0;
+    const targetSiteId = worker.siteId || (sites.length > 0 ? sites[0].id : null);
+
+    // Optimistically update record: worker remains PRESENT, overtime is reset to 0
+    setAllAttendanceRecords((prev) => {
+      const matchShift = (r: AttendanceRecord) =>
+        ((r.shift || 'day').toLowerCase().includes('night') ? 'night' : 'day') === selectedShift;
+      return prev.map((r) => {
+        if (r.date === dateStr && matchShift(r)) {
+          return {
+            ...r,
+            status: 'present',
+            overtimeHours: 0,
+            overtimePayment: 0,
+            dailyPayment: baseDaily,
+            totalPayment: baseDaily,
+          };
+        }
+        return r;
+      });
+    });
+
+    try {
+      const payload: any = {
+        workerId: worker.id,
+        workerName: worker.name,
+        date: dateStr,
+        status: 'present',
+        shift: selectedShift,
+        dailyWage: baseDaily,
+        dailyPayment: baseDaily,
+        overtimeHours: 0,
+        overtimePayment: 0,
+        totalPayment: baseDaily,
+      };
+      if (targetSiteId) payload.siteId = targetSiteId;
+
+      const res = await fetch(
+        `https://${projectId}.supabase.co/functions/v1/make-server-689d7d60/attendance`,
+        {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${accessToken}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(payload),
+        }
+      );
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        throw new Error(errData.error || 'Failed to remove overtime');
+      }
+
+      Toast.show({
+        type: 'info',
+        text1: 'Overtime Removed',
+        text2: `Overtime cleared. Attendance remains Present for ${dateStr}`,
+      });
+      setIsOvertimeModalOpen(false);
+    } catch (err: any) {
+      console.error('Error deleting overtime:', err);
+      Toast.show({ type: 'error', text1: 'Error', text2: err.message || 'Could not clear overtime' });
+      loadMonthData();
+    } finally {
+      setSavingOvertime(false);
     }
   };
 
@@ -742,51 +1044,64 @@ export function WorkerDetailView({
   };
 
   // Delete Advance
-  const handleDeleteAdvance = async () => {
+  const handleDeleteAdvance = () => {
     if (!editingAdvanceId || !accessToken) return;
 
-    setDeletingAdvance(true);
-    try {
-      const res = await fetch(
-        `https://${projectId}.supabase.co/functions/v1/make-server-689d7d60/advances/${editingAdvanceId}`,
+    Alert.alert(
+      'Delete Cash Advance',
+      `Are you sure you want to delete this cash advance for ${advanceDate}? This will update the worker balance.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
         {
-          method: 'DELETE',
-          headers: { Authorization: `Bearer ${accessToken}` },
-        }
-      );
+          text: 'Delete',
+          style: 'destructive',
+          onPress: async () => {
+            setDeletingAdvance(true);
+            try {
+              const res = await fetch(
+                `https://${projectId}.supabase.co/functions/v1/make-server-689d7d60/advances/${editingAdvanceId}`,
+                {
+                  method: 'DELETE',
+                  headers: { Authorization: `Bearer ${accessToken}` },
+                }
+              );
 
-      if (!res.ok) {
-        const errData = await res.json().catch(() => ({}));
-        throw new Error(errData.error || 'Failed to delete advance');
-      }
+              if (!res.ok) {
+                const errData = await res.json().catch(() => ({}));
+                throw new Error(errData.error || 'Failed to delete advance');
+              }
 
-      // Also clean up any other duplicates on the same date
-      const otherDuplicates = advancesList.filter(
-        (a) => a.date === advanceDate && a.id !== editingAdvanceId
-      );
-      for (const dup of otherDuplicates) {
-        await fetch(
-          `https://${projectId}.supabase.co/functions/v1/make-server-689d7d60/advances/${dup.id}`,
-          {
-            method: 'DELETE',
-            headers: { Authorization: `Bearer ${accessToken}` },
-          }
-        ).catch(() => {});
-      }
+              // Also clean up any other duplicates on the same date
+              const otherDuplicates = advancesList.filter(
+                (a) => a.date === advanceDate && a.id !== editingAdvanceId
+              );
+              for (const dup of otherDuplicates) {
+                await fetch(
+                  `https://${projectId}.supabase.co/functions/v1/make-server-689d7d60/advances/${dup.id}`,
+                  {
+                    method: 'DELETE',
+                    headers: { Authorization: `Bearer ${accessToken}` },
+                  }
+                ).catch(() => {});
+              }
 
-      setAdvancesList((prev) => prev.filter((a) => a.date !== advanceDate));
-      Toast.show({
-        type: 'success',
-        text1: 'Advance Cleared',
-        text2: `Advance for ${advanceDate} removed`,
-      });
-      setIsAdvanceModalOpen(false);
-      loadMonthData();
-    } catch (err: any) {
-      Toast.show({ type: 'error', text1: 'Error', text2: err.message || 'Could not delete advance' });
-    } finally {
-      setDeletingAdvance(false);
-    }
+              setAdvancesList((prev) => prev.filter((a) => a.date !== advanceDate));
+              Toast.show({
+                type: 'success',
+                text1: 'Advance Cleared',
+                text2: `Advance for ${advanceDate} removed`,
+              });
+              setIsAdvanceModalOpen(false);
+              loadMonthData();
+            } catch (err: any) {
+              Toast.show({ type: 'error', text1: 'Error', text2: err.message || 'Could not delete advance' });
+            } finally {
+              setDeletingAdvance(false);
+            }
+          },
+        },
+      ]
+    );
   };
 
 
@@ -795,9 +1110,18 @@ export function WorkerDetailView({
   const renderLedgerRow = ({ item: day }: { item: DayItem }) => {
     const record = currentAttendanceMap[day.dateStr];
     const status = record?.status;
+    const hasOvertime =
+      (record?.overtimeHours !== undefined &&
+        record?.overtimeHours !== null &&
+        Number(record.overtimeHours) > 0) ||
+      status === 'overtime';
+    const isPresent = status === 'present' || status === 'overtime';
+    const isHalfDay = status === 'half-day' || status === 'half_day';
+    const isAbsent = status === 'absent';
+    const otHoursText = hasOvertime ? `${record?.overtimeHours || 2}` : 'OT';
+
     const dayAdvance = advancesByDate[day.dateStr];
     const isSaving = savingDate === day.dateStr;
-    const isAbsent = status === 'absent';
     const isFuture = day.isFuture;
     const isNightLocked = day.isToday && selectedShift === 'night' && isNightShiftNotStarted;
     const isRowDisabled = isFuture || isNightLocked;
@@ -839,7 +1163,7 @@ export function WorkerDetailView({
           <TouchableOpacity
             style={[
               styles.markingBtn,
-              status === 'present' && styles.markingBtnPresentActive,
+              isPresent && styles.markingBtnPresentActive,
             ]}
             onPress={() => handleMarkAttendance(day.dateStr, 'present')}
             activeOpacity={0.7}
@@ -848,7 +1172,7 @@ export function WorkerDetailView({
             <Text
               style={[
                 styles.markingBtnText,
-                status === 'present' && styles.markingBtnPresentText,
+                isPresent && styles.markingBtnPresentText,
               ]}
             >
               P
@@ -859,7 +1183,7 @@ export function WorkerDetailView({
           <TouchableOpacity
             style={[
               styles.markingBtn,
-              status === 'half-day' && styles.markingBtnHalfActive,
+              isHalfDay && styles.markingBtnHalfActive,
             ]}
             onPress={() => handleMarkAttendance(day.dateStr, 'half-day')}
             activeOpacity={0.7}
@@ -868,7 +1192,7 @@ export function WorkerDetailView({
             <Text
               style={[
                 styles.markingBtnText,
-                status === 'half-day' && styles.markingBtnHalfText,
+                isHalfDay && styles.markingBtnHalfText,
               ]}
             >
               1/2
@@ -879,7 +1203,7 @@ export function WorkerDetailView({
           <TouchableOpacity
             style={[
               styles.markingBtn,
-              status === 'absent' && styles.markingBtnAbsentActive,
+              isAbsent && styles.markingBtnAbsentActive,
             ]}
             onPress={() => handleMarkAttendance(day.dateStr, 'absent')}
             activeOpacity={0.7}
@@ -888,30 +1212,38 @@ export function WorkerDetailView({
             <Text
               style={[
                 styles.markingBtnText,
-                status === 'absent' && styles.markingBtnAbsentText,
+                isAbsent && styles.markingBtnAbsentText,
               ]}
             >
               A
             </Text>
           </TouchableOpacity>
 
-          {/* OT Button */}
+          {/* OT Button: Shows OT or recorded hours (e.g. 2). Independent of P! */}
           <TouchableOpacity
             style={[
               styles.markingBtn,
-              status === 'overtime' && styles.markingBtnOtActive,
+              hasOvertime && styles.markingBtnOtActive,
+              (isAbsent || isHalfDay) && { opacity: 0.45 },
             ]}
-            onPress={() => handleMarkAttendance(day.dateStr, 'overtime')}
+            onPress={() => handleToggleOvertime(day.dateStr)}
+            onLongPress={() => {
+              if (isAbsent || isHalfDay) {
+                handleToggleOvertime(day.dateStr);
+              } else {
+                handleOpenOvertimeModal(day.dateStr);
+              }
+            }}
             activeOpacity={0.7}
             disabled={isSaving || isRowDisabled}
           >
             <Text
               style={[
                 styles.markingBtnText,
-                status === 'overtime' && styles.markingBtnOtText,
+                hasOvertime && styles.markingBtnOtText,
               ]}
             >
-              OT
+              {otHoursText}
             </Text>
           </TouchableOpacity>
         </View>
@@ -1230,7 +1562,11 @@ export function WorkerDetailView({
         onRequestClose={() => setIsAdvanceModalOpen(false)}
       >
         <View style={styles.modalOverlay}>
-          <View style={styles.advanceModalBox}>
+          <KeyboardAvoidingView
+            behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+            style={{ width: '100%', alignItems: 'center' }}
+          >
+            <View style={styles.advanceModalBox}>
             <View style={styles.modalHeaderRow}>
               <View style={{ flex: 1 }}>
                 <Text style={styles.modalTitle}>
@@ -1323,8 +1659,168 @@ export function WorkerDetailView({
               </View>
             </View>
           </View>
-        </View>
-      </Modal>
+        </KeyboardAvoidingView>
+      </View>
+    </Modal>
+
+    {/* 8. QUICK OVERTIME MODAL (EDIT / CUSTOM OVERTIME HOURS) */}
+    <Modal
+      visible={isOvertimeModalOpen}
+      transparent
+      animationType="fade"
+      onRequestClose={() => setIsOvertimeModalOpen(false)}
+    >
+      <View style={styles.modalOverlay}>
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+          style={{ width: '100%', alignItems: 'center' }}
+        >
+          <View style={styles.advanceModalBox}>
+            <View style={styles.modalHeaderRow}>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.modalTitle}>
+                  {language === 'hi' ? 'ओवरटाइम संपादित करें' : language === 'bn' ? 'ওভারটাইম সম্পাদনা' : 'Edit Overtime'}
+                </Text>
+                <Text style={styles.modalSubtitle}>
+                  {worker.name} • {overtimeModalDate}
+                </Text>
+              </View>
+
+              <View style={styles.modalHeaderRightActions}>
+                <TouchableOpacity
+                  onPress={handleDeleteOvertime}
+                  disabled={savingOvertime}
+                  style={styles.headerDeleteBtn}
+                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                >
+                  {savingOvertime ? (
+                    <ActivityIndicator size="small" color="#DC2626" />
+                  ) : (
+                    <MaterialIcons name="delete-outline" size={22} color="#DC2626" />
+                  )}
+                </TouchableOpacity>
+                <TouchableOpacity
+                  onPress={() => setIsOvertimeModalOpen(false)}
+                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                >
+                  <MaterialIcons name="close" size={22} color={colors.textMuted} />
+                </TouchableOpacity>
+              </View>
+            </View>
+
+            <View style={styles.modalBody}>
+              <Text style={styles.inputLabel}>
+                {language === 'hi' ? 'ओवरटाइम घंटे' : language === 'bn' ? 'ওভারটাইম ঘণ্টা' : 'Overtime Hours'} *
+              </Text>
+
+              {/* Stepper & Direct Input */}
+              <View style={styles.otStepperRow}>
+                <TouchableOpacity
+                  style={styles.otStepperBtn}
+                  onPress={() => {
+                    const cur = parseFloat(overtimeModalHours) || 2;
+                    const next = Math.max(0.5, cur - 0.5);
+                    setOvertimeModalHours(String(next));
+                  }}
+                  activeOpacity={0.7}
+                >
+                  <MaterialIcons name="remove" size={20} color={colors.primary} />
+                </TouchableOpacity>
+
+                <TextInput
+                  style={styles.otHoursInput}
+                  keyboardType="numeric"
+                  value={overtimeModalHours}
+                  onChangeText={setOvertimeModalHours}
+                  placeholder="2"
+                  placeholderTextColor={colors.textLight}
+                  selectTextOnFocus
+                />
+
+                <TouchableOpacity
+                  style={styles.otStepperBtn}
+                  onPress={() => {
+                    const cur = parseFloat(overtimeModalHours) || 0;
+                    const next = cur + 0.5;
+                    setOvertimeModalHours(String(next));
+                  }}
+                  activeOpacity={0.7}
+                >
+                  <MaterialIcons name="add" size={20} color={colors.primary} />
+                </TouchableOpacity>
+              </View>
+
+              {/* Quick Preset Hours Chips */}
+              <View style={styles.otPresetRow}>
+                {[1, 2, 3, 4, 5, 6].map((hrs) => {
+                  const isSelected = parseFloat(overtimeModalHours) === hrs;
+                  return (
+                    <TouchableOpacity
+                      key={hrs}
+                      style={[styles.otPresetChip, isSelected && styles.otPresetChipActive]}
+                      onPress={() => setOvertimeModalHours(String(hrs))}
+                      activeOpacity={0.8}
+                    >
+                      <Text style={[styles.otPresetChipText, isSelected && styles.otPresetChipTextActive]}>
+                        {hrs}h
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+
+              {/* Overtime Rate & Live Computed Pay */}
+              <View style={styles.otRateInfoBox}>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.otRateLabel}>
+                    {language === 'hi' ? 'ओवरटाइम दर' : language === 'bn' ? 'ওভারটাইম রেট' : 'Hourly Rate'}:
+                  </Text>
+                  <Text style={styles.otRateVal}>₹{overtimeModalRate}/hr</Text>
+                </View>
+                <View style={{ alignItems: 'flex-end' }}>
+                  <Text style={styles.otRateLabel}>
+                    {language === 'hi' ? 'अतिरिक्त भुगतान' : language === 'bn' ? 'অতিরিক্ত পারিশ্রমিক' : 'OT Payment'}:
+                  </Text>
+                  <Text style={styles.otCalculatedPayText}>
+                    +₹{Math.round((parseFloat(overtimeModalHours) || 0) * (parseFloat(overtimeModalRate) || 100))}
+                  </Text>
+                </View>
+              </View>
+
+              {/* Action Buttons */}
+              <View style={styles.advanceActionRow}>
+                <TouchableOpacity
+                  style={styles.cancelModalBtn}
+                  onPress={() => setIsOvertimeModalOpen(false)}
+                  activeOpacity={0.8}
+                >
+                  <Text style={styles.cancelModalBtnText}>{t('common.cancel')}</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={[
+                    styles.saveModalBtn,
+                    (!overtimeModalHours || parseFloat(overtimeModalHours) <= 0) &&
+                      styles.saveModalBtnDisabled,
+                  ]}
+                  onPress={() => handleSaveOvertime()}
+                  disabled={savingOvertime || !overtimeModalHours || parseFloat(overtimeModalHours) <= 0}
+                  activeOpacity={0.8}
+                >
+                  {savingOvertime ? (
+                    <ActivityIndicator size="small" color="#FFFFFF" />
+                  ) : (
+                    <Text style={styles.saveModalBtnText}>
+                      {language === 'hi' ? 'सहेजें' : language === 'bn' ? 'সংরক্ষণ' : 'Save Overtime'}
+                    </Text>
+                  )}
+                </TouchableOpacity>
+              </View>
+            </View>
+          </View>
+        </KeyboardAvoidingView>
+      </View>
+    </Modal>
     </SafeAreaView>
   );
 }
@@ -1642,16 +2138,16 @@ const styles = StyleSheet.create({
     backgroundColor: '#FAFAFA',
   },
   dateCol: {
-    width: 44,
+    width: 36,
     alignItems: 'center',
   },
   dateNumber: {
-    fontSize: 15,
+    fontSize: 14,
     fontWeight: '700',
     color: '#0F172A',
   },
   dateDayName: {
-    fontSize: 11,
+    fontSize: 10,
     fontWeight: '600',
     color: '#64748B',
     marginTop: 1,
@@ -1664,11 +2160,16 @@ const styles = StyleSheet.create({
   markingButtonGroup: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
+    gap: 4,
+    flex: 1,
+    justifyContent: 'center',
+    paddingHorizontal: 4,
   },
   markingBtn: {
-    width: 42,
-    height: 36,
+    flex: 1,
+    minWidth: 28,
+    maxWidth: 42,
+    height: 34,
     borderRadius: 8,
     borderWidth: 1,
     borderColor: '#CBD5E1',
@@ -1677,8 +2178,8 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   markingBtnText: {
-    fontSize: 13,
-    fontWeight: '600',
+    fontSize: 12,
+    fontWeight: '700',
     color: '#475569',
   },
   // Present
@@ -1719,12 +2220,13 @@ const styles = StyleSheet.create({
   },
   // Advance column
   advanceCol: {
-    width: 60,
+    minWidth: 54,
+    flexShrink: 0,
     alignItems: 'flex-end',
   },
   advanceBtnDefault: {
-    paddingHorizontal: 12,
-    paddingVertical: 7,
+    paddingHorizontal: 8,
+    paddingVertical: 6,
     borderRadius: 8,
     borderWidth: 1,
     borderColor: '#CBD5E1',
@@ -1735,20 +2237,20 @@ const styles = StyleSheet.create({
     borderColor: '#E2E8F0',
   },
   advanceBtnDefaultText: {
-    fontSize: 12,
+    fontSize: 11,
     fontWeight: '600',
     color: '#64748B',
   },
   advancePillActive: {
-    paddingHorizontal: 10,
-    paddingVertical: 7,
+    paddingHorizontal: 6,
+    paddingVertical: 6,
     borderRadius: 8,
     borderWidth: 1,
     borderColor: '#F59E0B',
     backgroundColor: '#FEF3C7',
   },
   advancePillActiveText: {
-    fontSize: 12,
+    fontSize: 11,
     fontWeight: '700',
     color: '#B45309',
   },
@@ -1875,6 +2377,92 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '700',
     color: '#FFFFFF',
+  },
+  // Overtime Modal Styles
+  otStepperRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 12,
+    marginVertical: 10,
+  },
+  otStepperBtn: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    borderWidth: 1.5,
+    borderColor: '#CBD5E1',
+    backgroundColor: '#F8FAFC',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  otHoursInput: {
+    width: 84,
+    height: 44,
+    borderWidth: 1.5,
+    borderColor: '#CBD5E1',
+    borderRadius: 10,
+    backgroundColor: '#FFFFFF',
+    fontSize: 20,
+    fontWeight: '800',
+    color: '#0F172A',
+    textAlign: 'center',
+  },
+  otPresetRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'center',
+    gap: 8,
+    marginVertical: 10,
+  },
+  otPresetChip: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+    backgroundColor: '#F8FAFC',
+  },
+  otPresetChipActive: {
+    backgroundColor: '#EA580C',
+    borderColor: '#EA580C',
+  },
+  otPresetChipText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#334155',
+  },
+  otPresetChipTextActive: {
+    color: '#FFFFFF',
+  },
+  otRateInfoBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#FFF7ED',
+    borderWidth: 1,
+    borderColor: '#FFEDD5',
+    borderRadius: 10,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    marginTop: 8,
+  },
+  otRateLabel: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#9A3412',
+  },
+  otRateVal: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: '#C2410C',
+    marginTop: 2,
+  },
+  otCalculatedPayText: {
+    fontSize: 15,
+    fontWeight: '900',
+    color: '#EA580C',
+    marginTop: 2,
   },
   // Report Modal
   reportModalBox: {

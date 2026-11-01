@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import {
   View,
   StyleSheet,
@@ -115,6 +115,7 @@ export function ReportsTab({ accessToken }: ReportsTabProps) {
   const [sites, setSites] = useState<SiteRecord[]>([]);
   const [attendance, setAttendance] = useState<AttendanceRecord[]>([]);
   const [advances, setAdvances] = useState<AdvanceRecord[]>([]);
+  const metadataLoadedRef = useRef(false);
 
   // Calculate Date Ranges
   const dateRange = useMemo(() => {
@@ -149,7 +150,7 @@ export function ReportsTab({ accessToken }: ReportsTabProps) {
     }
   }, [period, t]);
 
-  // Fetch All Primary Data
+  // Fetch All Primary Data with selective caching of static metadata
   const loadData = useCallback(
     async (isPullRefresh = false) => {
       if (!token) return;
@@ -163,27 +164,26 @@ export function ReportsTab({ accessToken }: ReportsTabProps) {
         const headers = { Authorization: `Bearer ${token}` };
         const baseApi = `https://${projectId}.supabase.co/functions/v1/make-server-689d7d60`;
 
-        // 1. Fetch Contractor Profile
-        const profileReq = fetch(`${baseApi}/auth/profile`, { headers }).then((res) =>
-          res.ok ? res.json() : null
-        );
+        // Only fetch static metadata (profile, workers, sites) on first load or manual pull-to-refresh
+        const shouldFetchMetadata = isPullRefresh || !metadataLoadedRef.current;
 
-        // 2. Fetch Workers
-        const workersReq = fetch(`${baseApi}/workers`, { headers }).then((res) =>
-          res.ok ? res.json() : { workers: [] }
-        );
+        const profileReq = shouldFetchMetadata
+          ? fetch(`${baseApi}/auth/profile`, { headers }).then((res) => (res.ok ? res.json() : null))
+          : Promise.resolve(null);
 
-        // 3. Fetch Sites
-        const sitesReq = fetch(`${baseApi}/sites`, { headers }).then((res) =>
-          res.ok ? res.json() : { sites: [] }
-        );
+        const workersReq = shouldFetchMetadata
+          ? fetch(`${baseApi}/workers`, { headers }).then((res) => (res.ok ? res.json() : { workers: [] }))
+          : Promise.resolve(null);
 
-        // 4. Fetch Advances
+        const sitesReq = shouldFetchMetadata
+          ? fetch(`${baseApi}/sites`, { headers }).then((res) => (res.ok ? res.json() : { sites: [] }))
+          : Promise.resolve(null);
+
+        // Dynamic date-dependent endpoints (always fetched on period or site change)
         const advancesReq = fetch(`${baseApi}/advances`, { headers }).then((res) =>
           res.ok ? res.json() : { advances: [] }
         );
 
-        // 5. Fetch Attendance with date filters & optional siteId
         let attUrl = `${baseApi}/attendance?startDate=${dateRange.startDate}&endDate=${dateRange.endDate}`;
         if (selectedSiteId !== 'all') {
           attUrl += `&siteId=${selectedSiteId}`;
@@ -200,11 +200,19 @@ export function ReportsTab({ accessToken }: ReportsTabProps) {
           attendanceReq,
         ]);
 
-        if (profileRes?.profile) {
-          setContractor(profileRes.profile);
+        if (shouldFetchMetadata) {
+          if (profileRes?.profile) {
+            setContractor(profileRes.profile);
+          }
+          if (workersRes?.workers) {
+            setWorkers(workersRes.workers);
+          }
+          if (sitesRes?.sites) {
+            setSites(sitesRes.sites);
+          }
+          metadataLoadedRef.current = true;
         }
-        setWorkers(workersRes?.workers || []);
-        setSites(sitesRes?.sites || []);
+
         setAdvances(advancesRes?.advances || []);
         setAttendance(attendanceRes?.attendance || []);
       } catch (err) {
@@ -1161,7 +1169,7 @@ export function ReportsTab({ accessToken }: ReportsTabProps) {
               {/* Card 1: Total Spend */}
               <View style={styles.bentoCard}>
                 <Text style={styles.bentoLabel}>{t('reports.totalSpend')}</Text>
-                <Text style={styles.bentoVal}>
+                <Text style={styles.bentoVal} numberOfLines={1} adjustsFontSizeToFit>
                   ₹{computedMetrics.totalWageSpend.toLocaleString('en-IN')}
                 </Text>
                 <View style={[styles.badge, { backgroundColor: colors.successLight }]}>
@@ -1174,7 +1182,7 @@ export function ReportsTab({ accessToken }: ReportsTabProps) {
               {/* Card 2: Average Turnout */}
               <View style={styles.bentoCard}>
                 <Text style={styles.bentoLabel}>{t('reports.avgTurnout')}</Text>
-                <Text style={[styles.bentoVal, { color: colors.success }]}>
+                <Text style={[styles.bentoVal, { color: colors.success }]} numberOfLines={1} adjustsFontSizeToFit>
                   {computedMetrics.avgTurnoutPercentage}%
                 </Text>
                 <View style={[styles.badge, { backgroundColor: colors.successLight }]}>
@@ -1187,7 +1195,7 @@ export function ReportsTab({ accessToken }: ReportsTabProps) {
               {/* Card 3: Total Overtime */}
               <View style={styles.bentoCard}>
                 <Text style={styles.bentoLabel}>{t('reports.totalOvertime')}</Text>
-                <Text style={[styles.bentoVal, { color: colors.warning }]}>
+                <Text style={[styles.bentoVal, { color: colors.warning }]} numberOfLines={1} adjustsFontSizeToFit>
                   {computedMetrics.totalOvertimeHours} hrs
                 </Text>
                 <View style={[styles.badge, { backgroundColor: colors.warningLight }]}>
@@ -1200,7 +1208,7 @@ export function ReportsTab({ accessToken }: ReportsTabProps) {
               {/* Card 4: Compliance / Aadhaar */}
               <View style={styles.bentoCard}>
                 <Text style={styles.bentoLabel}>{t('reports.compliance')}</Text>
-                <Text style={[styles.bentoVal, { color: colors.primary }]}>
+                <Text style={[styles.bentoVal, { color: colors.primary }]} numberOfLines={1} adjustsFontSizeToFit>
                   {computedMetrics.compliancePercentage}%
                 </Text>
                 <View style={[styles.badge, { backgroundColor: colors.surfaceMuted }]}>
@@ -1527,7 +1535,12 @@ export function ReportsTab({ accessToken }: ReportsTabProps) {
       </ScrollView>
 
       {/* 9. SITE SELECTION MODAL */}
-      <Modal visible={showSiteModal} transparent animationType="fade">
+      <Modal
+        visible={showSiteModal}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowSiteModal(false)}
+      >
         <View style={styles.modalOverlay}>
           <View style={styles.modalSheet}>
             <View style={styles.modalHeader}>
@@ -1753,7 +1766,8 @@ const styles = StyleSheet.create({
     marginBottom: 14,
   },
   bentoCard: {
-    width: '48.5%',
+    flex: 1,
+    minWidth: '46%',
     backgroundColor: colors.surface,
     borderRadius: radii.lg,
     padding: 12,
@@ -1796,12 +1810,15 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'flex-start',
+    flexWrap: 'wrap',
+    gap: 8,
     marginBottom: 10,
   },
   chartTitle: {
     fontSize: 14,
     fontWeight: '800',
     color: colors.text,
+    flexShrink: 1,
   },
   chartSub: {
     fontSize: 11,
@@ -1890,6 +1907,7 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '700',
     color: colors.text,
+    flexShrink: 1,
   },
   siteRowSub: {
     fontSize: 10,

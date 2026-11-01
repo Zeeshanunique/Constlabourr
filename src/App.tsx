@@ -1,5 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { NavigationContainer } from '@react-navigation/native';
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
+import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { GluestackUIProvider } from './components/ui/gluestack-ui-provider';
 import { LanguageProvider } from './i18n';
 import { projectId, publicAnonKey } from './utils/supabase/info';
@@ -20,7 +22,54 @@ import { AppNavigator } from './navigation/AppNavigator';
 import Toast from 'react-native-toast-message';
 import { AppContext, AppContextType, User, supabase } from './context/AppContext';
 import { BrandLogo } from './components/shared/BrandLogo';
+import { OfflineBanner } from './components/shared/OfflineBanner';
 import { colors } from './styles/theme';
+
+interface ErrorBoundaryState {
+  hasError: boolean;
+  errorMessage: string;
+}
+
+class RootErrorBoundary extends React.Component<{ children: React.ReactNode }, ErrorBoundaryState> {
+  constructor(props: any) {
+    super(props);
+    this.state = { hasError: false, errorMessage: '' };
+  }
+
+  static getDerivedStateFromError(error: any): ErrorBoundaryState {
+    return {
+      hasError: true,
+      errorMessage: error?.message || 'Application initialization error',
+    };
+  }
+
+  componentDidCatch(error: any, errorInfo: any) {
+    console.error('Fatal render error caught by RootErrorBoundary:', error, errorInfo);
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <View style={{ flex: 1, backgroundColor: '#0F172A', justifyContent: 'center', alignItems: 'center', padding: 24 }}>
+          <MaterialIcons name="warning" size={48} color="#F97316" />
+          <Text style={{ color: '#F8FAFC', fontSize: 20, fontWeight: '800', marginTop: 16, marginBottom: 8, textAlign: 'center' }}>
+            ConstLabour App Recovery
+          </Text>
+          <Text style={{ color: '#94A3B8', fontSize: 13, textAlign: 'center', marginBottom: 24, lineHeight: 18 }}>
+            {this.state.errorMessage}
+          </Text>
+          <TouchableOpacity
+            style={{ backgroundColor: '#F97316', paddingVertical: 12, paddingHorizontal: 24, borderRadius: 12 }}
+            onPress={() => this.setState({ hasError: false, errorMessage: '' })}
+          >
+            <Text style={{ color: '#FFFFFF', fontWeight: '700' }}>Retry Launch</Text>
+          </TouchableOpacity>
+        </View>
+      );
+    }
+    return this.props.children;
+  }
+}
 
 export default function App() {
   const [user, setUser] = useState<User | null>(null);
@@ -86,6 +135,99 @@ export default function App() {
     };
   }, []);
 
+  // 3. Supabase Auth State Change Listener
+  useEffect(() => {
+    const { data: { subscription: authListener } } = supabase.auth.onAuthStateChange(
+      async (event, session) => {
+        if (event === 'SIGNED_OUT' || (!session && event === 'USER_UPDATED')) {
+          setUser(null);
+          setAccessToken(null);
+          await AsyncStorage.multiRemove([
+            '@constlabour_cached_user',
+            '@constlabour_device_session_id',
+          ]);
+        } else if (session?.access_token) {
+          setAccessToken(session.access_token);
+        }
+      }
+    );
+
+    return () => {
+      authListener?.unsubscribe();
+    };
+  }, []);
+
+  // 4. Realtime Single-Device Guard & Periodic Session Heartbeat
+  useEffect(() => {
+    if (!user?.id) return;
+
+    // A. Realtime subscription to profiles table for immediate single-device logout
+    const channel = supabase
+      .channel(`profile_device_guard_${user.id}`)
+      .on(
+        'postgres_changes',
+        {
+          event: 'UPDATE',
+          schema: 'public',
+          table: 'profiles',
+          filter: `id=eq.${user.id}`,
+        },
+        async (payload: any) => {
+          const newSessionId = payload?.new?.device_session_id;
+          const localSessionId = await AsyncStorage.getItem('@constlabour_device_session_id');
+          if (newSessionId && localSessionId && newSessionId !== localSessionId) {
+            console.warn('Realtime guard: Another device logged in. Terminating session.');
+            await handleUnauthorized(
+              'Your ConstLabour account was logged in from another device. For your security, you have been redirected to the login screen.'
+            );
+          }
+        }
+      )
+      .subscribe();
+
+    // B. Periodic Heartbeat (every 10 seconds when app is in foreground)
+    const heartbeatInterval = setInterval(async () => {
+      if (AppState.currentState !== 'active') return;
+      try {
+        const localSessionId = await AsyncStorage.getItem('@constlabour_device_session_id');
+        if (!localSessionId) return;
+
+        // Query profiles table for device_session_id
+        const { data: profile, error } = await supabase
+          .from('profiles')
+          .select('device_session_id')
+          .eq('id', user.id)
+          .maybeSingle();
+
+        if (error) {
+          if (error.code === 'PGRST301' || error.message?.includes('JWT') || error.message?.includes('Unauthorized')) {
+            console.warn('Heartbeat: Session invalid/expired.');
+            await handleUnauthorized('Your session has expired. Please log in again.');
+          }
+          return;
+        }
+
+        if (
+          profile?.device_session_id &&
+          localSessionId &&
+          profile.device_session_id !== localSessionId
+        ) {
+          console.warn('Heartbeat: Device mismatch. Another device logged in.');
+          await handleUnauthorized(
+            'Your ConstLabour account was logged in from another device. For your security, you have been redirected to the login screen.'
+          );
+        }
+      } catch (err) {
+        console.error('Heartbeat check error:', err);
+      }
+    }, 10000);
+
+    return () => {
+      supabase.removeChannel(channel);
+      clearInterval(heartbeatInterval);
+    };
+  }, [user?.id]);
+
   const triggerBiometricUnlock = async () => {
     try {
       setIsAuthenticating(true);
@@ -137,17 +279,27 @@ export default function App() {
 
   const fetchUserProfile = async (token: string, isSilentCheck = false) => {
     try {
+      const localDeviceSessionId = await AsyncStorage.getItem('@constlabour_device_session_id');
       const response = await fetch(
         `https://${projectId}.supabase.co/functions/v1/make-server-689d7d60/auth/profile`,
         {
           headers: {
             'Authorization': `Bearer ${token}`,
+            ...(localDeviceSessionId ? { 'x-device-session-id': localDeviceSessionId } : {}),
           },
         }
       );
 
+      if (response.status === 401 || response.status === 403) {
+        console.warn('Profile fetch returned 401/403: session revoked on backend.');
+        await handleUnauthorized(
+          'Your ConstLabour account was logged in from another device. Please log in again.'
+        );
+        return;
+      }
+
       if (!response.ok) {
-        const errorData = await response.json();
+        const errorData = await response.json().catch(() => ({}));
         console.error('Profile fetch error details:', errorData);
         throw new Error(errorData.error || 'Failed to fetch user profile');
       }
@@ -156,18 +308,14 @@ export default function App() {
       const profile = data.profile;
 
       // SINGLE-DEVICE LOGIN ENFORCEMENT
-      const localDeviceSessionId = await AsyncStorage.getItem('@constlabour_device_session_id');
       if (
         profile?.deviceSessionId &&
         localDeviceSessionId &&
         profile.deviceSessionId !== localDeviceSessionId
       ) {
         console.warn('Single-device mismatch: DB has', profile.deviceSessionId, 'local is', localDeviceSessionId);
-        await logout(true);
-        Alert.alert(
-          'Logged Out from this Device',
-          'Your ConstLabour account was logged in from another device. For your security, only one active device is permitted at a time.',
-          [{ text: 'OK' }]
+        await handleUnauthorized(
+          'Your ConstLabour account was logged in from another device. For your security, only one active device is permitted at a time.'
         );
         return;
       }
@@ -182,6 +330,7 @@ export default function App() {
           headers: {
             'Content-Type': 'application/json',
             'Authorization': `Bearer ${token}`,
+            'x-device-session-id': localDeviceSessionId,
           },
           body: JSON.stringify({ deviceSessionId: localDeviceSessionId }),
         }).catch(console.error);
@@ -192,12 +341,14 @@ export default function App() {
     } catch (error: any) {
       console.error('Error fetching user profile:', error);
       if (!isSilentCheck) {
-        // If network failed but we have cached user, keep the user
-        const cached = await AsyncStorage.getItem('@constlabour_cached_user');
-        if (cached) {
-          try {
-            setUser(JSON.parse(cached));
-          } catch {}
+        // Only keep cached user if it was not an authentication failure
+        if (!error.message?.includes('401') && !error.message?.includes('Unauthorized')) {
+          const cached = await AsyncStorage.getItem('@constlabour_cached_user');
+          if (cached) {
+            try {
+              setUser(JSON.parse(cached));
+            } catch {}
+          }
         }
       }
     }
@@ -386,7 +537,7 @@ export default function App() {
 
   const logout = async (isForced = false) => {
     try {
-      await supabase.auth.signOut();
+      await supabase.auth.signOut().catch(() => {});
       await AsyncStorage.multiRemove([
         '@constlabour_cached_user',
         '@constlabour_device_session_id',
@@ -403,12 +554,21 @@ export default function App() {
       }
     } catch (error) {
       console.error('Logout error:', error);
-      Toast.show({
-        type: 'error',
-        text1: 'Error',
-        text2: 'Logout failed',
-      });
+      setUser(null);
+      setAccessToken(null);
+      setIsAppLocked(false);
     }
+  };
+
+  const handleUnauthorized = async (message?: string) => {
+    console.warn('Handling unauthorized session termination:', message);
+    await logout(true);
+    Alert.alert(
+      'Session Expired',
+      message ||
+        'Your ConstLabour account was logged in from another device. For your security, you have been redirected to the login screen.',
+      [{ text: 'OK' }]
+    );
   };
 
   const refreshUser = async () => {
@@ -419,12 +579,18 @@ export default function App() {
 
   if (loading) {
     return (
-      <GluestackUIProvider>
-        <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#f8f9fa' }}>
-          <ActivityIndicator size="large" color="#2563eb" />
-          <Text style={{ marginTop: 16, color: '#717182' }}>Loading...</Text>
-        </View>
-      </GluestackUIProvider>
+      <RootErrorBoundary>
+        <GestureHandlerRootView style={{ flex: 1 }}>
+          <SafeAreaProvider>
+            <GluestackUIProvider>
+              <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#f8f9fa' }}>
+                <ActivityIndicator size="large" color="#2563eb" />
+                <Text style={{ marginTop: 16, color: '#717182' }}>Loading...</Text>
+              </View>
+            </GluestackUIProvider>
+          </SafeAreaProvider>
+        </GestureHandlerRootView>
+      </RootErrorBoundary>
     );
   }
 
@@ -432,6 +598,7 @@ export default function App() {
     user,
     supabase,
     logout,
+    handleUnauthorized,
     refreshUser,
     handleLogin,
     handleLoginWithPhone,
@@ -440,65 +607,72 @@ export default function App() {
   };
 
   return (
-    <LanguageProvider>
-      <GluestackUIProvider>
-        <AppContext.Provider value={contextValue}>
-          <NavigationContainer>
-            {!user ? (
-              <AuthNavigator />
-            ) : (
-              <AppNavigator role={user.role} accessToken={accessToken!} />
-            )}
-          </NavigationContainer>
+    <RootErrorBoundary>
+      <GestureHandlerRootView style={{ flex: 1 }}>
+        <SafeAreaProvider>
+          <LanguageProvider>
+            <GluestackUIProvider>
+              <AppContext.Provider value={contextValue}>
+                <OfflineBanner />
+                <NavigationContainer>
+                  {!user ? (
+                    <AuthNavigator />
+                  ) : (
+                    <AppNavigator role={user.role} accessToken={accessToken!} />
+                  )}
+                </NavigationContainer>
 
-          {/* PAYMENT-APP-STYLE BIOMETRIC & PIN APP LOCK OVERLAY */}
-          {isAppLocked && user && (
-            <View style={lockStyles.overlay}>
-              <View style={lockStyles.card}>
-                <View style={lockStyles.logoWrapper}>
-                  <BrandLogo size={46} variant="light" />
-                </View>
+                {/* PAYMENT-APP-STYLE BIOMETRIC & PIN APP LOCK OVERLAY */}
+                {isAppLocked && user && (
+                  <View style={lockStyles.overlay}>
+                    <View style={lockStyles.card}>
+                      <View style={lockStyles.logoWrapper}>
+                        <BrandLogo size={46} variant="light" />
+                      </View>
 
-                <View style={lockStyles.lockIconCircle}>
-                  <MaterialIcons name="lock" size={38} color="#F97316" />
-                </View>
+                      <View style={lockStyles.lockIconCircle}>
+                        <MaterialIcons name="lock" size={38} color="#F97316" />
+                      </View>
 
-                <Text style={lockStyles.lockTitle}>ConstLabour Secure Lock</Text>
-                <Text style={lockStyles.lockSubtitle}>
-                  Logged in as <Text style={{ fontWeight: '700', color: '#F1F5F9' }}>{user.name}</Text>
-                </Text>
-                <Text style={lockStyles.lockInstructions}>
-                  Unlock using your Face ID, Fingerprint, or Device PIN to view labor, attendance & wage records.
-                </Text>
+                      <Text style={lockStyles.lockTitle}>ConstLabour Secure Lock</Text>
+                      <Text style={lockStyles.lockSubtitle}>
+                        Logged in as <Text style={{ fontWeight: '700', color: '#F1F5F9' }}>{user.name}</Text>
+                      </Text>
+                      <Text style={lockStyles.lockInstructions}>
+                        Unlock using your Face ID, Fingerprint, or Device PIN to view labor, attendance & wage records.
+                      </Text>
 
-                <TouchableOpacity
-                  style={lockStyles.unlockButton}
-                  onPress={triggerBiometricUnlock}
-                  disabled={isAuthenticating}
-                  activeOpacity={0.85}
-                >
-                  <MaterialIcons name="fingerprint" size={24} color="#FFFFFF" />
-                  <Text style={lockStyles.unlockButtonText}>
-                    {isAuthenticating ? 'Authenticating...' : 'Unlock ConstLabour'}
-                  </Text>
-                </TouchableOpacity>
+                      <TouchableOpacity
+                        style={lockStyles.unlockButton}
+                        onPress={triggerBiometricUnlock}
+                        disabled={isAuthenticating}
+                        activeOpacity={0.85}
+                      >
+                        <MaterialIcons name="fingerprint" size={24} color="#FFFFFF" />
+                        <Text style={lockStyles.unlockButtonText}>
+                          {isAuthenticating ? 'Authenticating...' : 'Unlock ConstLabour'}
+                        </Text>
+                      </TouchableOpacity>
 
-                <TouchableOpacity
-                  style={lockStyles.switchAccountBtn}
-                  onPress={() => logout(false)}
-                  activeOpacity={0.7}
-                >
-                  <MaterialIcons name="logout" size={16} color="#94A3B8" />
-                  <Text style={lockStyles.switchAccountText}>Switch Account or Log Out</Text>
-                </TouchableOpacity>
-              </View>
-            </View>
-          )}
+                      <TouchableOpacity
+                        style={lockStyles.switchAccountBtn}
+                        onPress={() => logout(false)}
+                        activeOpacity={0.7}
+                      >
+                        <MaterialIcons name="logout" size={16} color="#94A3B8" />
+                        <Text style={lockStyles.switchAccountText}>Switch Account or Log Out</Text>
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+                )}
 
-          <Toast />
-        </AppContext.Provider>
-      </GluestackUIProvider>
-    </LanguageProvider>
+                <Toast />
+              </AppContext.Provider>
+            </GluestackUIProvider>
+          </LanguageProvider>
+        </SafeAreaProvider>
+      </GestureHandlerRootView>
+    </RootErrorBoundary>
   );
 }
 

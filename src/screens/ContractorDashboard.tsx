@@ -8,7 +8,9 @@ import {
   RefreshControl,
   Modal,
   ActivityIndicator,
+  Alert,
 } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { AppContext } from '../context/AppContext';
 import { MaterialIcons } from '@expo/vector-icons';
@@ -24,6 +26,8 @@ import type { AppStackParamList } from '../navigation/AppNavigator';
 import { colors, shadows, radii } from '../styles/theme';
 import { BrandLogo } from '../components/shared/BrandLogo';
 import { useTranslation } from '../i18n';
+import { DashboardSkeleton } from '../components/shared/Skeleton';
+import { ErrorCard } from '../components/shared/ErrorCard';
 
 interface ContractorDashboardProps {
   accessToken?: string;
@@ -65,6 +69,7 @@ export function ModernContractorDashboard({ accessToken }: ContractorDashboardPr
   const [showSiteModal, setShowSiteModal] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     if (token) {
@@ -76,19 +81,31 @@ export function ModernContractorDashboard({ accessToken }: ContractorDashboardPr
   useFocusEffect(
     useCallback(() => {
       if (token) {
-        fetchSites();
+        if (sites.length === 0) {
+          fetchSites();
+        }
         fetchStats(selectedSiteId);
       }
-    }, [token, selectedSiteId])
+    }, [token, selectedSiteId, sites.length])
   );
 
   const fetchSites = async () => {
     if (!token) return;
     try {
+      const localDeviceSessionId = await AsyncStorage.getItem('@constlabour_device_session_id');
       const response = await fetch(
         `https://${projectId}.supabase.co/functions/v1/make-server-689d7d60/sites`,
-        { headers: { Authorization: `Bearer ${token}` } }
+        {
+          headers: {
+            Authorization: `Bearer ${token}`,
+            ...(localDeviceSessionId ? { 'x-device-session-id': localDeviceSessionId } : {}),
+          },
+        }
       );
+      if (response.status === 401 || response.status === 403) {
+        context?.handleUnauthorized();
+        return;
+      }
       if (response.ok) {
         const data = await response.json();
         if (data.sites && Array.isArray(data.sites)) {
@@ -105,28 +122,54 @@ export function ModernContractorDashboard({ accessToken }: ContractorDashboardPr
     const currentSiteId = siteIdParam !== undefined ? siteIdParam : selectedSiteId;
     setLoading(true);
     try {
+      const localDeviceSessionId = await AsyncStorage.getItem('@constlabour_device_session_id');
       const query = currentSiteId && currentSiteId !== 'all' ? `?siteId=${currentSiteId}` : '';
       const response = await fetch(
         `https://${projectId}.supabase.co/functions/v1/make-server-689d7d60/dashboard/stats${query}`,
         {
           headers: {
             Authorization: `Bearer ${token}`,
+            ...(localDeviceSessionId ? { 'x-device-session-id': localDeviceSessionId } : {}),
           },
         }
       );
 
+      if (response.status === 401 || response.status === 403) {
+        context?.handleUnauthorized();
+        return;
+      }
+
       if (!response.ok) throw new Error('Failed to fetch stats');
 
       const data = await response.json();
-      if (data.stats) setStats(data.stats);
+      if (data.stats) {
+        setStats(data.stats);
+        setError(null);
+      }
       if (data.sites && (!sites || sites.length === 0)) {
         setSites(data.sites);
       }
-    } catch (error) {
-      console.error('Error fetching stats:', error);
+    } catch (err: any) {
+      console.error('Error fetching stats:', err);
+      setError(err?.message || 'Could not load dashboard stats. Check your connection.');
     } finally {
       setLoading(false);
     }
+  };
+
+  const handleLogout = () => {
+    Alert.alert(
+      t('settings.logout') || 'Sign Out',
+      language === 'hi'
+        ? 'क्या आप निश्चित रूप से लॉग आउट करना चाहते हैं?'
+        : language === 'bn'
+        ? 'আপনি কি নিশ্চিত যে লগ আউট করতে চান?'
+        : 'Are you sure you want to log out of ConstLabour?',
+      [
+        { text: t('common.cancel') || 'Cancel', style: 'cancel' },
+        { text: t('settings.logout') || 'Logout', style: 'destructive', onPress: context?.logout },
+      ]
+    );
   };
 
   const handleSelectSite = (siteId: string, siteName: string) => {
@@ -184,7 +227,7 @@ export function ModernContractorDashboard({ accessToken }: ContractorDashboardPr
               </Text>
             </TouchableOpacity>
 
-            <TouchableOpacity onPress={context.logout} style={styles.iconCircleButton}>
+            <TouchableOpacity onPress={handleLogout} style={styles.iconCircleButton}>
               <MaterialIcons name="logout" size={18} color="#FFFFFF" />
             </TouchableOpacity>
           </View>
@@ -221,13 +264,19 @@ export function ModernContractorDashboard({ accessToken }: ContractorDashboardPr
           <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.accent} />
         }
       >
-        {/* 2. REAL-TIME WORKFORCE OVERVIEW GRID */}
-        <View style={styles.sectionHeaderRow}>
-          <Text style={styles.sectionLabel}>
-            {selectedSiteId === 'all' ? "TODAY'S COMPANY OVERVIEW" : `${selectedSiteName.toUpperCase()} OVERVIEW`}
-          </Text>
-          {loading && <ActivityIndicator size="small" color={colors.accent} />}
-        </View>
+        {loading && !stats ? (
+          <DashboardSkeleton />
+        ) : error && !stats ? (
+          <ErrorCard message={error} onRetry={() => fetchStats(selectedSiteId)} />
+        ) : (
+          <>
+            {/* 2. REAL-TIME WORKFORCE OVERVIEW GRID */}
+            <View style={styles.sectionHeaderRow}>
+              <Text style={styles.sectionLabel}>
+                {selectedSiteId === 'all' ? "TODAY'S COMPANY OVERVIEW" : `${selectedSiteName.toUpperCase()} OVERVIEW`}
+              </Text>
+              {loading && <ActivityIndicator size="small" color={colors.accent} />}
+            </View>
 
         <View style={styles.bentoGrid}>
           {/* Card 1: Present Today */}
@@ -238,7 +287,7 @@ export function ModernContractorDashboard({ accessToken }: ContractorDashboardPr
                 <MaterialIcons name="check-circle" size={16} color={colors.success} />
               </View>
             </View>
-            <Text style={styles.bentoNumber}>{presentCount}</Text>
+            <Text style={styles.bentoNumber} numberOfLines={1} adjustsFontSizeToFit>{presentCount}</Text>
             <View style={[styles.bentoTag, { backgroundColor: colors.successLight }]}>
               <Text style={[styles.bentoTagText, { color: colors.successDark }]}>
                 {turnoutPercentage}% {t('attendance.title')}
@@ -254,7 +303,7 @@ export function ModernContractorDashboard({ accessToken }: ContractorDashboardPr
                 <MaterialIcons name="payments" size={16} color={colors.accent} />
               </View>
             </View>
-            <Text style={styles.bentoNumber}>{formatWageDisplay(totalWagesToday)}</Text>
+            <Text style={styles.bentoNumber} numberOfLines={1} adjustsFontSizeToFit>{formatWageDisplay(totalWagesToday)}</Text>
             <View style={[styles.bentoTag, { backgroundColor: colors.accentLight }]}>
               <Text style={[styles.bentoTagText, { color: colors.accentDark }]}>
                 {t('common.today')}
@@ -270,7 +319,7 @@ export function ModernContractorDashboard({ accessToken }: ContractorDashboardPr
                 <MaterialIcons name="cancel" size={16} color={colors.error} />
               </View>
             </View>
-            <Text style={styles.bentoNumber}>{absentCount}</Text>
+            <Text style={styles.bentoNumber} numberOfLines={1} adjustsFontSizeToFit>{absentCount}</Text>
             <View style={[styles.bentoTag, { backgroundColor: colors.errorLight }]}>
               <Text style={[styles.bentoTagText, { color: colors.errorDark }]}>
                 {totalWorkersCount} {t('common.total')}
@@ -286,7 +335,7 @@ export function ModernContractorDashboard({ accessToken }: ContractorDashboardPr
                 <MaterialIcons name="location-city" size={16} color={colors.primary} />
               </View>
             </View>
-            <Text style={styles.bentoNumber}>{activeSitesCount}</Text>
+            <Text style={styles.bentoNumber} numberOfLines={1} adjustsFontSizeToFit>{activeSitesCount}</Text>
             <View style={[styles.bentoTag, { backgroundColor: colors.surfaceMuted }]}>
               <Text style={[styles.bentoTagText, { color: colors.primary }]}>
                 {selectedSiteId !== 'all' ? selectedSiteName : t('common.active')}
@@ -414,10 +463,17 @@ export function ModernContractorDashboard({ accessToken }: ContractorDashboardPr
             </View>
           </View>
         </View>
+        </>
+      )}
       </ScrollView>
 
       {/* 6. ACTIVE SITES SELECTOR MODAL */}
-      <Modal visible={showSiteModal} transparent animationType="fade">
+      <Modal
+        visible={showSiteModal}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowSiteModal(false)}
+      >
         <View style={styles.modalOverlay}>
           <View style={styles.modalSheet}>
             <View style={styles.modalHeader}>
@@ -572,6 +628,8 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
+    flexWrap: 'wrap',
+    gap: 8,
     marginTop: 2,
   },
   siteSelectorPill: {
@@ -583,7 +641,8 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 7,
     borderRadius: radii.pill,
-    maxWidth: '65%',
+    maxWidth: '75%',
+    flexShrink: 1,
   },
   gpsPulseDot: {
     width: 7,
@@ -597,6 +656,7 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: '#FFFFFF',
     marginRight: 2,
+    flexShrink: 1,
   },
   userProfileTag: {
     flexDirection: 'row',
@@ -607,12 +667,14 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
     paddingVertical: 5,
     borderRadius: radii.pill,
+    flexShrink: 1,
   },
   userProfileText: {
     fontSize: 11,
     fontWeight: '700',
     color: colors.accentLight,
     marginLeft: 4,
+    flexShrink: 1,
   },
   scrollView: {
     flex: 1,
@@ -642,10 +704,11 @@ const styles = StyleSheet.create({
   bentoGrid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    gap: 12,
+    gap: 10,
   },
   bentoCard: {
-    width: '48%',
+    flex: 1,
+    minWidth: '46%',
     backgroundColor: colors.surface,
     borderRadius: radii.xl,
     padding: 14,
@@ -663,6 +726,8 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '700',
     color: colors.textMuted,
+    flexShrink: 1,
+    marginRight: 4,
   },
   microIconCircle: {
     width: 26,
@@ -691,10 +756,11 @@ const styles = StyleSheet.create({
   actionDockGrid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    gap: 12,
+    gap: 10,
   },
   actionDockItem: {
-    width: '48%',
+    flex: 1,
+    minWidth: '46%',
     backgroundColor: colors.surface,
     borderRadius: radii.lg,
     padding: 14,
@@ -713,6 +779,7 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '800',
     color: colors.text,
+    flexShrink: 1,
   },
   actionDockSubtitle: {
     fontSize: 11,

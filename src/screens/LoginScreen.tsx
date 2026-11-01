@@ -9,6 +9,7 @@ import {
   Platform,
   ScrollView,
   ActivityIndicator,
+  BackHandler,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { AppContext, AppContextType } from '../context/AppContext';
@@ -69,6 +70,20 @@ export function LoginScreen({ onLogin, onRegister }: LoginScreenProps) {
 
   const [loading, setLoading] = useState(false);
   const context = useContext(AppContext) as AppContextType | null;
+
+  // Intercept Android hardware back when in registration mode to switch back to login
+  useEffect(() => {
+    const onHardwareBack = () => {
+      if (authMode === 'register') {
+        setAuthMode('login');
+        return true;
+      }
+      return false;
+    };
+
+    const backSub = BackHandler.addEventListener('hardwareBackPress', onHardwareBack);
+    return () => backSub.remove();
+  }, [authMode]);
 
   const handlePhonePasswordLogin = async () => {
     const cleanPhone = phoneNumber.replace(/\D/g, '').slice(0, 10);
@@ -670,6 +685,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     paddingVertical: 10,
+    minHeight: 40,
     borderRadius: radii.sm,
   },
   tabButtonActive: {
@@ -713,7 +729,8 @@ const styles = StyleSheet.create({
     borderColor: colors.borderDark,
     borderRadius: radii.md,
     paddingHorizontal: 12,
-    height: 48,
+    minHeight: 48,
+    paddingVertical: 6,
     marginRight: 8,
   },
   flagEmoji: {
@@ -727,12 +744,13 @@ const styles = StyleSheet.create({
   },
   phoneInput: {
     flex: 1,
-    height: 48,
+    minHeight: 48,
     backgroundColor: colors.surface,
     borderWidth: 1,
     borderColor: colors.borderDark,
     borderRadius: radii.md,
     paddingHorizontal: 14,
+    paddingVertical: 8,
     fontSize: 16,
     fontWeight: '600',
     color: colors.text,
@@ -746,12 +764,13 @@ const styles = StyleSheet.create({
   inputWrapper: {
     flexDirection: 'row',
     alignItems: 'center',
-    height: 48,
+    minHeight: 48,
     backgroundColor: colors.surface,
     borderWidth: 1,
     borderColor: colors.borderDark,
     borderRadius: radii.md,
     paddingHorizontal: 12,
+    paddingVertical: 4,
     marginBottom: 8,
   },
   inputLeadingIcon: {
@@ -759,7 +778,7 @@ const styles = StyleSheet.create({
   },
   textInput: {
     flex: 1,
-    height: 48,
+    minHeight: 40,
     fontSize: 14,
     fontWeight: '600',
     color: colors.text,
@@ -769,7 +788,9 @@ const styles = StyleSheet.create({
   },
   primaryActionButton: {
     backgroundColor: colors.accent,
-    height: 50,
+    minHeight: 50,
+    paddingVertical: 12,
+    paddingHorizontal: 16,
     borderRadius: radii.md,
     flexDirection: 'row',
     alignItems: 'center',
@@ -826,7 +847,9 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    height: 46,
+    minHeight: 46,
+    paddingVertical: 10,
+    paddingHorizontal: 16,
     borderRadius: radii.md,
     borderWidth: 1.5,
     borderColor: '#BAE6FD',
@@ -982,7 +1005,9 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    height: 44,
+    minHeight: 44,
+    paddingVertical: 10,
+    paddingHorizontal: 16,
     borderRadius: radii.md,
     borderWidth: 1,
     borderColor: '#A7F3D0',

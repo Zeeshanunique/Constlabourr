@@ -8,6 +8,7 @@ import {
   Text,
   Modal,
   ActivityIndicator,
+  Alert,
 } from 'react-native';
 import { WebView } from 'react-native-webview';
 import { MaterialIcons } from '@expo/vector-icons';
@@ -197,7 +198,14 @@ export function WorkerAgreementModal({ accessToken, onAccepted }: WorkerAgreemen
   `;
 
   return (
-    <Modal visible={true} transparent animationType="slide">
+    <Modal
+      visible={true}
+      transparent
+      animationType="slide"
+      onRequestClose={() => {
+        Alert.alert('Mandatory Agreement', 'You must accept the statutory employment agreement before proceeding.');
+      }}
+    >
       <View style={styles.modalOverlay}>
         <View style={styles.modalCard}>
           {/* Header */}

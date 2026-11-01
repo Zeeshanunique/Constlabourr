@@ -7,7 +7,9 @@ import {
   Text,
   RefreshControl,
   ActivityIndicator,
+  Alert,
 } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { AppContext } from '../context/AppContext';
 import { MaterialIcons } from '@expo/vector-icons';
@@ -18,6 +20,8 @@ import { WorkerAgreementModal } from '../features/agreements/WorkerAgreementModa
 import { colors, shadows, radii } from '../styles/theme';
 import { BrandLogo } from '../components/shared/BrandLogo';
 import { useTranslation } from '../i18n';
+import { DashboardSkeleton } from '../components/shared/Skeleton';
+import { ErrorCard } from '../components/shared/ErrorCard';
 
 interface LabourDashboardProps {
   accessToken?: string;
@@ -79,6 +83,7 @@ export function ModernLabourDashboard({ accessToken }: LabourDashboardProps) {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [needsAgreementAcceptance, setNeedsAgreementAcceptance] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   // Loaded Data
   const [profile, setProfile] = useState<WorkerProfile | null>(null);
@@ -94,8 +99,13 @@ export function ModernLabourDashboard({ accessToken }: LabourDashboardProps) {
 
   const loadDashboardData = async () => {
     if (!token) return;
+    setError(null);
     try {
-      const headers = { Authorization: `Bearer ${token}` };
+      const localDeviceSessionId = await AsyncStorage.getItem('@constlabour_device_session_id');
+      const headers: Record<string, string> = {
+        Authorization: `Bearer ${token}`,
+        ...(localDeviceSessionId ? { 'x-device-session-id': localDeviceSessionId } : {}),
+      };
       const now = new Date();
       const currentYear = now.getFullYear();
       const currentMonth = now.getMonth() + 1;
@@ -103,39 +113,117 @@ export function ModernLabourDashboard({ accessToken }: LabourDashboardProps) {
       const daysInMonth = new Date(currentYear, currentMonth, 0).getDate();
       const endOfMonth = `${currentYear}-${String(currentMonth).padStart(2, '0')}-${String(daysInMonth).padStart(2, '0')}`;
 
-      // 1. Fetch Profile first to guarantee workerId
+      // Check if workerId is already available in context to eliminate waterfall
+      const knownWorkerId = context?.user?.id || (context?.user as any)?.workerId;
+
+      // Prepare common requests in parallel
+      const profilePromise = fetch(
+        `https://${projectId}.supabase.co/functions/v1/make-server-689d7d60/auth/profile`,
+        { headers }
+      );
+      const agrPromise = fetch(
+        `https://${projectId}.supabase.co/functions/v1/make-server-689d7d60/agreement/status`,
+        { headers }
+      );
+      const sitesPromise = fetch(
+        `https://${projectId}.supabase.co/functions/v1/make-server-689d7d60/sites`,
+        { headers }
+      );
+
+      let attRes: PromiseSettledResult<Response>;
+      let advRes: PromiseSettledResult<Response>;
+      let agrRes: PromiseSettledResult<Response>;
+      let sitesRes: PromiseSettledResult<Response>;
       let loadedProfile: WorkerProfile | null = null;
-      try {
-        const profRes = await fetch(
-          `https://${projectId}.supabase.co/functions/v1/make-server-689d7d60/auth/profile`,
+
+      if (knownWorkerId) {
+        // FAST PATH: All 5 requests dispatched concurrently in parallel!
+        const attPromise = fetch(
+          `https://${projectId}.supabase.co/functions/v1/make-server-689d7d60/attendance?workerId=${knownWorkerId}&startDate=${startOfMonth}&endDate=${endOfMonth}`,
           { headers }
         );
-        if (profRes.ok) {
-          const profData = await profRes.json();
-          loadedProfile = profData.profile || profData.user;
-          setProfile(loadedProfile);
+        const advPromise = fetch(
+          `https://${projectId}.supabase.co/functions/v1/make-server-689d7d60/advances?workerId=${knownWorkerId}`,
+          { headers }
+        );
+
+        const [profSettled, attSettled, advSettled, agrSettled, sitesSettled] = await Promise.allSettled([
+          profilePromise,
+          attPromise,
+          advPromise,
+          agrPromise,
+          sitesPromise,
+        ]);
+
+        if (
+          profSettled.status === 'fulfilled' &&
+          (profSettled.value.status === 401 || profSettled.value.status === 403)
+        ) {
+          context?.handleUnauthorized();
+          return;
         }
-      } catch (e) {
-        console.warn('Error fetching profile in LabourDashboard:', e);
+
+        if (profSettled.status === 'fulfilled' && profSettled.value.ok) {
+          try {
+            const profData = await profSettled.value.json();
+            loadedProfile = profData.profile || profData.user;
+            setProfile(loadedProfile);
+          } catch (e) {
+            console.warn('Error parsing profile json:', e);
+          }
+        }
+
+        attRes = attSettled;
+        advRes = advSettled;
+        agrRes = agrSettled;
+        sitesRes = sitesSettled;
+      } else {
+        // FALLBACK PATH: Wait for profile first to get workerId
+        const [profSettled, agrSettled, sitesSettled] = await Promise.allSettled([
+          profilePromise,
+          agrPromise,
+          sitesPromise,
+        ]);
+
+        if (
+          profSettled.status === 'fulfilled' &&
+          (profSettled.value.status === 401 || profSettled.value.status === 403)
+        ) {
+          context?.handleUnauthorized();
+          return;
+        }
+
+        if (profSettled.status === 'fulfilled' && profSettled.value.ok) {
+          try {
+            const profData = await profSettled.value.json();
+            loadedProfile = profData.profile || profData.user;
+            setProfile(loadedProfile);
+          } catch (e) {
+            console.warn('Error parsing profile json:', e);
+          }
+        }
+
+        const resolvedWorkerId = loadedProfile?.id;
+        const attUrl = resolvedWorkerId
+          ? `https://${projectId}.supabase.co/functions/v1/make-server-689d7d60/attendance?workerId=${resolvedWorkerId}&startDate=${startOfMonth}&endDate=${endOfMonth}`
+          : `https://${projectId}.supabase.co/functions/v1/make-server-689d7d60/attendance?startDate=${startOfMonth}&endDate=${endOfMonth}`;
+
+        const advUrl = resolvedWorkerId
+          ? `https://${projectId}.supabase.co/functions/v1/make-server-689d7d60/advances?workerId=${resolvedWorkerId}`
+          : `https://${projectId}.supabase.co/functions/v1/make-server-689d7d60/advances`;
+
+        const [attSettled, advSettled] = await Promise.allSettled([
+          fetch(attUrl, { headers }),
+          fetch(advUrl, { headers }),
+        ]);
+
+        attRes = attSettled;
+        advRes = advSettled;
+        agrRes = agrSettled;
+        sitesRes = sitesSettled;
       }
 
-      const workerId = loadedProfile?.id || context?.user?.id || (context?.user as any)?.workerId;
-
-      // 2. Fetch Attendance, Advances, Sites, Agreement in parallel
-      const attUrl = workerId
-        ? `https://${projectId}.supabase.co/functions/v1/make-server-689d7d60/attendance?workerId=${workerId}&startDate=${startOfMonth}&endDate=${endOfMonth}`
-        : `https://${projectId}.supabase.co/functions/v1/make-server-689d7d60/attendance?startDate=${startOfMonth}&endDate=${endOfMonth}`;
-
-      const advUrl = workerId
-        ? `https://${projectId}.supabase.co/functions/v1/make-server-689d7d60/advances?workerId=${workerId}`
-        : `https://${projectId}.supabase.co/functions/v1/make-server-689d7d60/advances`;
-
-      const [attRes, advRes, agrRes, sitesRes] = await Promise.allSettled([
-        fetch(attUrl, { headers }),
-        fetch(advUrl, { headers }),
-        fetch(`https://${projectId}.supabase.co/functions/v1/make-server-689d7d60/agreement/status`, { headers }),
-        fetch(`https://${projectId}.supabase.co/functions/v1/make-server-689d7d60/sites`, { headers }),
-      ]);
+      const workerId = loadedProfile?.id || knownWorkerId;
 
       // Process Sites
       const sitesMap = new Map<string, string>();
@@ -218,8 +306,9 @@ export function ModernLabourDashboard({ accessToken }: LabourDashboardProps) {
           setNeedsAgreementAcceptance(true);
         }
       }
-    } catch (err) {
+    } catch (err: any) {
       console.error('Error loading worker dashboard data:', err);
+      setError(err?.message || 'Failed to load craftsman dashboard data');
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -234,6 +323,17 @@ export function ModernLabourDashboard({ accessToken }: LabourDashboardProps) {
   const handleAgreementAccepted = () => {
     setNeedsAgreementAcceptance(false);
     loadDashboardData();
+  };
+
+  const handleLogout = () => {
+    Alert.alert(
+      'Confirm Logout',
+      'Are you sure you want to sign out of ConstLabour?',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Logout', style: 'destructive', onPress: context?.logout },
+      ]
+    );
   };
 
   if (!context) return null;
@@ -257,68 +357,111 @@ export function ModernLabourDashboard({ accessToken }: LabourDashboardProps) {
   // Today's attendance record (check both device date and IST date)
   const todayRecord = attendanceRecords.find((a) => a.date === todayStr || a.date === todayIndian);
 
-  // Month Attendance Breakdown
-  const fullPresentCount = attendanceRecords.filter((a) => a.status === 'present').length;
-  const halfDayCount = attendanceRecords.filter((a) => a.status === 'half-day').length;
-  const absentCount = attendanceRecords.filter((a) => a.status === 'absent').length;
-  const totalShiftCredits = fullPresentCount + halfDayCount * 0.5;
+  // Memoized workforce finance & attendance computations to avoid re-calculating on every tick/render
+  const computations = useMemo(() => {
+    // Month Attendance Breakdown
+    const fullPresent = attendanceRecords.filter((a) => a.status === 'present').length;
+    const halfDay = attendanceRecords.filter((a) => a.status === 'half-day').length;
+    const absent = attendanceRecords.filter((a) => a.status === 'absent').length;
+    const shiftCredits = fullPresent + halfDay * 0.5;
 
-  // Skill Config & Wage Rates
-  const skill = (profile?.skillLevel || (context?.user as any)?.skillLevel || 'Skilled').toUpperCase();
-  const dailyWage = profile?.dailyWage || (context?.user as any)?.dailyWage || 0;
-  const overtimeRate = profile?.overtimeRate || (context?.user as any)?.overtimeRate || 100;
-  const upiId = profile?.upiId || (context?.user as any)?.upiId;
+    // Skill Config & Wage Rates
+    const skillLvl = (profile?.skillLevel || (context?.user as any)?.skillLevel || 'Skilled').toUpperCase();
+    const wage = profile?.dailyWage || (context?.user as any)?.dailyWage || 0;
+    const otRate = profile?.overtimeRate || (context?.user as any)?.overtimeRate || 100;
+    const upi = profile?.upiId || (context?.user as any)?.upiId;
 
-  // Earnings Breakdown
-  let grossAccrued = 0;
-  let totalOtHours = 0;
-  let totalOtPay = 0;
-  let hasItemizedPayment = false;
+    // Earnings Breakdown
+    let gross = 0;
+    let otHours = 0;
+    let otPay = 0;
+    let hasItemized = false;
 
-  attendanceRecords.forEach((a) => {
-    const pay = Number(a.totalPayment || a.dailyPayment || 0);
-    if (pay > 0) hasItemizedPayment = true;
-    grossAccrued += pay;
+    attendanceRecords.forEach((a) => {
+      const pay = Number(a.totalPayment || a.dailyPayment || 0);
+      if (pay > 0) hasItemized = true;
+      gross += pay;
 
-    const otH = Number(a.overtimeHours || 0);
-    totalOtHours += otH;
-    const otP = Number(a.overtimePayment !== undefined && a.overtimePayment !== null && a.overtimePayment > 0 ? a.overtimePayment : (otH * overtimeRate));
-    totalOtPay += otP;
-  });
+      const otH = Number(a.overtimeHours || 0);
+      otHours += otH;
+      const otP = Number(a.overtimePayment !== undefined && a.overtimePayment !== null && a.overtimePayment > 0 ? a.overtimePayment : (otH * otRate));
+      otPay += otP;
+    });
 
-  if (!hasItemizedPayment && totalShiftCredits > 0) {
-    grossAccrued = (totalShiftCredits * dailyWage) + totalOtPay;
-  }
-
-  const baseShiftPay = Math.max(0, grossAccrued - totalOtPay);
-
-  // Advances Breakdown
-  const pendingAdvancesTotal = advancesList
-    .filter((a) => a.status === 'pending')
-    .reduce((sum, a) => sum + Number(a.amount || 0), 0);
-
-  const deductedAdvancesTotal = advancesList
-    .filter((a) => a.status === 'deducted')
-    .reduce((sum, a) => sum + Number(a.amount || 0), 0);
-
-  // Mess Kharcha Deduction
-  // Deduct mess charge whether worker is absent, half-day, or present.
-  // Only unmarked days will NOT be calculated.
-  const messChargePerDay = Number(profile?.messCharge || (context?.user as any)?.messCharge || 0);
-  const markedMessDates = new Set<string>();
-  attendanceRecords.forEach((a) => {
-    if (!a.date) return;
-    const st = (a.status || '').toLowerCase().trim();
-    if (st === 'present' || st === 'half-day' || st === 'absent' || st === 'overtime') {
-      markedMessDates.add(a.date);
+    if (!hasItemized && shiftCredits > 0) {
+      gross = (shiftCredits * wage) + otPay;
     }
-  });
-  const messDaysCount = markedMessDates.size;
-  const totalMessCharge = messDaysCount * messChargePerDay;
-  const totalAccruedDeductions = pendingAdvancesTotal + totalMessCharge;
 
-  // Estimated Net Disbursable
-  const netAccruedEarnings = Math.max(0, grossAccrued - totalAccruedDeductions);
+    const basePay = Math.max(0, gross - otPay);
+
+    // Advances Breakdown
+    const pendingTotal = advancesList
+      .filter((a) => a.status === 'pending')
+      .reduce((sum, a) => sum + Number(a.amount || 0), 0);
+
+    const deductedTotal = advancesList
+      .filter((a) => a.status === 'deducted')
+      .reduce((sum, a) => sum + Number(a.amount || 0), 0);
+
+    // Mess Kharcha Deduction
+    const messPerDay = Number(profile?.messCharge || (context?.user as any)?.messCharge || 0);
+    const markedDates = new Set<string>();
+    attendanceRecords.forEach((a) => {
+      if (!a.date) return;
+      const st = (a.status || '').toLowerCase().trim();
+      if (st === 'present' || st === 'half-day' || st === 'absent' || st === 'overtime') {
+        markedDates.add(a.date);
+      }
+    });
+    const messDays = markedDates.size;
+    const messCharge = messDays * messPerDay;
+    const deductionsTotal = pendingTotal + messCharge;
+    const netEarnings = Math.max(0, gross - deductionsTotal);
+
+    return {
+      fullPresentCount: fullPresent,
+      halfDayCount: halfDay,
+      absentCount: absent,
+      totalShiftCredits: shiftCredits,
+      skill: skillLvl,
+      dailyWage: wage,
+      overtimeRate: otRate,
+      upiId: upi,
+      grossAccrued: gross,
+      totalOtHours: otHours,
+      totalOtPay: otPay,
+      baseShiftPay: basePay,
+      pendingAdvancesTotal: pendingTotal,
+      deductedAdvancesTotal: deductedTotal,
+      messDaysCount: messDays,
+      messChargePerDay: messPerDay,
+      totalMessCharge: messCharge,
+      totalAccruedDeductions: deductionsTotal,
+      netAccruedEarnings: netEarnings,
+    };
+  }, [attendanceRecords, advancesList, profile, context?.user]);
+
+  const {
+    fullPresentCount,
+    halfDayCount,
+    absentCount,
+    totalShiftCredits,
+    skill,
+    dailyWage,
+    overtimeRate,
+    upiId,
+    grossAccrued,
+    totalOtHours,
+    totalOtPay,
+    baseShiftPay,
+    pendingAdvancesTotal,
+    deductedAdvancesTotal,
+    messDaysCount,
+    messChargePerDay,
+    totalMessCharge,
+    totalAccruedDeductions,
+    netAccruedEarnings,
+  } = computations;
 
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
@@ -342,7 +485,7 @@ export function ModernLabourDashboard({ accessToken }: LabourDashboardProps) {
               </Text>
             </TouchableOpacity>
 
-            <TouchableOpacity onPress={context.logout} style={styles.iconCircleButton} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+            <TouchableOpacity onPress={handleLogout} style={styles.iconCircleButton} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
               <MaterialIcons name="logout" size={18} color="#FFFFFF" />
             </TouchableOpacity>
           </View>
@@ -386,12 +529,19 @@ export function ModernLabourDashboard({ accessToken }: LabourDashboardProps) {
         </View>
       </View>
 
-      <ScrollView
-        style={styles.scrollView}
-        contentContainerStyle={styles.scrollContent}
-        showsVerticalScrollIndicator={false}
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.accent} />}
-      >
+      {loading && !profile && attendanceRecords.length === 0 ? (
+        <DashboardSkeleton />
+      ) : error && !profile ? (
+        <View style={{ padding: 16 }}>
+          <ErrorCard message={error} onRetry={loadDashboardData} />
+        </View>
+      ) : (
+        <ScrollView
+          style={styles.scrollView}
+          contentContainerStyle={styles.scrollContent}
+          showsVerticalScrollIndicator={false}
+          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.accent} />}
+        >
         {/* 2. TODAY'S SHIFT STATUS BANNER */}
         <View style={styles.todayBannerWrapper}>
           {todayRecord ? (
@@ -459,7 +609,7 @@ export function ModernLabourDashboard({ accessToken }: LabourDashboardProps) {
           <View style={styles.earningsHeroHeader}>
             <View>
               <Text style={styles.earningsHeroLabel}>{t('workerPortal.netTakeHome')}</Text>
-              <Text style={styles.earningsHeroAmount}>₹{netAccruedEarnings.toLocaleString()}</Text>
+              <Text style={styles.earningsHeroAmount} numberOfLines={1} adjustsFontSizeToFit>₹{netAccruedEarnings.toLocaleString()}</Text>
             </View>
             <View style={styles.earningsHeroBadge}>
               <Text style={styles.earningsHeroBadgeText}>{currentMonthLabel}</Text>
@@ -512,7 +662,7 @@ export function ModernLabourDashboard({ accessToken }: LabourDashboardProps) {
         <View style={styles.bentoRow}>
           <View style={styles.bentoCard}>
             <Text style={styles.bentoCardLabel}>{t('attendance.present')}</Text>
-            <Text style={[styles.bentoCardValue, { color: colors.successDark }]}>
+            <Text style={[styles.bentoCardValue, { color: colors.successDark }]} numberOfLines={1} adjustsFontSizeToFit>
               {fullPresentCount}
             </Text>
             <Text style={styles.bentoCardSub}>1.0 {language === 'hi' ? 'क्रेडिट/दिन' : language === 'bn' ? 'ক্রেডিট/দিন' : 'Credit/d'}</Text>
@@ -520,7 +670,7 @@ export function ModernLabourDashboard({ accessToken }: LabourDashboardProps) {
 
           <View style={styles.bentoCard}>
             <Text style={styles.bentoCardLabel}>{t('attendance.halfDay')}</Text>
-            <Text style={[styles.bentoCardValue, { color: colors.warningDark }]}>
+            <Text style={[styles.bentoCardValue, { color: colors.warningDark }]} numberOfLines={1} adjustsFontSizeToFit>
               {halfDayCount}
             </Text>
             <Text style={styles.bentoCardSub}>0.5 {language === 'hi' ? 'क्रेडिट/दिन' : language === 'bn' ? 'ক্রেডিট/দিন' : 'Credit/d'}</Text>
@@ -528,7 +678,7 @@ export function ModernLabourDashboard({ accessToken }: LabourDashboardProps) {
 
           <View style={styles.bentoCard}>
             <Text style={styles.bentoCardLabel}>{t('attendance.overtime')}</Text>
-            <Text style={[styles.bentoCardValue, { color: colors.info }]}>
+            <Text style={[styles.bentoCardValue, { color: colors.info }]} numberOfLines={1} adjustsFontSizeToFit>
               {totalOtHours.toFixed(1)}h
             </Text>
             <Text style={styles.bentoCardSub}>{t('attendance.otHours')}</Text>
@@ -536,7 +686,7 @@ export function ModernLabourDashboard({ accessToken }: LabourDashboardProps) {
 
           <View style={[styles.bentoCard, { backgroundColor: '#FFF7ED', borderColor: '#FED7AA' }]}>
             <Text style={[styles.bentoCardLabel, { color: '#C2410C' }]}>{t('workerPortal.pendingKharcha')}</Text>
-            <Text style={[styles.bentoCardValue, { color: colors.error }]}>
+            <Text style={[styles.bentoCardValue, { color: colors.error }]} numberOfLines={1} adjustsFontSizeToFit>
               ₹{pendingAdvancesTotal}
             </Text>
             <Text style={[styles.bentoCardSub, { color: '#C2410C' }]}>{t('payroll.pending')}</Text>
@@ -655,6 +805,7 @@ export function ModernLabourDashboard({ accessToken }: LabourDashboardProps) {
           </TouchableOpacity>
         </View>
       </ScrollView>
+      )}
 
       {/* Mandatory Employment Contract Modal if not accepted */}
       {needsAgreementAcceptance && token && (
@@ -749,6 +900,8 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     color: '#FFFFFF',
     letterSpacing: -0.3,
+    flexShrink: 1,
+    marginRight: 6,
   },
   verifiedBadge: {
     flexDirection: 'row',
@@ -880,6 +1033,8 @@ const styles = StyleSheet.create({
     fontWeight: '900',
     letterSpacing: 0.5,
     color: '#0F172A',
+    flexShrink: 1,
+    marginRight: 6,
   },
   todayShiftBadge: {
     backgroundColor: '#0F172A',
@@ -1005,15 +1160,17 @@ const styles = StyleSheet.create({
   },
   bentoRow: {
     flexDirection: 'row',
+    flexWrap: 'wrap',
     gap: 8,
     marginBottom: 14,
   },
   bentoCard: {
     flex: 1,
+    minWidth: '46%',
     backgroundColor: '#FFFFFF',
     borderRadius: radii.lg,
     paddingVertical: 10,
-    paddingHorizontal: 6,
+    paddingHorizontal: 8,
     borderWidth: 1,
     borderColor: colors.border,
     alignItems: 'center',

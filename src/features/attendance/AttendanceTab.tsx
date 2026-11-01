@@ -10,6 +10,7 @@ import {
   ActivityIndicator,
   TextInput,
   Platform,
+  Alert,
 } from 'react-native';
 import DateTimePicker, { DateTimePickerAndroid, DateTimePickerEvent } from '@react-native-community/datetimepicker';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -71,6 +72,29 @@ const getTodayStr = () => {
   }
 };
 
+const formatTimeString = (date: Date) => {
+  return date.toLocaleTimeString('en-IN', {
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: true,
+  });
+};
+
+const LiveShiftClock = React.memo(function LiveShiftClock() {
+  const [time, setTime] = useState(new Date());
+
+  useEffect(() => {
+    const timer = setInterval(() => setTime(new Date()), 1000);
+    return () => clearInterval(timer);
+  }, []);
+
+  return (
+    <Text style={styles.headerSubtitle}>
+      {time.toLocaleDateString('en-IN', { weekday: 'long', month: 'short', day: 'numeric' })} • {formatTimeString(time)}
+    </Text>
+  );
+});
+
 export function AttendanceTab({ accessToken }: AttendanceTabProps) {
   const route = useRoute();
   const context = useContext(AppContext);
@@ -87,7 +111,6 @@ export function AttendanceTab({ accessToken }: AttendanceTabProps) {
   const [selectedShift, setSelectedShift] = useState<'Day Shift' | 'Night Shift'>('Day Shift');
   const [loading, setLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
-  const [currentTime, setCurrentTime] = useState(new Date());
   const [selectedTrade, setSelectedTrade] = useState('All');
   const [showDatePicker, setShowDatePicker] = useState(false);
   const [expandedWorkers, setExpandedWorkers] = useState<Record<string, boolean>>({});
@@ -110,17 +133,13 @@ export function AttendanceTab({ accessToken }: AttendanceTabProps) {
   const [customOvertimeRate, setCustomOvertimeRate] = useState('100');
 
   useEffect(() => {
-    const timer = setInterval(() => setCurrentTime(new Date()), 1000);
-    return () => clearInterval(timer);
-  }, []);
-
-  useEffect(() => {
     if (token) {
       fetchWorkers();
       fetchSites();
     }
   }, [token, isForeman]);
 
+  // Screen focus & dependency-triggered attendance fetch (deduplicated)
   useFocusEffect(
     useCallback(() => {
       if (selectedSite && selectedDate && token) {
@@ -128,12 +147,6 @@ export function AttendanceTab({ accessToken }: AttendanceTabProps) {
       }
     }, [selectedSite, selectedDate, selectedShift, token])
   );
-
-  useEffect(() => {
-    if (selectedSite && selectedDate && token) {
-      fetchAttendance();
-    }
-  }, [selectedDate, selectedSite, selectedShift, token]);
 
   const fetchWorkers = async () => {
     if (!token) return;
@@ -216,14 +229,6 @@ export function AttendanceTab({ accessToken }: AttendanceTabProps) {
       }
     }
     return clean;
-  };
-
-  const formatTimeString = (date: Date) => {
-    return date.toLocaleTimeString('en-IN', {
-      hour: '2-digit',
-      minute: '2-digit',
-      hour12: true,
-    });
   };
 
   const getWorkerStatus = (workerId: string): Attendance | undefined => {
@@ -387,7 +392,7 @@ export function AttendanceTab({ accessToken }: AttendanceTabProps) {
     const currentShift = selectedShift === 'Night Shift' ? 'night' : 'day';
     const existingRecord = getWorkerStatus(workerId);
     const worker = workers.find((w) => w.id === workerId);
-    const checkInTime = status === 'present' ? toStandardTime(currentTime) : null;
+    const checkInTime = status === 'present' ? toStandardTime(new Date()) : null;
 
     const baseDailyWage = worker?.dailyWage || existingRecord?.dailyWage || 0;
     let dailyPayment = 0;
@@ -724,7 +729,7 @@ export function AttendanceTab({ accessToken }: AttendanceTabProps) {
               date: selectedDate,
               status,
               shift: currentShift,
-              checkIn: status === 'present' ? toStandardTime(currentTime) : undefined,
+              checkIn: status === 'present' ? toStandardTime(new Date()) : undefined,
             }),
           });
         }
@@ -821,26 +826,39 @@ export function AttendanceTab({ accessToken }: AttendanceTabProps) {
   };
 
   // REMOVE RECORD
-  const handleRemoveRecord = async () => {
+  const handleRemoveRecord = () => {
     if (!editingRecord || !token) return;
 
-    try {
-      const response = await fetch(
-        `https://${projectId}.supabase.co/functions/v1/make-server-689d7d60/attendance/${editingRecord.id}`,
+    Alert.alert(
+      t('common.confirm') || 'Confirm Deletion',
+      'Are you sure you want to delete this attendance record? This will remove hours and wage calculation for this day.',
+      [
+        { text: t('common.cancel') || 'Cancel', style: 'cancel' },
         {
-          method: 'DELETE',
-          headers: { Authorization: `Bearer ${token}` },
-        }
-      );
+          text: t('common.delete') || 'Delete',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              const response = await fetch(
+                `https://${projectId}.supabase.co/functions/v1/make-server-689d7d60/attendance/${editingRecord.id}`,
+                {
+                  method: 'DELETE',
+                  headers: { Authorization: `Bearer ${token}` },
+                }
+              );
 
-      if (response.ok) {
-        Toast.show({ type: 'success', text1: 'Removed', text2: 'Attendance record deleted' });
-        setShowEditModal(false);
-        fetchAttendance();
-      }
-    } catch (error: any) {
-      Toast.show({ type: 'error', text1: 'Error', text2: error.message });
-    }
+              if (response.ok) {
+                Toast.show({ type: 'success', text1: 'Removed', text2: 'Attendance record deleted' });
+                setShowEditModal(false);
+                fetchAttendance();
+              }
+            } catch (error: any) {
+              Toast.show({ type: 'error', text1: 'Error', text2: error.message });
+            }
+          },
+        },
+      ]
+    );
   };
 
   const onRefresh = async () => {
@@ -914,9 +932,7 @@ export function AttendanceTab({ accessToken }: AttendanceTabProps) {
         <View style={styles.headerRow}>
           <View>
             <Text style={styles.headerTitle}>{t('attendance.title')}</Text>
-            <Text style={styles.headerSubtitle}>
-              {currentTime.toLocaleDateString('en-IN', { weekday: 'long', month: 'short', day: 'numeric' })} • {formatTimeString(currentTime)}
-            </Text>
+            <LiveShiftClock />
           </View>
 
           {/* TWO SHIFTS TOGGLE */}
@@ -1023,7 +1039,7 @@ export function AttendanceTab({ accessToken }: AttendanceTabProps) {
         <View style={styles.bentoCountersRow}>
           <View style={styles.counterCard}>
             <Text style={styles.counterLabel}>{t('common.total')}</Text>
-            <Text style={styles.counterValue}>{totalCount}</Text>
+            <Text style={styles.counterValue} numberOfLines={1} adjustsFontSizeToFit>{totalCount}</Text>
             <View style={[styles.counterTag, { backgroundColor: colors.surfaceMuted }]}>
               <Text style={[styles.counterTagText, { color: colors.textMuted }]}>{t('nav.workers')}</Text>
             </View>
@@ -1031,7 +1047,7 @@ export function AttendanceTab({ accessToken }: AttendanceTabProps) {
 
           <View style={styles.counterCard}>
             <Text style={styles.counterLabel}>{t('attendance.present')}</Text>
-            <Text style={[styles.counterValue, { color: colors.success }]}>{presentCount}</Text>
+            <Text style={[styles.counterValue, { color: colors.success }]} numberOfLines={1} adjustsFontSizeToFit>{presentCount}</Text>
             <View style={[styles.counterTag, { backgroundColor: colors.successLight }]}>
               <Text style={[styles.counterTagText, { color: colors.successDark }]}>P</Text>
             </View>
@@ -1039,7 +1055,7 @@ export function AttendanceTab({ accessToken }: AttendanceTabProps) {
 
           <View style={styles.counterCard}>
             <Text style={styles.counterLabel}>{t('attendance.halfDay')}</Text>
-            <Text style={[styles.counterValue, { color: colors.warning }]}>{halfDayCount}</Text>
+            <Text style={[styles.counterValue, { color: colors.warning }]} numberOfLines={1} adjustsFontSizeToFit>{halfDayCount}</Text>
             <View style={[styles.counterTag, { backgroundColor: colors.warningLight }]}>
               <Text style={[styles.counterTagText, { color: colors.warningDark }]}>HD</Text>
             </View>
@@ -1047,7 +1063,7 @@ export function AttendanceTab({ accessToken }: AttendanceTabProps) {
 
           <View style={styles.counterCard}>
             <Text style={styles.counterLabel}>{t('attendance.absent')}</Text>
-            <Text style={[styles.counterValue, { color: colors.error }]}>{absentCount}</Text>
+            <Text style={[styles.counterValue, { color: colors.error }]} numberOfLines={1} adjustsFontSizeToFit>{absentCount}</Text>
             <View style={[styles.counterTag, { backgroundColor: colors.errorLight }]}>
               <Text style={[styles.counterTagText, { color: colors.errorDark }]}>A</Text>
             </View>
@@ -1217,6 +1233,7 @@ export function AttendanceTab({ accessToken }: AttendanceTabProps) {
                           styles.quickMarkText,
                           currentStatus === 'present' && styles.quickMarkTextActive,
                         ]}
+                        maxFontSizeMultiplier={1.25}
                       >
                         P
                       </Text>
@@ -1238,6 +1255,7 @@ export function AttendanceTab({ accessToken }: AttendanceTabProps) {
                           styles.quickMarkText,
                           currentStatus === 'half-day' && styles.quickMarkTextActive,
                         ]}
+                        maxFontSizeMultiplier={1.25}
                       >
                         1/2
                       </Text>
@@ -1259,6 +1277,7 @@ export function AttendanceTab({ accessToken }: AttendanceTabProps) {
                           styles.quickMarkText,
                           currentStatus === 'absent' && styles.quickMarkTextActive,
                         ]}
+                        maxFontSizeMultiplier={1.25}
                       >
                         A
                       </Text>
@@ -1430,7 +1449,12 @@ export function AttendanceTab({ accessToken }: AttendanceTabProps) {
       </ScrollView>
 
       {/* 6. EDIT ATTENDANCE RECORD MODAL */}
-      <Modal visible={showEditModal} transparent animationType="fade">
+      <Modal
+        visible={showEditModal}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowEditModal(false)}
+      >
         <View style={styles.modalOverlay}>
           <View style={styles.modalSheet}>
             <View style={styles.modalHeader}>
@@ -1572,7 +1596,12 @@ export function AttendanceTab({ accessToken }: AttendanceTabProps) {
 
       {/* 7. CALENDAR DATE PICKER (iOS / Non-Android Modal) */}
       {Platform.OS !== 'android' && showDatePicker && (
-        <Modal transparent animationType="slide" visible={showDatePicker}>
+        <Modal
+          transparent
+          animationType="slide"
+          visible={showDatePicker}
+          onRequestClose={() => setShowDatePicker(false)}
+        >
           <View style={styles.iosDatePickerOverlay}>
             <View style={styles.iosDatePickerSheet}>
               <View style={styles.iosDatePickerHeader}>
@@ -1754,15 +1783,19 @@ const styles = StyleSheet.create({
   },
   bentoCountersRow: {
     flexDirection: 'row',
+    flexWrap: 'wrap',
     gap: 8,
     marginBottom: 12,
   },
   counterCard: {
     flex: 1,
+    minWidth: '22%',
+    minHeight: 68,
     backgroundColor: '#FFFFFF',
     borderRadius: radii.md,
-    padding: 10,
+    padding: 8,
     alignItems: 'center',
+    justifyContent: 'center',
     borderWidth: 1,
     borderColor: colors.border,
     ...shadows.sm,
@@ -1808,7 +1841,8 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     paddingVertical: 10,
-    paddingHorizontal: 10,
+    paddingHorizontal: 8,
+    minHeight: 40,
     borderRadius: radii.md,
     borderWidth: 1,
   },
@@ -1816,6 +1850,7 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: '800',
     marginLeft: 4,
+    flexShrink: 1,
   },
   tradeFilterRow: {
     marginBottom: 12,
@@ -1955,11 +1990,12 @@ const styles = StyleSheet.create({
   quickMarkGroup: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 5,
+    gap: 4,
   },
   quickMarkBtn: {
-    width: 32,
-    height: 32,
+    minWidth: 32,
+    minHeight: 32,
+    paddingHorizontal: 2,
     borderRadius: 8,
     alignItems: 'center',
     justifyContent: 'center',

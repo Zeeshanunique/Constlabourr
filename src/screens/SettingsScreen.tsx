@@ -1168,7 +1168,8 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    gap: 8,
+    flexWrap: 'wrap',
+    gap: 6,
   },
   profileName: {
     fontSize: 16,
@@ -1243,12 +1244,14 @@ const styles = StyleSheet.create({
   proTitleRow: {
     flexDirection: 'row',
     alignItems: 'center',
+    flexWrap: 'wrap',
     gap: 8,
   },
   proTitle: {
     fontSize: 14,
     fontWeight: '800',
     color: '#ffffff',
+    flexShrink: 1,
   },
   proActiveTag: {
     backgroundColor: theme.colors.emerald[600],

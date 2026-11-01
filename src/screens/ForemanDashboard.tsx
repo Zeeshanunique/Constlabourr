@@ -6,7 +6,9 @@ import {
   TouchableOpacity,
   Text,
   RefreshControl,
+  Alert,
 } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { AppContext } from '../context/AppContext';
 import { MaterialIcons } from '@expo/vector-icons';
@@ -16,6 +18,8 @@ import type { ForemanTabParamList } from '../navigation/ForemanNavigator';
 import { colors, shadows, radii } from '../styles/theme';
 import { BrandLogo } from '../components/shared/BrandLogo';
 import { useTranslation } from '../i18n';
+import { DashboardSkeleton } from '../components/shared/Skeleton';
+import { ErrorCard } from '../components/shared/ErrorCard';
 
 interface ForemanDashboardProps {
   accessToken?: string;
@@ -39,13 +43,10 @@ export function ModernForemanDashboard({ accessToken }: ForemanDashboardProps) {
   const token = accessToken || (route.params as any)?.accessToken;
   const [stats, setStats] = useState<ForemanStats | null>(null);
   const [refreshing, setRefreshing] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    if (token) {
-      fetchStats();
-    }
-  }, [token]);
-
+  // Handled reliably by useFocusEffect below without duplicate initial fetch
   useFocusEffect(
     useCallback(() => {
       if (token) {
@@ -56,23 +57,50 @@ export function ModernForemanDashboard({ accessToken }: ForemanDashboardProps) {
 
   const fetchStats = async () => {
     if (!token) return;
+    setLoading(true);
     try {
+      const localDeviceSessionId = await AsyncStorage.getItem('@constlabour_device_session_id');
       const response = await fetch(
         `https://${projectId}.supabase.co/functions/v1/make-server-689d7d60/foreman/stats`,
         {
           headers: {
             Authorization: `Bearer ${token}`,
+            ...(localDeviceSessionId ? { 'x-device-session-id': localDeviceSessionId } : {}),
           },
         }
       );
+
+      if (response.status === 401 || response.status === 403) {
+        context?.handleUnauthorized();
+        return;
+      }
 
       if (!response.ok) throw new Error('Failed to fetch stats');
 
       const data = await response.json();
       setStats(data.stats || null);
-    } catch (error) {
-      console.error('Error fetching foreman stats:', error);
+      setError(null);
+    } catch (err: any) {
+      console.error('Error fetching foreman stats:', err);
+      setError(err?.message || 'Could not load site overview');
+    } finally {
+      setLoading(false);
     }
+  };
+
+  const handleLogout = () => {
+    Alert.alert(
+      t('settings.logout') || 'Sign Out',
+      language === 'hi'
+        ? 'क्या आप निश्चित रूप से लॉग आउट करना चाहते हैं?'
+        : language === 'bn'
+        ? 'আপনি কি নিশ্চিত যে লগ আউট করতে চান?'
+        : 'Are you sure you want to log out of ConstLabour?',
+      [
+        { text: t('common.cancel') || 'Cancel', style: 'cancel' },
+        { text: t('settings.logout') || 'Logout', style: 'destructive', onPress: context?.logout },
+      ]
+    );
   };
 
   const onRefresh = async () => {
@@ -116,7 +144,7 @@ export function ModernForemanDashboard({ accessToken }: ForemanDashboardProps) {
               </Text>
             </TouchableOpacity>
 
-            <TouchableOpacity onPress={context.logout} style={styles.iconCircleButton} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+            <TouchableOpacity onPress={handleLogout} style={styles.iconCircleButton} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
               <MaterialIcons name="logout" size={18} color="#FFFFFF" />
             </TouchableOpacity>
           </View>
@@ -143,10 +171,16 @@ export function ModernForemanDashboard({ accessToken }: ForemanDashboardProps) {
         showsVerticalScrollIndicator={false}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.accent} />}
       >
-        {/* 3. 4-CARD BENTO GRID */}
-        <Text style={styles.sectionLabel}>
-          {language === 'hi' ? 'दैनिक साइट शिफ्ट अवलोकन' : language === 'bn' ? 'দৈনিক সাইট শিফট ওভারভিউ' : 'DAILY SITE SHIFT OVERVIEW'}
-        </Text>
+        {loading && !stats ? (
+          <DashboardSkeleton />
+        ) : error && !stats ? (
+          <ErrorCard message={error} onRetry={fetchStats} />
+        ) : (
+          <>
+            {/* 3. 4-CARD BENTO GRID */}
+            <Text style={styles.sectionLabel}>
+              {language === 'hi' ? 'दैनिक साइट शिफ्ट अवलोकन' : language === 'bn' ? 'দৈনিক সাইট শিফট ওভারভিউ' : 'DAILY SITE SHIFT OVERVIEW'}
+            </Text>
         <View style={styles.bentoGrid}>
           <View style={styles.bentoCard}>
             <View style={styles.bentoHeaderRow}>
@@ -157,7 +191,7 @@ export function ModernForemanDashboard({ accessToken }: ForemanDashboardProps) {
                 <MaterialIcons name="check-circle" size={16} color={colors.success} />
               </View>
             </View>
-            <Text style={[styles.bentoNumber, { color: colors.success }]}>{presentCount}</Text>
+            <Text style={[styles.bentoNumber, { color: colors.success }]} numberOfLines={1} adjustsFontSizeToFit>{presentCount}</Text>
             <View style={[styles.bentoTag, { backgroundColor: colors.successLight }]}>
               <Text style={[styles.bentoTagText, { color: colors.successDark }]}>
                 {turnoutPercentage}% {language === 'hi' ? 'उपस्थिति' : language === 'bn' ? 'উপস্থিতি' : 'Turnout'}
@@ -174,7 +208,7 @@ export function ModernForemanDashboard({ accessToken }: ForemanDashboardProps) {
                 <MaterialIcons name="cancel" size={16} color={colors.error} />
               </View>
             </View>
-            <Text style={[styles.bentoNumber, { color: colors.error }]}>{absentCount}</Text>
+            <Text style={[styles.bentoNumber, { color: colors.error }]} numberOfLines={1} adjustsFontSizeToFit>{absentCount}</Text>
             <View style={[styles.bentoTag, { backgroundColor: colors.errorLight }]}>
               <Text style={[styles.bentoTagText, { color: colors.errorDark }]}>
                 {language === 'hi' ? 'चेक-इन नहीं' : language === 'bn' ? 'চেক-ইন নেই' : 'Not Checked-In'}
@@ -191,7 +225,7 @@ export function ModernForemanDashboard({ accessToken }: ForemanDashboardProps) {
                 <MaterialIcons name="groups" size={16} color={colors.primary} />
               </View>
             </View>
-            <Text style={styles.bentoNumber}>{assignedWorkers}</Text>
+            <Text style={styles.bentoNumber} numberOfLines={1} adjustsFontSizeToFit>{assignedWorkers}</Text>
             <View style={[styles.bentoTag, { backgroundColor: colors.surfaceMuted }]}>
               <Text style={[styles.bentoTagText, { color: colors.textMuted }]}>
                 {language === 'hi' ? 'साइट रोस्टर' : language === 'bn' ? 'সাইট রোস্টার' : 'Site Roster'}
@@ -208,7 +242,7 @@ export function ModernForemanDashboard({ accessToken }: ForemanDashboardProps) {
                 <MaterialIcons name="location-city" size={16} color={colors.accent} />
               </View>
             </View>
-            <Text style={styles.bentoNumber}>{assignedSites}</Text>
+            <Text style={styles.bentoNumber} numberOfLines={1} adjustsFontSizeToFit>{assignedSites}</Text>
             <View style={[styles.bentoTag, { backgroundColor: colors.accentLight }]}>
               <Text style={[styles.bentoTagText, { color: colors.accentDark }]}>
                 {language === 'hi' ? 'असाइन' : language === 'bn' ? 'বরাদ্দ' : 'Assigned'}
@@ -260,6 +294,8 @@ export function ModernForemanDashboard({ accessToken }: ForemanDashboardProps) {
             <MaterialIcons name="arrow-forward" size={18} color={colors.textLight} />
           </TouchableOpacity>
         </View>
+        </>
+      )}
       </ScrollView>
     </SafeAreaView>
   );
@@ -318,6 +354,8 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
+    flexWrap: 'wrap',
+    gap: 6,
     marginTop: 4,
   },
   activeSitePill: {
@@ -329,6 +367,8 @@ const styles = StyleSheet.create({
     borderRadius: radii.pill,
     borderWidth: 1,
     borderColor: '#334155',
+    flexShrink: 1,
+    maxWidth: '75%',
   },
   greenPulseDot: {
     width: 6,
@@ -341,11 +381,13 @@ const styles = StyleSheet.create({
     fontSize: 11,
     color: '#FFFFFF',
     fontWeight: '700',
+    flexShrink: 1,
   },
   foremanNameText: {
     fontSize: 12,
     color: colors.accentLight,
     fontWeight: '700',
+    flexShrink: 1,
   },
   scrollView: {
     flex: 1,
@@ -372,6 +414,7 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '800',
     color: colors.accentDark,
+    flexShrink: 1,
   },
   alertSub: {
     fontSize: 11,
@@ -392,7 +435,8 @@ const styles = StyleSheet.create({
     marginBottom: 14,
   },
   bentoCard: {
-    width: '48.5%',
+    flex: 1,
+    minWidth: '46%',
     backgroundColor: colors.surface,
     borderRadius: radii.lg,
     padding: 12,
@@ -410,6 +454,8 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: '700',
     color: colors.textMuted,
+    flexShrink: 1,
+    marginRight: 4,
   },
   microIconCircle: {
     width: 24,

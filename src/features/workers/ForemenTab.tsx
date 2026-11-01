@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { View, StyleSheet, FlatList, Alert, TouchableOpacity, Linking } from 'react-native';
+import { View, StyleSheet, FlatList, Alert, TouchableOpacity, Linking, RefreshControl } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Text } from '@/components/ui/text';
 import { Button, ButtonText } from '@/components/ui/button';
@@ -13,6 +13,7 @@ import { useRoute } from '@react-navigation/native';
 import Toast from 'react-native-toast-message';
 import { theme } from '@/styles/theme';
 import { useTranslation } from '@/i18n';
+import { ListSkeleton } from '@/components/shared/Skeleton';
 
 interface Foreman {
   id: string;
@@ -39,6 +40,7 @@ export function ForemenTab({ accessToken }: ForemenTabProps) {
   const [foremen, setForemen] = useState<Foreman[]>([]);
   const [sites, setSites] = useState<Site[]>([]);
   const [loading, setLoading] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingForeman, setEditingForeman] = useState<Foreman | null>(null);
@@ -59,6 +61,7 @@ export function ForemenTab({ accessToken }: ForemenTabProps) {
 
   const fetchForemen = async () => {
     if (!token) return;
+    setLoading(true);
     try {
       const response = await fetch(
         `https://${projectId}.supabase.co/functions/v1/make-server-689d7d60/foremen`,
@@ -75,7 +78,15 @@ export function ForemenTab({ accessToken }: ForemenTabProps) {
         text1: 'Error',
         text2: 'Failed to fetch foremen',
       });
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
     }
+  };
+
+  const onRefresh = async () => {
+    setRefreshing(true);
+    await Promise.all([fetchForemen(), fetchSites()]);
   };
 
   const fetchSites = async () => {
@@ -305,11 +316,21 @@ export function ForemenTab({ accessToken }: ForemenTabProps) {
         </View>
 
         {/* Foremen List */}
-        <FlatList
-          data={filteredForemen}
-          keyExtractor={(item) => item.id}
-          contentContainerStyle={styles.listContent}
-          showsVerticalScrollIndicator={false}
+        {loading && foremen.length === 0 ? (
+          <ListSkeleton count={4} />
+        ) : (
+          <FlatList
+            data={filteredForemen}
+            keyExtractor={(item) => item.id}
+            contentContainerStyle={styles.listContent}
+            showsVerticalScrollIndicator={false}
+            refreshControl={
+              <RefreshControl
+                refreshing={refreshing}
+                onRefresh={onRefresh}
+                tintColor={theme.colors.safetyOrange}
+              />
+            }
           renderItem={({ item }) => (
             <View style={styles.foremanCard}>
               <View style={styles.foremanCardContent}>
@@ -399,6 +420,7 @@ export function ForemenTab({ accessToken }: ForemenTabProps) {
             </View>
           }
         />
+        )}
       </View>
 
       {/* Add/Edit Modal */}

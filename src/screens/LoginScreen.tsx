@@ -1,107 +1,119 @@
-import React, { useState, useContext } from 'react';
+import React, { useState, useContext, useEffect, useRef } from 'react';
 import {
   View,
   Text,
   StyleSheet,
-  Image,
   TextInput,
   TouchableOpacity,
   KeyboardAvoidingView,
   Platform,
   ScrollView,
   ActivityIndicator,
-  Dimensions,
+  BackHandler,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { AppContext, AppContextType } from '../context/AppContext';
 import Toast from 'react-native-toast-message';
-import { Phone, Mail, Lock, User as UserIcon, ArrowLeft } from 'lucide-react-native';
-
-const { height: screenHeight } = Dimensions.get('window');
+import {
+  Phone,
+  Mail,
+  Lock,
+  User as UserIcon,
+  ArrowLeft,
+  Building,
+  ShieldCheck,
+  CheckCircle,
+  Eye,
+  EyeOff,
+  Fingerprint,
+  MessageSquare,
+  HelpCircle,
+  FileText,
+} from 'lucide-react-native';
+import { colors, shadows, radii } from '../styles/theme';
+import { BrandLogo } from '../components/shared/BrandLogo';
+import { projectId, publicAnonKey } from '../utils/supabase/info';
+import { useTranslation, SupportedLanguage } from '../i18n';
 
 interface LoginScreenProps {
   onLogin?: (email: string, password: string) => Promise<void>;
   onRegister?: (email: string, password: string, name: string) => Promise<void>;
 }
 
-type AuthMode = 'phone' | 'otp' | 'email' | 'register';
+type AuthMode = 'login' | 'register';
+type LoginTab = 'phone' | 'email';
 
 export function LoginScreen({ onLogin, onRegister }: LoginScreenProps) {
-  const [authMode, setAuthMode] = useState<AuthMode>('phone');
-  
-  // Form states
+  const { language, setLanguage, t } = useTranslation();
+  const [authMode, setAuthMode] = useState<AuthMode>('login');
+  const [loginTab, setLoginTab] = useState<LoginTab>('phone');
+
+  // Phone login states
   const [phoneNumber, setPhoneNumber] = useState('');
-  const [otpCode, setOtpCode] = useState('');
-  
+  const [phonePassword, setPhonePassword] = useState('');
+  const [showPhonePassword, setShowPhonePassword] = useState(false);
+
+  // Email login states
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  
-  const [registerName, setRegisterName] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
+
+  // Contractor Registration states
+  const [companyName, setCompanyName] = useState('');
+  const [contractorName, setContractorName] = useState('');
   const [registerEmail, setRegisterEmail] = useState('');
+  const [registerPhone, setRegisterPhone] = useState('');
+  const [licenseGstin, setLicenseGstin] = useState('');
   const [registerPassword, setRegisterPassword] = useState('');
-  
+  const [showRegisterPassword, setShowRegisterPassword] = useState(false);
+  const [agreeTerms, setAgreeTerms] = useState(true);
+
   const [loading, setLoading] = useState(false);
   const context = useContext(AppContext) as AppContextType | null;
 
-  const handleSendOTP = () => {
-    if (!phoneNumber || phoneNumber.length < 10) {
+  // Intercept Android hardware back when in registration mode to switch back to login
+  useEffect(() => {
+    const onHardwareBack = () => {
+      if (authMode === 'register') {
+        setAuthMode('login');
+        return true;
+      }
+      return false;
+    };
+
+    const backSub = BackHandler.addEventListener('hardwareBackPress', onHardwareBack);
+    return () => backSub.remove();
+  }, [authMode]);
+
+  const handlePhonePasswordLogin = async () => {
+    const cleanPhone = phoneNumber.replace(/\D/g, '').slice(0, 10);
+    if (!cleanPhone || cleanPhone.length !== 10) {
       Toast.show({
         type: 'error',
-        text1: 'Invalid Phone Number',
+        text1: 'Invalid Mobile Number',
         text2: 'Please enter a valid 10-digit mobile number.',
       });
       return;
     }
-    
-    setLoading(true);
-    // Simulate sending OTP
-    setTimeout(() => {
-      setLoading(false);
-      setAuthMode('otp');
-      Toast.show({
-        type: 'success',
-        text1: 'OTP Sent',
-        text2: 'Use verification code 123456 to continue.',
-      });
-    }, 1000);
-  };
 
-  const handleVerifyOTP = async () => {
-    if (otpCode !== '123456') {
+    if (!phonePassword) {
       Toast.show({
         type: 'error',
-        text1: 'Verification Failed',
-        text2: 'Incorrect OTP code. Try 123456.',
+        text1: 'Password Required',
+        text2: 'Please enter your account password.',
       });
       return;
     }
 
     setLoading(true);
     try {
-      // Since phone auth is mock, we sign into a demo account or prompt them
-      // In a real production flow, this would connect to supabase phone auth.
-      // For this implementation, we will log in with a default demo contractor account if available
-      // or we just show a success message and guide them to use email auth for active projects.
-      const loginHandler = onLogin || context?.handleLogin;
-      if (loginHandler) {
-        // Try to log in with a demo user to let them see the app
-        await loginHandler('contractor@example.com', 'password');
-        Toast.show({
-          type: 'success',
-          text1: 'Login Successful',
-          text2: 'Welcome to ConstLabour (Demo Mode).',
-        });
+      if (context?.handleLoginWithPhone) {
+        await context.handleLoginWithPhone(cleanPhone, phonePassword);
       } else {
-        throw new Error('Login handler not found');
+        throw new Error('Login service unavailable');
       }
-    } catch (error: any) {
-      console.error('Demo login error:', error);
-      Toast.show({
-        type: 'info',
-        text1: 'OTP Verified',
-        text2: 'Please use Email Login to access your specific account.',
-      });
-      setAuthMode('email');
+    } catch (error) {
+      console.error('Phone login error:', error);
     } finally {
       setLoading(false);
     }
@@ -112,7 +124,7 @@ export function LoginScreen({ onLogin, onRegister }: LoginScreenProps) {
       Toast.show({
         type: 'error',
         text1: 'Required Fields',
-        text2: 'Please enter both email and password.',
+        text2: 'Please enter both your email address and password.',
       });
       return;
     }
@@ -122,349 +134,468 @@ export function LoginScreen({ onLogin, onRegister }: LoginScreenProps) {
 
     setLoading(true);
     try {
-      await loginHandler(email, password);
+      await loginHandler(email.trim(), password);
     } catch (error) {
       console.error('Login error:', error);
-      // Toast shown in App.tsx
     } finally {
       setLoading(false);
     }
   };
 
   const handleRegisterContractor = async () => {
-    if (!registerName || !registerEmail || !registerPassword) {
+    if (!companyName.trim() || !contractorName.trim() || !registerPhone.trim() || !registerPassword.trim()) {
       Toast.show({
         type: 'error',
-        text1: 'Required Fields',
-        text2: 'Please fill in all fields.',
+        text1: t('common.error'),
+        text2: t('auth.fillRequired'),
       });
       return;
     }
 
-    const registerHandler = onRegister || context?.handleRegister;
+    const cleanPhone = registerPhone.replace(/\D/g, '').slice(0, 10);
+    if (cleanPhone.length !== 10) {
+      Toast.show({
+        type: 'error',
+        text1: t('common.error'),
+        text2: t('auth.invalidPhone'),
+      });
+      return;
+    }
+
+    if (registerPassword.length < 6) {
+      Toast.show({
+        type: 'error',
+        text1: t('common.error'),
+        text2: t('auth.invalidPassword'),
+      });
+      return;
+    }
+
+    if (registerEmail.trim() && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(registerEmail.trim())) {
+      Toast.show({
+        type: 'error',
+        text1: t('common.error'),
+        text2: 'Invalid Email address',
+      });
+      return;
+    }
+
+    if (!agreeTerms) {
+      Toast.show({
+        type: 'error',
+        text1: t('common.error'),
+        text2: t('auth.termsRequired'),
+      });
+      return;
+    }
+
+    const registerHandler = context?.handleRegister;
     if (!registerHandler) return;
 
     setLoading(true);
     try {
-      await registerHandler(registerEmail, registerPassword, registerName);
-      // Reset registration states
-      setRegisterName('');
-      setRegisterEmail('');
-      setRegisterPassword('');
-      // Redirect to email login
-      setEmail(registerEmail);
-      setAuthMode('email');
+      const combinedName = `${companyName.trim()} (${contractorName.trim()})`;
+      await registerHandler({
+        phone: cleanPhone,
+        email: registerEmail.trim() || undefined,
+        password: registerPassword,
+        name: combinedName,
+        role: 'contractor',
+      });
+
+      // Switch to login tab and prefill phone
+      setPhoneNumber(cleanPhone);
+      setPhonePassword(registerPassword);
+      setAuthMode('login');
+      setLoginTab('phone');
     } catch (error) {
       console.error('Registration error:', error);
-      // Toast shown in App.tsx
     } finally {
       setLoading(false);
     }
-  };
-
-  const handleTruecallerLogin = () => {
-    Toast.show({
-      type: 'info',
-      text1: 'Truecaller Integration',
-      text2: 'Simulating login with Truecaller profile...',
-    });
-    setPhoneNumber('9876543210');
-    handleSendOTP();
   };
 
   return (
     <SafeAreaView style={styles.safeArea} edges={['top', 'bottom']}>
       <KeyboardAvoidingView
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-        style={styles.container}
+        style={styles.keyboardContainer}
       >
         <ScrollView
           contentContainerStyle={styles.scrollContent}
           showsVerticalScrollIndicator={false}
           keyboardShouldPersistTaps="handled"
         >
-          {/* Top Banner Section */}
-          <View style={styles.bannerContainer}>
-            {/* App Logo & Name Row */}
-            <View style={styles.logoRow}>
-              <Image
-                source={require('../../assets/icon.png')}
-                style={styles.logoMini}
-                resizeMode="contain"
-              />
-              <Text style={styles.appNameText}>ConstLabour</Text>
+          {/* Top Industrial Header & Brand Identity */}
+          <View style={styles.headerBar}>
+            <BrandLogo size={42} showText={true} subtitle="FIELD OPERATIONS OS v3.4" />
+            <View style={styles.langPill}>
+              <TouchableOpacity onPress={() => setLanguage('en')} hitSlop={{ top: 6, bottom: 6, left: 4, right: 4 }}>
+                <Text style={language === 'en' ? styles.langActive : styles.langInactive}>EN</Text>
+              </TouchableOpacity>
+              <Text style={styles.langDivider}>|</Text>
+              <TouchableOpacity onPress={() => setLanguage('hi')} hitSlop={{ top: 6, bottom: 6, left: 4, right: 4 }}>
+                <Text style={language === 'hi' ? styles.langActive : styles.langInactive}>हिन्दी</Text>
+              </TouchableOpacity>
+              <Text style={styles.langDivider}>|</Text>
+              <TouchableOpacity onPress={() => setLanguage('bn')} hitSlop={{ top: 6, bottom: 6, left: 4, right: 4 }}>
+                <Text style={language === 'bn' ? styles.langActive : styles.langInactive}>বাংলা</Text>
+              </TouchableOpacity>
             </View>
-            
-            {/* Contractor Worker Illustration */}
-            <Image
-              source={require('../../assets/contractor_worker_clean.png')}
-              style={styles.workerImage}
-              resizeMode="contain"
-            />
           </View>
 
-          {/* Overlapping Interactive Sheet */}
-          <View style={styles.cardSheet}>
-            {authMode === 'phone' && (
-              <View style={styles.formContainer}>
-                <Text style={styles.cardTitle}>Enter your Mobile number</Text>
-                
-                <View style={styles.phoneInputRow}>
-                  <View style={styles.phoneInputContainer}>
-                    <Text style={styles.countryCode}>+91</Text>
+          {/* VIEW 1: UNIFIED LOGIN PORTAL */}
+          {authMode === 'login' && (
+            <View style={styles.mainCard}>
+              <View style={styles.titleSection}>
+                <Text style={styles.screenHeading}>{t('auth.loginTitle')}</Text>
+                <Text style={styles.screenSubtitle}>
+                  {t('auth.loginSubtitle')}
+                </Text>
+              </View>
+
+              {/* Segmented Dual Method Switcher */}
+              <View style={styles.tabContainer}>
+                <TouchableOpacity
+                  style={[styles.tabButton, loginTab === 'phone' && styles.tabButtonActive]}
+                  onPress={() => setLoginTab('phone')}
+                  activeOpacity={0.8}
+                >
+                  <Phone size={16} color={loginTab === 'phone' ? '#FFFFFF' : colors.textMuted} />
+                  <Text style={[styles.tabText, loginTab === 'phone' && styles.tabTextActive]}>
+                    {t('auth.phoneTab')}
+                  </Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={[styles.tabButton, loginTab === 'email' && styles.tabButtonActive]}
+                  onPress={() => setLoginTab('email')}
+                  activeOpacity={0.8}
+                >
+                  <Mail size={16} color={loginTab === 'email' ? '#FFFFFF' : colors.textMuted} />
+                  <Text style={[styles.tabText, loginTab === 'email' && styles.tabTextActive]}>
+                    {t('auth.emailTab')}
+                  </Text>
+                </TouchableOpacity>
+              </View>
+
+              {/* METHOD A: PHONE NUMBER & PASSWORD (WITH GET OTP OPTION) */}
+              {loginTab === 'phone' && (
+                <View style={styles.formSection}>
+                  <Text style={styles.inputLabel}>{t('auth.phoneLabel').toUpperCase()}</Text>
+                  <View style={styles.phoneInputRow}>
+                    <View style={styles.countryCodeBadge}>
+                      <Text style={styles.flagEmoji}>🇮🇳</Text>
+                      <Text style={styles.countryCodeText}>+91</Text>
+                    </View>
                     <TextInput
                       style={styles.phoneInput}
-                      placeholder="Mobile Number"
+                      placeholder={t('auth.phonePlaceholder')}
                       value={phoneNumber}
-                      onChangeText={setPhoneNumber}
+                      onChangeText={(val) => setPhoneNumber(val.replace(/[^0-9]/g, '').slice(0, 10))}
                       keyboardType="phone-pad"
                       maxLength={10}
-                      placeholderTextColor="#94a3b8"
+                      placeholderTextColor={colors.textLight}
                     />
                   </View>
+
+                  <Text style={[styles.inputLabel, { marginTop: 14 }]}>{t('auth.passwordLabel').toUpperCase()}</Text>
+                  <View style={styles.inputWrapper}>
+                    <Lock size={18} color={colors.textLight} style={styles.inputLeadingIcon} />
+                    <TextInput
+                      style={styles.textInput}
+                      placeholder={t('auth.passwordPlaceholder')}
+                      value={phonePassword}
+                      onChangeText={setPhonePassword}
+                      secureTextEntry={!showPhonePassword}
+                      placeholderTextColor={colors.textLight}
+                    />
+                    <TouchableOpacity
+                      onPress={() => setShowPhonePassword(!showPhonePassword)}
+                      style={styles.passwordToggle}
+                    >
+                      {showPhonePassword ? (
+                        <EyeOff size={18} color={colors.textMuted} />
+                      ) : (
+                        <Eye size={18} color={colors.textMuted} />
+                      )}
+                    </TouchableOpacity>
+                  </View>
+
                   <TouchableOpacity
-                    style={styles.otpButton}
-                    onPress={handleSendOTP}
+                    style={styles.primaryActionButton}
+                    onPress={handlePhonePasswordLogin}
                     disabled={loading}
-                    activeOpacity={0.8}
+                    activeOpacity={0.85}
                   >
                     {loading ? (
-                      <ActivityIndicator size="small" color="#ffffff" />
+                      <ActivityIndicator size="small" color="#FFFFFF" />
                     ) : (
-                      <Text style={styles.otpButtonText}>Get OTP</Text>
+                      <>
+                        <Text style={styles.primaryActionText}>{t('auth.loginWithPhone')}</Text>
+                        <Text style={styles.arrowIcon}>➔</Text>
+                      </>
                     )}
                   </TouchableOpacity>
                 </View>
+              )}
 
-                {/* Divider */}
-                <View style={styles.dividerRow}>
-                  <View style={styles.dividerLine} />
-                  <Text style={styles.dividerText}>or continue with</Text>
-                  <View style={styles.dividerLine} />
-                </View>
-
-                {/* Truecaller button */}
-                <TouchableOpacity
-                  style={styles.truecallerButton}
-                  onPress={handleTruecallerLogin}
-                  activeOpacity={0.8}
-                >
-                  <Phone size={18} color="#2563eb" style={styles.truecallerIcon} />
-                  <Text style={styles.truecallerText}>Continue with Truecaller</Text>
-                </TouchableOpacity>
-
-                {/* Footer links */}
-                <View style={styles.footerLinks}>
-                  <TouchableOpacity
-                    style={styles.footerLinkButton}
-                    onPress={() => setAuthMode('email')}
-                  >
-                    <Text style={styles.footerLinkPrimary}>Login with Email & Password</Text>
-                  </TouchableOpacity>
-                  
-                  <TouchableOpacity
-                    style={[styles.footerLinkButton, { marginTop: 12 }]}
-                    onPress={() => setAuthMode('register')}
-                  >
-                    <Text style={styles.footerLinkSecondary}>Register as a Contractor</Text>
-                  </TouchableOpacity>
-                </View>
-              </View>
-            )}
-
-            {authMode === 'otp' && (
-              <View style={styles.formContainer}>
-                <TouchableOpacity
-                  style={styles.backButton}
-                  onPress={() => setAuthMode('phone')}
-                >
-                  <ArrowLeft size={20} color="#475569" />
-                  <Text style={styles.backButtonText}>Back</Text>
-                </TouchableOpacity>
-
-                <Text style={styles.cardTitle}>Verify OTP</Text>
-                <Text style={styles.otpSubtitle}>
-                  We have sent a verification code to +91 {phoneNumber}
-                </Text>
-
-                <View style={styles.inputContainer}>
-                  <Text style={styles.label}>Verification Code</Text>
-                  <TextInput
-                    style={styles.fullWidthInput}
-                    placeholder="Enter 6-digit OTP"
-                    value={otpCode}
-                    onChangeText={setOtpCode}
-                    keyboardType="number-pad"
-                    maxLength={6}
-                    placeholderTextColor="#94a3b8"
-                  />
-                </View>
-
-                <TouchableOpacity
-                  style={styles.primaryButton}
-                  onPress={handleVerifyOTP}
-                  disabled={loading}
-                  activeOpacity={0.8}
-                >
-                  {loading ? (
-                    <ActivityIndicator size="small" color="#ffffff" />
-                  ) : (
-                    <Text style={styles.primaryButtonText}>Verify & Continue</Text>
-                  )}
-                </TouchableOpacity>
-              </View>
-            )}
-
-            {authMode === 'email' && (
-              <View style={styles.formContainer}>
-                <Text style={styles.cardTitle}>Login with Email</Text>
-
-                <View style={styles.inputGroup}>
-                  <Text style={styles.label}>Email Address</Text>
-                  <View style={styles.inputIconWrapper}>
-                    <Mail size={18} color="#94a3b8" style={styles.inputIcon} />
+              {/* METHOD B: EMAIL & PASSWORD */}
+              {loginTab === 'email' && (
+                <View style={styles.formSection}>
+                  <Text style={styles.inputLabel}>{t('auth.emailLabel').toUpperCase()}</Text>
+                  <View style={styles.inputWrapper}>
+                    <Mail size={18} color={colors.textLight} style={styles.inputLeadingIcon} />
                     <TextInput
-                      style={styles.iconInput}
-                      placeholder="contractor@example.com"
+                      style={styles.textInput}
+                      placeholder={t('auth.emailPlaceholder')}
                       value={email}
                       onChangeText={setEmail}
                       keyboardType="email-address"
                       autoCapitalize="none"
-                      placeholderTextColor="#94a3b8"
+                      placeholderTextColor={colors.textLight}
                     />
                   </View>
-                </View>
 
-                <View style={styles.inputGroup}>
-                  <Text style={styles.label}>Password</Text>
-                  <View style={styles.inputIconWrapper}>
-                    <Lock size={18} color="#94a3b8" style={styles.inputIcon} />
+                  <Text style={[styles.inputLabel, { marginTop: 14 }]}>{t('auth.passwordLabel').toUpperCase()}</Text>
+                  <View style={styles.inputWrapper}>
+                    <Lock size={18} color={colors.textLight} style={styles.inputLeadingIcon} />
                     <TextInput
-                      style={styles.iconInput}
-                      placeholder="Enter your password"
+                      style={styles.textInput}
+                      placeholder={t('auth.passwordPlaceholder')}
                       value={password}
                       onChangeText={setPassword}
-                      secureTextEntry
-                      placeholderTextColor="#94a3b8"
+                      secureTextEntry={!showPassword}
+                      placeholderTextColor={colors.textLight}
                     />
+                    <TouchableOpacity
+                      onPress={() => setShowPassword(!showPassword)}
+                      style={styles.passwordToggle}
+                    >
+                      {showPassword ? (
+                        <EyeOff size={18} color={colors.textMuted} />
+                      ) : (
+                        <Eye size={18} color={colors.textMuted} />
+                      )}
+                    </TouchableOpacity>
                   </View>
+
+                  <TouchableOpacity
+                    style={styles.primaryActionButton}
+                    onPress={handleEmailLogin}
+                    disabled={loading}
+                    activeOpacity={0.85}
+                  >
+                    {loading ? (
+                      <ActivityIndicator size="small" color="#FFFFFF" />
+                    ) : (
+                      <>
+                        <Text style={styles.primaryActionText}>{t('auth.loginWithEmail')}</Text>
+                        <Text style={styles.arrowIcon}>➔</Text>
+                      </>
+                    )}
+                  </TouchableOpacity>
                 </View>
+              )}
 
-                <TouchableOpacity
-                  style={styles.primaryButton}
-                  onPress={handleEmailLogin}
-                  disabled={loading}
-                  activeOpacity={0.8}
-                >
-                  {loading ? (
-                    <ActivityIndicator size="small" color="#ffffff" />
-                  ) : (
-                    <Text style={styles.primaryButtonText}>Login</Text>
-                  )}
-                </TouchableOpacity>
-
-                {/* Footer links */}
-                <View style={styles.footerLinks}>
-                  <TouchableOpacity
-                    style={styles.footerLinkButton}
-                    onPress={() => setAuthMode('phone')}
-                  >
-                    <Text style={styles.footerLinkPrimary}>Login with Mobile Number</Text>
+              {/* Architecture & Registration Notice */}
+              <View style={styles.noticeBox}>
+                <View style={styles.noticeIconCircle}>
+                  <Building size={16} color={colors.accent} />
+                </View>
+                <View style={styles.noticeTextContainer}>
+                  <TouchableOpacity onPress={() => setAuthMode('register')}>
+                    <Text style={styles.noticeTitle}>
+                      {t('auth.dontHaveAccount')} <Text style={styles.linkHighlight}>{t('auth.registerTitle')} ➔</Text>
+                    </Text>
                   </TouchableOpacity>
-
-                  <TouchableOpacity
-                    style={[styles.footerLinkButton, { marginTop: 12 }]}
-                    onPress={() => setAuthMode('register')}
-                  >
-                    <Text style={styles.footerLinkSecondary}>Register as a Contractor</Text>
-                  </TouchableOpacity>
+                  <Text style={styles.noticeDesc}>
+                    {t('auth.registerSubtitle')}
+                  </Text>
                 </View>
               </View>
-            )}
+            </View>
+          )}
 
-            {authMode === 'register' && (
-              <View style={styles.formContainer}>
-                <Text style={styles.cardTitle}>Register as Contractor</Text>
-                <Text style={styles.registerSubtext}>
-                  Create an account to manage your construction workforce.
+          {/* VIEW 3: CONTRACTOR COMPANY REGISTRATION ONLY */}
+          {authMode === 'register' && (
+            <View style={styles.mainCard}>
+              <TouchableOpacity
+                style={styles.backButton}
+                onPress={() => setAuthMode('login')}
+                activeOpacity={0.8}
+              >
+                <ArrowLeft size={18} color={colors.textMuted} />
+                <Text style={styles.backButtonText}>{t('common.back')}</Text>
+              </TouchableOpacity>
+
+              <View style={styles.titleSection}>
+                <View style={styles.contractorOnlyTag}>
+                  <Building size={14} color="#EA580C" />
+                  <Text style={styles.contractorOnlyText}>{t('auth.contractorRole').toUpperCase()}</Text>
+                </View>
+                <Text style={styles.screenHeading}>{t('auth.registerTitle')}</Text>
+                <Text style={styles.screenSubtitle}>
+                  {t('auth.registerSubtitle')}
                 </Text>
+              </View>
 
-                <View style={styles.inputGroup}>
-                  <Text style={styles.label}>Full Name</Text>
-                  <View style={styles.inputIconWrapper}>
-                    <UserIcon size={18} color="#94a3b8" style={styles.inputIcon} />
-                    <TextInput
-                      style={styles.iconInput}
-                      placeholder="John Doe"
-                      value={registerName}
-                      onChangeText={setRegisterName}
-                      placeholderTextColor="#94a3b8"
-                    />
-                  </View>
+              {/* Architecture Alert Notice */}
+              <View style={styles.architectureAlert}>
+                <HelpCircle size={18} color="#EA580C" style={{ marginTop: 2 }} />
+                <View style={{ flex: 1, marginLeft: 8 }}>
+                  <Text style={styles.alertNoticeTitle}>{t('auth.contractorRole')}</Text>
+                  <Text style={styles.alertNoticeBody}>
+                    {t('auth.registerSubtitle')}
+                  </Text>
+                </View>
+              </View>
+
+              {/* Registration Form */}
+              <View style={styles.formSection}>
+                <Text style={styles.inputLabel}>{t('auth.companyName').toUpperCase()} *</Text>
+                <View style={styles.inputWrapper}>
+                  <Building size={18} color={colors.textLight} style={styles.inputLeadingIcon} />
+                  <TextInput
+                    style={styles.textInput}
+                    placeholder={t('auth.companyNamePlaceholder')}
+                    value={companyName}
+                    onChangeText={setCompanyName}
+                    placeholderTextColor={colors.textLight}
+                  />
                 </View>
 
-                <View style={styles.inputGroup}>
-                  <Text style={styles.label}>Email Address</Text>
-                  <View style={styles.inputIconWrapper}>
-                    <Mail size={18} color="#94a3b8" style={styles.inputIcon} />
-                    <TextInput
-                      style={styles.iconInput}
-                      placeholder="contractor@example.com"
-                      value={registerEmail}
-                      onChangeText={setRegisterEmail}
-                      keyboardType="email-address"
-                      autoCapitalize="none"
-                      placeholderTextColor="#94a3b8"
-                    />
-                  </View>
+                <Text style={[styles.inputLabel, { marginTop: 12 }]}>{t('auth.contractorFullName').toUpperCase()} *</Text>
+                <View style={styles.inputWrapper}>
+                  <UserIcon size={18} color={colors.textLight} style={styles.inputLeadingIcon} />
+                  <TextInput
+                    style={styles.textInput}
+                    placeholder={t('auth.contractorFullNamePlaceholder')}
+                    value={contractorName}
+                    onChangeText={setContractorName}
+                    placeholderTextColor={colors.textLight}
+                  />
                 </View>
 
-                <View style={styles.inputGroup}>
-                  <Text style={styles.label}>Password</Text>
-                  <View style={styles.inputIconWrapper}>
-                    <Lock size={18} color="#94a3b8" style={styles.inputIcon} />
-                    <TextInput
-                      style={styles.iconInput}
-                      placeholder="Create a password"
-                      value={registerPassword}
-                      onChangeText={setRegisterPassword}
-                      secureTextEntry
-                      placeholderTextColor="#94a3b8"
-                    />
+                <Text style={[styles.inputLabel, { marginTop: 12 }]}>{t('auth.phoneLabel').toUpperCase()} *</Text>
+                <View style={styles.phoneInputRow}>
+                  <View style={styles.countryCodeBadge}>
+                    <Text style={styles.flagEmoji}>🇮🇳</Text>
+                    <Text style={styles.countryCodeText}>+91</Text>
                   </View>
+                  <TextInput
+                    style={styles.phoneInput}
+                    placeholder={t('auth.phonePlaceholder')}
+                    value={registerPhone}
+                    onChangeText={(val) => setRegisterPhone(val.replace(/[^0-9]/g, '').slice(0, 10))}
+                    keyboardType="phone-pad"
+                    maxLength={10}
+                    placeholderTextColor={colors.textLight}
+                  />
                 </View>
+
+                <Text style={[styles.inputLabel, { marginTop: 12 }]}>
+                  {t('auth.emailLabel').toUpperCase()} <Text style={styles.optionalTag}>({t('common.optional').toUpperCase()})</Text>
+                </Text>
+                <View style={styles.inputWrapper}>
+                  <Mail size={18} color={colors.textLight} style={styles.inputLeadingIcon} />
+                  <TextInput
+                    style={styles.textInput}
+                    placeholder={t('auth.emailPlaceholder')}
+                    value={registerEmail}
+                    onChangeText={setRegisterEmail}
+                    keyboardType="email-address"
+                    autoCapitalize="none"
+                    placeholderTextColor={colors.textLight}
+                  />
+                </View>
+
+                <Text style={[styles.inputLabel, { marginTop: 12 }]}>
+                  {t('auth.gstinOptional').toUpperCase()} <Text style={styles.optionalTag}>({t('common.optional').toUpperCase()})</Text>
+                </Text>
+                <View style={styles.inputWrapper}>
+                  <FileText size={18} color={colors.textLight} style={styles.inputLeadingIcon} />
+                  <TextInput
+                    style={styles.textInput}
+                    placeholder={t('auth.gstinPlaceholder')}
+                    value={licenseGstin}
+                    onChangeText={setLicenseGstin}
+                    autoCapitalize="characters"
+                    placeholderTextColor={colors.textLight}
+                  />
+                </View>
+
+                <Text style={[styles.inputLabel, { marginTop: 12 }]}>{t('auth.createPassword').toUpperCase()} *</Text>
+                <View style={styles.inputWrapper}>
+                  <Lock size={18} color={colors.textLight} style={styles.inputLeadingIcon} />
+                  <TextInput
+                    style={styles.textInput}
+                    placeholder={t('auth.passwordPlaceholder')}
+                    value={registerPassword}
+                    onChangeText={setRegisterPassword}
+                    secureTextEntry={!showRegisterPassword}
+                    placeholderTextColor={colors.textLight}
+                  />
+                  <TouchableOpacity
+                    onPress={() => setShowRegisterPassword(!showRegisterPassword)}
+                    style={styles.passwordToggle}
+                  >
+                    {showRegisterPassword ? (
+                      <EyeOff size={18} color={colors.textMuted} />
+                    ) : (
+                      <Eye size={18} color={colors.textMuted} />
+                    )}
+                  </TouchableOpacity>
+                </View>
+
+                {/* Consent Checkbox */}
+                <TouchableOpacity
+                  style={styles.checkboxRow}
+                  onPress={() => setAgreeTerms(!agreeTerms)}
+                  activeOpacity={0.8}
+                >
+                  <View style={[styles.checkboxBox, agreeTerms && styles.checkboxBoxChecked]}>
+                    {agreeTerms && <CheckCircle size={14} color="#FFFFFF" />}
+                  </View>
+                  <Text style={styles.checkboxText}>
+                    {t('auth.agreeTerms')}
+                  </Text>
+                </TouchableOpacity>
 
                 <TouchableOpacity
-                  style={styles.primaryButton}
+                  style={styles.primaryActionButton}
                   onPress={handleRegisterContractor}
                   disabled={loading}
-                  activeOpacity={0.8}
+                  activeOpacity={0.85}
                 >
                   {loading ? (
-                    <ActivityIndicator size="small" color="#ffffff" />
+                    <ActivityIndicator size="small" color="#FFFFFF" />
                   ) : (
-                    <Text style={styles.primaryButtonText}>Register</Text>
+                    <>
+                      <Text style={styles.primaryActionText}>{t('auth.registerButton')}</Text>
+                      <Text style={styles.arrowIcon}>➔</Text>
+                    </>
                   )}
                 </TouchableOpacity>
-
-                {/* Footer links */}
-                <View style={styles.footerLinks}>
-                  <TouchableOpacity
-                    style={styles.footerLinkButton}
-                    onPress={() => setAuthMode('email')}
-                  >
-                    <Text style={styles.footerLinkPrimary}>Already have an account? Login</Text>
-                  </TouchableOpacity>
-
-                  <TouchableOpacity
-                    style={[styles.footerLinkButton, { marginTop: 12 }]}
-                    onPress={() => setAuthMode('phone')}
-                  >
-                    <Text style={styles.footerLinkSecondary}>Login with Mobile Number</Text>
-                  </TouchableOpacity>
-                </View>
               </View>
-            )}
+            </View>
+          )}
+
+          {/* Enterprise Statutory Trust Strip */}
+          <View style={styles.trustBadgesRow}>
+            <View style={styles.trustBadge}>
+              <ShieldCheck size={14} color={colors.primary} />
+              <Text style={styles.trustBadgeText}>256-Bit SSL</Text>
+            </View>
+            <View style={styles.trustDivider} />
+            <View style={styles.trustBadge}>
+              <Text style={styles.trustBadgeText}>🇮🇳 Labour Code 2020</Text>
+            </View>
+            <View style={styles.trustDivider} />
+            <View style={styles.trustBadge}>
+              <CheckCircle size={14} color={colors.success} />
+              <Text style={styles.trustBadgeText}>Instant UPI Ready</Text>
+            </View>
           </View>
         </ScrollView>
       </KeyboardAvoidingView>
@@ -475,266 +606,508 @@ export function LoginScreen({ onLogin, onRegister }: LoginScreenProps) {
 const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
-    backgroundColor: '#1859C1', // Match banner background color for status bars
+    backgroundColor: colors.background,
   },
-  container: {
+  keyboardContainer: {
     flex: 1,
-    backgroundColor: '#ffffff',
   },
   scrollContent: {
-    flexGrow: 1,
-    backgroundColor: '#ffffff',
+    paddingHorizontal: 20,
+    paddingTop: 12,
+    paddingBottom: 28,
   },
-  bannerContainer: {
-    width: '100%',
-    height: 290,
-    backgroundColor: '#1859C1',
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingTop: 30,
-  },
-  logoRow: {
+  headerBar: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 10,
-    marginBottom: 15,
+    justifyContent: 'space-between',
+    marginBottom: 20,
+    paddingVertical: 4,
   },
-  logoMini: {
-    width: 36,
-    height: 36,
-    borderRadius: 8,
+  langPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: colors.surface,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: radii.pill,
+    borderWidth: 1,
+    borderColor: colors.border,
+    ...shadows.sm,
   },
-  appNameText: {
-    fontSize: 22,
+  langActive: {
+    fontSize: 12,
     fontWeight: '800',
-    color: '#ffffff',
-    letterSpacing: -0.5,
+    color: colors.primary,
   },
-  workerImage: {
-    width: 160,
-    height: 160,
-    marginBottom: 10,
+  langDivider: {
+    fontSize: 12,
+    color: colors.borderDark,
+    marginHorizontal: 6,
   },
-  cardSheet: {
-    flex: 1,
-    marginTop: -32, // Overlaps the bottom of the banner
-    backgroundColor: '#ffffff',
-    borderTopLeftRadius: 32,
-    borderTopRightRadius: 32,
-    paddingTop: 32,
-    paddingHorizontal: 24,
-    paddingBottom: 40,
-    minHeight: screenHeight - 258,
-    shadowColor: '#0f172a',
-    shadowOffset: { width: 0, height: -6 },
-    shadowOpacity: 0.08,
-    shadowRadius: 16,
-    elevation: 8,
+  langInactive: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: colors.textMuted,
   },
-  formContainer: {
-    width: '100%',
+  mainCard: {
+    backgroundColor: colors.surface,
+    borderRadius: radii.xl,
+    padding: 22,
+    borderWidth: 1,
+    borderColor: colors.border,
+    ...shadows.card,
   },
-  cardTitle: {
+  titleSection: {
+    marginBottom: 18,
+  },
+  screenHeading: {
     fontSize: 24,
     fontWeight: '800',
-    color: '#0f172a',
-    textAlign: 'center',
-    marginBottom: 24,
+    color: colors.text,
     letterSpacing: -0.5,
   },
-  otpSubtitle: {
+  screenSubtitle: {
     fontSize: 14,
-    color: '#64748b',
-    textAlign: 'center',
-    marginBottom: 24,
-    paddingHorizontal: 20,
+    color: colors.textMuted,
+    lineHeight: 20,
+    marginTop: 4,
+  },
+  tabContainer: {
+    flexDirection: 'row',
+    backgroundColor: colors.surfaceMuted,
+    borderRadius: radii.md,
+    padding: 4,
+    marginBottom: 20,
+  },
+  tabButton: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 10,
+    minHeight: 40,
+    borderRadius: radii.sm,
+  },
+  tabButtonActive: {
+    backgroundColor: colors.primary,
+    ...shadows.sm,
+  },
+  tabText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: colors.textMuted,
+    marginLeft: 6,
+  },
+  tabTextActive: {
+    color: '#FFFFFF',
+  },
+  formSection: {
+    marginBottom: 8,
+  },
+  inputLabel: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: colors.text,
+    letterSpacing: 0.8,
+    marginBottom: 6,
+  },
+  optionalTag: {
+    fontSize: 10,
+    fontWeight: '500',
+    color: colors.textLight,
   },
   phoneInputRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 12,
-    marginBottom: 24,
+    marginBottom: 6,
   },
-  phoneInputContainer: {
-    flex: 1,
+  countryCodeBadge: {
     flexDirection: 'row',
     alignItems: 'center',
-    borderWidth: 1.5,
-    borderColor: '#e2e8f0',
-    borderRadius: 12,
-    backgroundColor: '#f8fafc',
-    height: 54,
-    paddingHorizontal: 16,
-  },
-  countryCode: {
-    fontSize: 16,
-    fontWeight: '700',
-    color: '#334155',
+    backgroundColor: colors.surfaceMuted,
+    borderWidth: 1,
+    borderColor: colors.borderDark,
+    borderRadius: radii.md,
+    paddingHorizontal: 12,
+    minHeight: 48,
+    paddingVertical: 6,
     marginRight: 8,
+  },
+  flagEmoji: {
+    fontSize: 16,
+    marginRight: 4,
+  },
+  countryCodeText: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: colors.text,
   },
   phoneInput: {
     flex: 1,
+    minHeight: 48,
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.borderDark,
+    borderRadius: radii.md,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
     fontSize: 16,
-    color: '#0f172a',
     fontWeight: '600',
-    height: '100%',
-    padding: 0,
+    color: colors.text,
   },
-  otpButton: {
-    backgroundColor: '#2563eb',
-    borderRadius: 12,
-    height: 54,
-    paddingHorizontal: 20,
-    justifyContent: 'center',
+  fieldHint: {
+    fontSize: 12,
+    color: colors.textMuted,
+    marginBottom: 16,
+    lineHeight: 16,
+  },
+  inputWrapper: {
+    flexDirection: 'row',
     alignItems: 'center',
-    shadowColor: '#2563eb',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.2,
-    shadowRadius: 6,
-    elevation: 3,
-    minWidth: 95,
+    minHeight: 48,
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.borderDark,
+    borderRadius: radii.md,
+    paddingHorizontal: 12,
+    paddingVertical: 4,
+    marginBottom: 8,
   },
-  otpButtonText: {
-    color: '#ffffff',
-    fontSize: 15,
+  inputLeadingIcon: {
+    marginRight: 10,
+  },
+  textInput: {
+    flex: 1,
+    minHeight: 40,
+    fontSize: 14,
+    fontWeight: '600',
+    color: colors.text,
+  },
+  passwordToggle: {
+    padding: 6,
+  },
+  primaryActionButton: {
+    backgroundColor: colors.accent,
+    minHeight: 50,
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    borderRadius: radii.md,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 12,
+    ...shadows.hero,
+  },
+  otpOptionButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    paddingVertical: 12,
+    marginTop: 10,
+    borderRadius: radii.md,
+    backgroundColor: 'rgba(234, 88, 12, 0.08)',
+    borderWidth: 1,
+    borderColor: 'rgba(234, 88, 12, 0.25)',
+  },
+  otpOptionText: {
+    fontSize: 13,
     fontWeight: '700',
+    color: colors.accent,
+  },
+  primaryActionText: {
+    fontSize: 15,
+    fontWeight: '800',
+    color: '#FFFFFF',
+    letterSpacing: 0.3,
+  },
+  arrowIcon: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: '#FFFFFF',
+    marginLeft: 8,
   },
   dividerRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginVertical: 24,
+    marginVertical: 18,
   },
   dividerLine: {
     flex: 1,
     height: 1,
-    backgroundColor: '#f1f5f9',
+    backgroundColor: colors.border,
   },
   dividerText: {
-    fontSize: 14,
-    color: '#94a3b8',
-    marginHorizontal: 12,
-    fontWeight: '500',
+    fontSize: 12,
+    fontWeight: '600',
+    color: colors.textLight,
+    paddingHorizontal: 12,
   },
   truecallerButton: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
+    minHeight: 46,
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+    borderRadius: radii.md,
     borderWidth: 1.5,
-    borderColor: '#2563eb',
-    borderRadius: 12,
-    height: 54,
-    backgroundColor: '#ffffff',
-    marginBottom: 32,
-  },
-  truecallerIcon: {
-    marginRight: 10,
+    borderColor: '#BAE6FD',
+    backgroundColor: '#F0F9FF',
   },
   truecallerText: {
-    color: '#2563eb',
-    fontSize: 16,
+    fontSize: 13,
     fontWeight: '700',
+    color: '#0284C7',
+    marginLeft: 8,
   },
-  inputGroup: {
-    marginBottom: 20,
-  },
-  inputContainer: {
-    marginBottom: 24,
-  },
-  label: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#334155',
-    marginBottom: 8,
-  },
-  inputIconWrapper: {
+  noticeBox: {
     flexDirection: 'row',
+    backgroundColor: '#FFF7ED',
+    borderWidth: 1,
+    borderColor: '#FFEDD5',
+    borderRadius: radii.lg,
+    padding: 14,
+    marginTop: 20,
+    alignItems: 'flex-start',
+  },
+  noticeIconCircle: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: '#FFEDD5',
     alignItems: 'center',
-    borderWidth: 1.5,
-    borderColor: '#e2e8f0',
-    borderRadius: 12,
-    backgroundColor: '#f8fafc',
-    height: 54,
-    paddingHorizontal: 16,
-  },
-  inputIcon: {
-    marginRight: 12,
-  },
-  iconInput: {
-    flex: 1,
-    fontSize: 16,
-    color: '#0f172a',
-    height: '100%',
-    fontWeight: '500',
-  },
-  fullWidthInput: {
-    borderWidth: 1.5,
-    borderColor: '#e2e8f0',
-    borderRadius: 12,
-    backgroundColor: '#f8fafc',
-    height: 54,
-    paddingHorizontal: 16,
-    fontSize: 16,
-    color: '#0f172a',
-    fontWeight: '600',
-    textAlign: 'center',
-    letterSpacing: 4,
-  },
-  primaryButton: {
-    width: '100%',
-    backgroundColor: '#2563eb',
-    borderRadius: 12,
-    height: 54,
     justifyContent: 'center',
-    alignItems: 'center',
-    shadowColor: '#2563eb',
-    shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.25,
-    shadowRadius: 8,
-    elevation: 4,
-    marginTop: 8,
-    marginBottom: 24,
+    marginRight: 10,
+    marginTop: 2,
   },
-  primaryButtonText: {
-    color: '#ffffff',
-    fontSize: 16,
+  noticeTextContainer: {
+    flex: 1,
+  },
+  noticeTitle: {
+    fontSize: 13,
     fontWeight: '700',
+    color: colors.text,
   },
-  footerLinks: {
-    alignItems: 'center',
-    marginTop: 8,
+  linkHighlight: {
+    color: colors.accent,
+    fontWeight: '800',
+    textDecorationLine: 'underline',
   },
-  footerLinkButton: {
-    paddingVertical: 4,
-  },
-  footerLinkPrimary: {
-    color: '#2563eb',
-    fontSize: 15,
-    fontWeight: '700',
-  },
-  footerLinkSecondary: {
-    color: '#64748b',
-    fontSize: 14,
-    fontWeight: '600',
-  },
-  registerSubtext: {
-    fontSize: 14,
-    color: '#64748b',
-    textAlign: 'center',
-    marginBottom: 24,
-    paddingHorizontal: 10,
-    lineHeight: 20,
+  noticeDesc: {
+    fontSize: 11,
+    color: colors.textMuted,
+    marginTop: 3,
+    lineHeight: 15,
   },
   backButton: {
     flexDirection: 'row',
     alignItems: 'center',
-    alignSelf: 'flex-start',
-    marginBottom: 16,
-    paddingVertical: 4,
+    marginBottom: 14,
   },
   backButtonText: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#475569',
+    fontSize: 13,
+    fontWeight: '700',
+    color: colors.textMuted,
     marginLeft: 6,
+  },
+  securityBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: colors.successLight,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: radii.sm,
+    alignSelf: 'flex-start',
+    marginBottom: 8,
+  },
+  securityBadgeText: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: colors.successDark,
+    marginLeft: 4,
+    letterSpacing: 0.5,
+  },
+  phoneHighlight: {
+    fontWeight: '800',
+    color: colors.primary,
+  },
+  otpBoxesRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginVertical: 18,
+  },
+  otpBox: {
+    width: 46,
+    height: 54,
+    borderRadius: radii.md,
+    borderWidth: 1.5,
+    borderColor: colors.borderDark,
+    backgroundColor: colors.surfaceSubtle,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  otpBoxFilled: {
+    borderColor: colors.primary,
+    backgroundColor: colors.surface,
+  },
+  otpBoxActive: {
+    borderColor: colors.accent,
+    borderWidth: 2,
+    backgroundColor: '#FFF7ED',
+  },
+  otpDigitInput: {
+    fontSize: 22,
+    fontWeight: '800',
+    color: colors.text,
+    textAlign: 'center',
+    width: '100%',
+    height: '100%',
+  },
+  autoDetectRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 12,
+  },
+  pulseDot: {
+    width: 7,
+    height: 7,
+    borderRadius: 4,
+    backgroundColor: colors.success,
+    marginRight: 6,
+  },
+  autoDetectText: {
+    fontSize: 11,
+    color: colors.textMuted,
+    fontWeight: '600',
+  },
+  resendRow: {
+    alignItems: 'center',
+    marginTop: 16,
+    marginBottom: 10,
+  },
+  resendTimerText: {
+    fontSize: 12,
+    color: colors.textMuted,
+  },
+  timerBold: {
+    fontWeight: '800',
+    color: colors.text,
+  },
+  resendActionText: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: colors.accent,
+    textDecorationLine: 'underline',
+  },
+  whatsappButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    minHeight: 44,
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+    borderRadius: radii.md,
+    borderWidth: 1,
+    borderColor: '#A7F3D0',
+    backgroundColor: '#ECFDF5',
+  },
+  whatsappButtonText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#047857',
+    marginLeft: 6,
+  },
+  contractorOnlyTag: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFF7ED',
+    borderWidth: 1,
+    borderColor: '#FFEDD5',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: radii.sm,
+    alignSelf: 'flex-start',
+    marginBottom: 8,
+  },
+  contractorOnlyText: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: '#C2410C',
+    marginLeft: 4,
+    letterSpacing: 0.5,
+  },
+  architectureAlert: {
+    flexDirection: 'row',
+    backgroundColor: '#FEF3C7',
+    borderWidth: 1,
+    borderColor: '#FDE68A',
+    borderRadius: radii.md,
+    padding: 12,
+    marginBottom: 16,
+    alignItems: 'flex-start',
+  },
+  alertNoticeTitle: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: '#92400E',
+  },
+  alertNoticeBody: {
+    fontSize: 11,
+    color: '#78350F',
+    lineHeight: 15,
+    marginTop: 2,
+  },
+  checkboxRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    marginVertical: 12,
+  },
+  checkboxBox: {
+    width: 20,
+    height: 20,
+    borderRadius: 4,
+    borderWidth: 1.5,
+    borderColor: colors.borderDark,
+    backgroundColor: colors.surface,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 10,
+    marginTop: 2,
+  },
+  checkboxBoxChecked: {
+    backgroundColor: colors.success,
+    borderColor: colors.success,
+  },
+  checkboxText: {
+    flex: 1,
+    fontSize: 12,
+    color: colors.textMuted,
+    lineHeight: 16,
+  },
+  trustBadgesRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 20,
+    paddingVertical: 6,
+  },
+  trustBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  trustBadgeText: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: colors.textMuted,
+    marginLeft: 4,
+  },
+  trustDivider: {
+    width: 3,
+    height: 3,
+    borderRadius: 2,
+    backgroundColor: colors.borderDark,
+    marginHorizontal: 10,
   },
 });

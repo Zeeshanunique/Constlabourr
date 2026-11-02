@@ -5,6 +5,8 @@ import { AttendanceTab } from '../features/attendance/AttendanceTab';
 import { ForemanWorkersTab } from '../features/workers/ForemanWorkersTab';
 import { SettingsScreen } from '../screens/SettingsScreen';
 import { MaterialIcons } from '@expo/vector-icons';
+import { colors, shadows } from '../styles/theme';
+import { useTranslation } from '../i18n';
 
 export type ForemanTabParamList = {
   Home: { accessToken: string };
@@ -17,23 +19,41 @@ const Tab = createBottomTabNavigator<ForemanTabParamList>();
 
 export function ForemanNavigator({ route }: { route: any }) {
   const accessToken = route.params?.accessToken;
+  const { t } = useTranslation();
   
   return (
     <Tab.Navigator
       screenOptions={{
         headerShown: false,
-        tabBarActiveTintColor: '#2563eb',
-        tabBarInactiveTintColor: '#717182',
+        tabBarActiveTintColor: colors.accent,
+        tabBarInactiveTintColor: colors.textMuted,
+        tabBarAllowFontScaling: true,
+        tabBarHideOnKeyboard: true,
+        tabBarItemStyle: {
+          paddingVertical: 2,
+        },
+        tabBarLabelStyle: {
+          fontSize: 10,
+          fontWeight: '700',
+          marginBottom: 3,
+        },
         tabBarStyle: {
-          paddingBottom: 5,
-          height: 60,
+          backgroundColor: '#FFFFFF',
+          borderTopWidth: 1,
+          borderTopColor: colors.border,
+          minHeight: 64,
+          height: undefined,
+          paddingTop: 6,
+          paddingBottom: 8,
+          ...shadows.dock,
         },
       }}
     >
       <Tab.Screen
         name="Home"
         options={{
-          tabBarIcon: ({ color, size }) => <MaterialIcons name="home" size={size} color={color} />,
+          tabBarLabel: t('nav.dashboard'),
+          tabBarIcon: ({ color, size }) => <MaterialIcons name="dashboard" size={size} color={color} />,
         }}
       >
         {(props) => <ModernForemanDashboard {...props} accessToken={accessToken} />}
@@ -41,7 +61,8 @@ export function ForemanNavigator({ route }: { route: any }) {
       <Tab.Screen
         name="Attendance"
         options={{
-          tabBarIcon: ({ color, size }) => <MaterialIcons name="check-box" size={size} color={color} />,
+          tabBarLabel: t('nav.attendance'),
+          tabBarIcon: ({ color, size }) => <MaterialIcons name="assignment-turned-in" size={size} color={color} />,
         }}
       >
         {(props) => <AttendanceTab {...props} accessToken={accessToken} />}
@@ -49,7 +70,8 @@ export function ForemanNavigator({ route }: { route: any }) {
       <Tab.Screen
         name="Workers"
         options={{
-          tabBarIcon: ({ color, size }) => <MaterialIcons name="people" size={size} color={color} />,
+          tabBarLabel: t('nav.workers'),
+          tabBarIcon: ({ color, size }) => <MaterialIcons name="groups" size={size} color={color} />,
         }}
       >
         {(props) => <ForemanWorkersTab {...props} accessToken={accessToken} />}
@@ -58,6 +80,7 @@ export function ForemanNavigator({ route }: { route: any }) {
         name="Settings"
         component={SettingsScreen}
         options={{
+          tabBarLabel: t('nav.settings'),
           tabBarIcon: ({ color, size }) => <MaterialIcons name="settings" size={size} color={color} />,
         }}
       />

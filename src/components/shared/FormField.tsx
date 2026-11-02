@@ -1,15 +1,13 @@
-import React, { useState, useRef } from 'react';
-import { View, StyleSheet, TouchableOpacity, Platform } from 'react-native';
-import { FormControl, FormControlLabel, FormControlLabelText, FormControlHelper, FormControlHelperText, FormControlError, FormControlErrorText } from '@/components/ui/form-control';
-import { Input, InputField } from '@/components/ui/input';
-import { Textarea, TextareaInput } from '@/components/ui/textarea';
+import React, { useState } from 'react';
+import { View, StyleSheet, TouchableOpacity, Platform, TextInput } from 'react-native';
 import { Text } from '@/components/ui/text';
 import { MaterialIcons } from '@expo/vector-icons';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import { formStyles } from './form-styles';
 import { Dropdown } from './Dropdown';
+import { theme } from '@/styles/theme';
 
-interface FormFieldProps {
+export interface FormFieldProps {
   label: string;
   value: string;
   onChangeText?: (text: string) => void;
@@ -26,7 +24,68 @@ interface FormFieldProps {
   disabled?: boolean;
   multiline?: boolean;
   numberOfLines?: number;
+  icon?: keyof typeof MaterialIcons.glyphMap;
+  suffix?: string;
+  maxLength?: number;
 }
+
+export const getFieldIcon = (
+  label: string,
+  type?: string,
+  explicitIcon?: keyof typeof MaterialIcons.glyphMap
+): keyof typeof MaterialIcons.glyphMap => {
+  if (explicitIcon) return explicitIcon;
+  const l = (label || '').toLowerCase();
+
+  if (l.includes('aadhaar') || l.includes('adhaar') || l.includes('identity') || l.includes('govt id')) return 'badge';
+  if (l.includes('phone') || l.includes('mobile') || l.includes('contact')) return 'phone';
+  if (l.includes('email') || l.includes('mail')) return 'mail-outline';
+  if (l.includes('password')) return 'lock-outline';
+  if (
+    l.includes('wage') ||
+    l.includes('salary') ||
+    l.includes('payment') ||
+    l.includes('rate') ||
+    l.includes('amount') ||
+    l.includes('charge') ||
+    l.includes('canteen') ||
+    l.includes('mess') ||
+    l.includes('cost') ||
+    l.includes('overtime') ||
+    l.includes('upi')
+  ) return 'currency-rupee';
+  if (
+    l.includes('site') ||
+    l.includes('project') ||
+    l.includes('location') ||
+    l.includes('address') ||
+    l.includes('building') ||
+    l.includes('firm') ||
+    l.includes('company')
+  ) return 'business';
+  if (l.includes('foreman') || l.includes('supervisor')) return 'engineering';
+  if (
+    l.includes('worker') ||
+    l.includes('labor') ||
+    l.includes('labour') ||
+    l.includes('name') ||
+    l.includes('person') ||
+    l.includes('user')
+  ) return 'person';
+  if (l.includes('skill') || l.includes('qualification') || l.includes('trade') || l.includes('role')) return 'military-tech';
+  if (l.includes('date') || l.includes('start') || l.includes('completion') || l.includes('end') || type === 'date') return 'calendar-today';
+  if (l.includes('bank') || l.includes('account')) return 'account-balance';
+  if (l.includes('ifsc') || l.includes('code') || l.includes('gstin') || l.includes('license')) return 'qr-code';
+  if (l.includes('hours') || l.includes('time') || l.includes('check-in') || l.includes('check-out')) return 'access-time';
+
+  if (type === 'phone') return 'phone';
+  if (type === 'email') return 'mail-outline';
+  if (type === 'password') return 'lock-outline';
+  if (type === 'number') return 'tag';
+  if (type === 'select') return 'list';
+  if (type === 'textarea') return 'notes';
+  return 'edit';
+};
 
 export function FormField({
   label,
@@ -40,35 +99,69 @@ export function FormField({
   type = 'text',
   keyboardType,
   secureTextEntry = false,
-  autoCapitalize,
+  autoCapitalize = 'none',
   selectOptions = [],
   disabled = false,
   multiline = false,
   numberOfLines = 4,
+  icon,
+  suffix,
+  maxLength,
 }: FormFieldProps) {
   const [isFocused, setIsFocused] = useState(false);
   const [isDropdownVisible, setIsDropdownVisible] = useState(false);
   const [showDatePicker, setShowDatePicker] = useState(false);
-  const [triggerLayout, setTriggerLayout] = useState<{ x: number; y: number; width: number; height: number } | undefined>(undefined);
-  const triggerRef = useRef<any>(null);
+  const [isPasswordVisible, setIsPasswordVisible] = useState(false);
 
-  const renderInput = () => {
+  const cleanLabel = (label || '').replace(/\*/g, '').trim();
+  const lowerLabel = cleanLabel.toLowerCase();
+  const isPhone = type === 'phone' || lowerLabel.includes('phone') || lowerLabel.includes('mobile');
+  const isAadhaar = lowerLabel.includes('aadhaar') || lowerLabel.includes('adhaar');
+
+  // Hard limits for phone (10) and Aadhaar (12)
+  let effectiveMaxLength = maxLength;
+  if (isPhone) effectiveMaxLength = 10;
+  if (isAadhaar) effectiveMaxLength = 12;
+
+  let determinedKeyboardType: any = keyboardType;
+  if (isPhone) determinedKeyboardType = 'phone-pad';
+  else if (isAadhaar) determinedKeyboardType = 'numeric';
+  else if (!determinedKeyboardType) {
+    if (type === 'email') determinedKeyboardType = 'email-address';
+    else if (type === 'number') determinedKeyboardType = 'numeric';
+  }
+
+  const handleTextChange = (text: string) => {
+    let sanitized = text;
+    if (isPhone) {
+      sanitized = text.replace(/[^0-9]/g, '').slice(0, 10);
+    } else if (isAadhaar) {
+      sanitized = text.replace(/[^0-9]/g, '').slice(0, 12);
+    }
+    if (onChangeText) onChangeText(sanitized);
+    if (onValueChange) onValueChange(sanitized);
+  };
+
+  const resolvedIcon = getFieldIcon(cleanLabel, type, icon);
+
+  const renderControl = () => {
     if (type === 'date') {
       const dateValue = value ? new Date(value) : new Date();
-      const displayValue = value ? new Date(value).toLocaleDateString('en-GB', { 
-        day: '2-digit', 
-        month: 'short', 
-        year: 'numeric' 
-      }) : '';
+      const displayValue = value
+        ? new Date(value).toLocaleDateString('en-IN', {
+            day: '2-digit',
+            month: 'short',
+            year: 'numeric',
+          })
+        : '';
 
       const handleDateChange = (event: any, selectedDate?: Date) => {
         if (Platform.OS === 'android') {
           setShowDatePicker(false);
         }
-        
-        if (selectedDate && onChangeText) {
+        if (selectedDate) {
           const dateStr = selectedDate.toISOString().split('T')[0];
-          onChangeText(dateStr);
+          handleTextChange(dateStr);
         }
       };
 
@@ -77,37 +170,24 @@ export function FormField({
           <TouchableOpacity
             onPress={() => !disabled && setShowDatePicker(true)}
             disabled={disabled}
-            style={[
-              formStyles.formInput,
-              disabled && { opacity: 0.6 },
-              { backgroundColor: '#ffffff', flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-            ]}
+            style={{ flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}
+            activeOpacity={0.7}
           >
-            <Input
-              variant="outline"
-              size="md"
-              style={[formStyles.formInput, { backgroundColor: '#ffffff', flex: 1, borderWidth: 0 }]}
-              isDisabled={true}
+            <Text
+              style={[
+                formStyles.fieldValueText,
+                !displayValue && formStyles.fieldPlaceholderText,
+              ]}
+              numberOfLines={1}
             >
-              <InputField
-                placeholder={placeholder || 'Select date'}
-                style={[formStyles.formInputField, { backgroundColor: 'transparent' }]}
-                placeholderTextColor={formStyles.formInputPlaceholder.color}
-                value={displayValue}
-                editable={false}
-              />
-            </Input>
-            <MaterialIcons 
-              name="calendar-today" 
-              size={20} 
-              color="#6B7280"
-              style={{ marginRight: 8 }}
-            />
+              {displayValue || placeholder || 'Select date (DD-MM-YYYY)'}
+            </Text>
+            <MaterialIcons name="event" size={20} color={theme.colors.slate[400]} />
           </TouchableOpacity>
 
           {showDatePicker && (
             <DateTimePicker
-              value={dateValue}
+              value={isNaN(dateValue.getTime()) ? new Date() : dateValue}
               mode="date"
               display={Platform.OS === 'ios' ? 'spinner' : 'default'}
               onChange={handleDateChange}
@@ -117,12 +197,9 @@ export function FormField({
           )}
 
           {Platform.OS === 'ios' && showDatePicker && (
-            <View style={{ backgroundColor: '#ffffff', padding: 10 }}>
-              <TouchableOpacity
-                onPress={() => setShowDatePicker(false)}
-                style={{ alignSelf: 'flex-end', padding: 8 }}
-              >
-                <Text style={{ color: '#007AFF', fontSize: 16, fontWeight: '600' }}>Done</Text>
+            <View style={{ backgroundColor: '#ffffff', padding: 8, alignItems: 'flex-end' }}>
+              <TouchableOpacity onPress={() => setShowDatePicker(false)}>
+                <Text style={{ color: theme.colors.safetyOrange, fontSize: 15, fontWeight: '700' }}>Done</Text>
               </TouchableOpacity>
             </View>
           )}
@@ -131,65 +208,38 @@ export function FormField({
     }
 
     if (type === 'select') {
-      const selectedOption = selectOptions.find(opt => opt.value === value);
-      
-      const handlePress = () => {
-        if (disabled) return;
-        
-        triggerRef.current?.measure((x: number, y: number, width: number, height: number, pageX: number, pageY: number) => {
-          setTriggerLayout({ x: pageX, y: pageY, width, height });
-          setIsDropdownVisible(true);
-        });
-      };
-      
+      const selectedOption = selectOptions.find((opt) => opt.value === value);
+
       return (
         <>
           <TouchableOpacity
-            ref={triggerRef}
-            onPress={handlePress}
+            onPress={() => !disabled && setIsDropdownVisible(true)}
             disabled={disabled}
-            style={[
-              formStyles.formInput,
-              disabled && { opacity: 0.6 },
-              { backgroundColor: '#ffffff', flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-            ]}
+            style={{ flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}
+            activeOpacity={0.7}
           >
-            <Input
-              variant="outline"
-              size="md"
-              style={[formStyles.formInput, { backgroundColor: '#ffffff', flex: 1, borderWidth: 0 }]}
-              isDisabled={true}
+            <Text
+              style={[
+                formStyles.fieldValueText,
+                !selectedOption && formStyles.fieldPlaceholderText,
+              ]}
+              numberOfLines={1}
             >
-              <InputField
-                placeholder={placeholder || `Select ${label.toLowerCase()}`}
-                style={[formStyles.formInputField, { backgroundColor: 'transparent' }]}
-                placeholderTextColor={formStyles.formInputPlaceholder.color}
-                value={selectedOption?.label || ''}
-                editable={false}
-              />
-            </Input>
-            <MaterialIcons 
-              name="arrow-drop-down" 
-              size={24} 
-              color="#6B7280"
-              style={{ marginRight: 8 }}
-            />
+              {selectedOption?.label || placeholder || `Select ${lowerLabel}`}
+            </Text>
+            <MaterialIcons name="expand-more" size={22} color={theme.colors.slate[400]} />
           </TouchableOpacity>
-          
+
           <Dropdown
             visible={isDropdownVisible}
             onClose={() => setIsDropdownVisible(false)}
             options={selectOptions}
             selectedValue={value}
-            onSelect={(selectedValue) => {
-              if (onValueChange) {
-                onValueChange(selectedValue);
-              }
-              if (onChangeText) {
-                onChangeText(selectedValue);
-              }
+            title={`Select ${cleanLabel}`}
+            onSelect={(val) => {
+              handleTextChange(val);
+              setIsDropdownVisible(false);
             }}
-            triggerLayout={triggerLayout}
           />
         </>
       );
@@ -197,89 +247,100 @@ export function FormField({
 
     if (type === 'textarea') {
       return (
-        <Textarea
-          size="md"
-          variant="default"
+        <TextInput
+          value={value}
+          onChangeText={handleTextChange}
+          placeholder={placeholder}
+          placeholderTextColor={formStyles.fieldPlaceholderText.color}
+          multiline
+          numberOfLines={numberOfLines}
           style={[
-            formStyles.formInput,
-            isFocused && formStyles.formInputFocused,
-            disabled && { opacity: 0.6 },
-            { backgroundColor: '#ffffff' },
+            formStyles.fieldTextInput,
+            { minHeight: 64, textAlignVertical: 'top' },
           ]}
-        >
-          <TextareaInput
-            value={value}
-            onChangeText={onChangeText}
-            placeholder={placeholder}
-            placeholderTextColor={formStyles.formInputPlaceholder.color}
-            style={[formStyles.formInputField, { backgroundColor: 'transparent' }]}
-            multiline={multiline}
-            numberOfLines={numberOfLines}
-            onFocus={() => setIsFocused(true)}
-            onBlur={() => setIsFocused(false)}
-            editable={!disabled}
-          />
-        </Textarea>
+          editable={!disabled}
+          onFocus={() => setIsFocused(true)}
+          onBlur={() => setIsFocused(false)}
+        />
       );
     }
 
+    // Default: text, email, phone, number, password
+    const isPassword = type === 'password' || secureTextEntry;
+
     return (
-      <Input
-        size="md"
-        variant="outline"
-        style={[
-          formStyles.formInput,
-          isFocused && formStyles.formInputFocused,
-          disabled && { opacity: 0.6 },
-          { backgroundColor: '#ffffff' },
-        ]}
-      >
-        <InputField
+      <>
+        <TextInput
           value={value}
-          onChangeText={onChangeText}
+          onChangeText={handleTextChange}
           placeholder={placeholder}
-          placeholderTextColor={formStyles.formInputPlaceholder.color}
-          keyboardType={keyboardType || (type === 'email' ? 'email-address' : type === 'number' ? 'numeric' : type === 'phone' ? 'phone-pad' : 'default')}
-          secureTextEntry={secureTextEntry || type === 'password'}
-          autoCapitalize={autoCapitalize || (type === 'email' ? 'none' : 'sentences')}
-          style={[formStyles.formInputField, { backgroundColor: 'transparent' }]}
+          placeholderTextColor={formStyles.fieldPlaceholderText.color}
+          style={formStyles.fieldTextInput}
+          editable={!disabled}
+          keyboardType={determinedKeyboardType}
+          secureTextEntry={isPassword && !isPasswordVisible}
+          autoCapitalize={autoCapitalize}
+          maxLength={effectiveMaxLength}
           onFocus={() => setIsFocused(true)}
           onBlur={() => setIsFocused(false)}
-          editable={!disabled}
         />
-      </Input>
+        {isPassword && (
+          <TouchableOpacity
+            onPress={() => setIsPasswordVisible(!isPasswordVisible)}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          >
+            <MaterialIcons
+              name={isPasswordVisible ? 'visibility-off' : 'visibility'}
+              size={20}
+              color={theme.colors.slate[400]}
+            />
+          </TouchableOpacity>
+        )}
+      </>
     );
   };
 
   return (
-    <FormControl
-      isRequired={required}
-      isInvalid={!!errorText}
-      isDisabled={disabled}
-      style={formStyles.formField}
-    >
-      <FormControlLabel>
-        <FormControlLabelText style={formStyles.formLabelText}>
-          {label}
-          {required && <Text style={{ color: '#dc2626' }}> *</Text>}
-        </FormControlLabelText>
-      </FormControlLabel>
-      {renderInput()}
-      {helperText && !errorText && (
-        <FormControlHelper>
-          <FormControlHelperText style={formStyles.formHelperText}>
-            {helperText}
-          </FormControlHelperText>
-        </FormControlHelper>
-      )}
-      {errorText && (
-        <FormControlError>
-          <FormControlErrorText style={formStyles.formErrorText}>
-            {errorText}
-          </FormControlErrorText>
-        </FormControlError>
-      )}
-    </FormControl>
+    <View style={{ marginBottom: 12 }}>
+      <View
+        style={[
+          formStyles.fieldCard,
+          isFocused && formStyles.fieldCardFocused,
+          Boolean(errorText) && formStyles.fieldCardError,
+          disabled && formStyles.fieldCardDisabled,
+        ]}
+      >
+        {/* Card Header: Label on top */}
+        <View style={formStyles.fieldCardHeader}>
+          <Text style={formStyles.fieldCardLabel}>
+            {cleanLabel}
+            {required && <Text style={formStyles.requiredAsterisk}> *</Text>}
+          </Text>
+          {!required && !lowerLabel.includes('optional') && (
+            <Text style={formStyles.optionalTag}>(Optional)</Text>
+          )}
+        </View>
+
+        {/* Card Input Row: Leading Icon + Control + Suffix/Trailing */}
+        <View style={formStyles.fieldInputRow}>
+          <MaterialIcons
+            name={resolvedIcon}
+            size={20}
+            color={isFocused ? theme.colors.safetyOrange : theme.colors.slate[700]}
+            style={formStyles.leadingIcon}
+          />
+          {renderControl()}
+          {suffix ? <Text style={formStyles.fieldSuffix}>{suffix}</Text> : null}
+        </View>
+      </View>
+
+      {helperText && !errorText ? (
+        <Text style={formStyles.fieldHelperText}>{helperText}</Text>
+      ) : null}
+
+      {errorText ? (
+        <Text style={formStyles.fieldErrorText}>{errorText}</Text>
+      ) : null}
+    </View>
   );
 }
-

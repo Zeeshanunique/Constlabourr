@@ -1,3 +1,4 @@
+import 'react-native-gesture-handler';
 import './src/polyfills';
 import { registerRootComponent } from 'expo';
 import './src/index.css';

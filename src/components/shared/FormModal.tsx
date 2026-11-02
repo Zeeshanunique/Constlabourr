@@ -1,12 +1,19 @@
 import React from 'react';
-import { StyleSheet, View } from 'react-native';
-import { Modal, ModalBackdrop, ModalContent, ModalHeader, ModalBody, ModalCloseButton, ModalFooter } from '@/components/ui/modal';
+import {
+  View,
+  Modal,
+  KeyboardAvoidingView,
+  Platform,
+  TouchableOpacity,
+  ScrollView,
+  ActivityIndicator,
+  StatusBar,
+} from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { Text } from '@/components/ui/text';
-import { Button, ButtonText } from '@/components/ui/button';
-import { HStack } from '@/components/ui/hstack';
-import { VStack } from '@/components/ui/vstack';
 import { MaterialIcons } from '@expo/vector-icons';
 import { formStyles } from './form-styles';
+import { theme } from '@/styles/theme';
 
 interface FormModalProps {
   isOpen: boolean;
@@ -30,76 +37,77 @@ export function FormModal({
   subtitle,
   children,
   onSubmit,
-  submitLabel = 'Save',
+  submitLabel = 'Save Changes',
   cancelLabel = 'Cancel',
   loading = false,
   submitDisabled = false,
-  size = 'lg',
   showFooter = true,
 }: FormModalProps) {
+  if (!isOpen) return null;
+
   return (
-    <Modal 
-      isOpen={isOpen} 
-      onClose={onClose} 
-      size={size}
-      style={{ justifyContent: 'center', alignItems: 'center' }}
+    <Modal
+      visible={isOpen}
+      animationType="slide"
+      presentationStyle="fullScreen"
+      onRequestClose={onClose}
     >
-      <ModalBackdrop onPress={onClose} />
-      <ModalContent 
-        style={[
-          formStyles.modalContent,
-          { alignSelf: 'center' }
-        ]}
-      >
-        <ModalHeader style={formStyles.modalHeader}>
-          <View style={{ flex: 1, marginRight: 16 }}>
-            <Text style={formStyles.modalTitle}>{title}</Text>
-            {subtitle && (
-              <Text style={formStyles.modalSubtitle}>{subtitle}</Text>
-            )}
+      <StatusBar barStyle="light-content" />
+      <SafeAreaView style={formStyles.fullScreenContainer} edges={['top', 'bottom']}>
+        {/* Full-Screen Dark Header */}
+        <View style={formStyles.fullScreenHeader}>
+          <TouchableOpacity
+            onPress={onClose}
+            style={formStyles.headerBackButton}
+            hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+            activeOpacity={0.7}
+          >
+            <MaterialIcons name="chevron-left" size={30} color="#FFFFFF" />
+          </TouchableOpacity>
+          <View style={formStyles.headerTitleArea}>
+            <Text style={formStyles.fullScreenHeaderTitle} numberOfLines={1}>{title}</Text>
+            {subtitle ? (
+              <Text style={formStyles.fullScreenHeaderSubtitle} numberOfLines={1}>{subtitle}</Text>
+            ) : null}
           </View>
-          <ModalCloseButton onPress={onClose} style={{ padding: 4 }}>
-            <MaterialIcons name="close" size={24} color="#6b7280" />
-          </ModalCloseButton>
-        </ModalHeader>
-        <ModalBody 
-          style={formStyles.modalBody}
-          contentContainerStyle={{ paddingBottom: 24 }}
-          showsVerticalScrollIndicator={true}
-          nestedScrollEnabled={true}
-          keyboardShouldPersistTaps="handled"
+        </View>
+
+        {/* Scrollable Form Content */}
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+          style={{ flex: 1 }}
         >
-          <VStack space="lg">
+          <ScrollView
+            style={formStyles.fullScreenScroll}
+            contentContainerStyle={formStyles.fullScreenScrollContent}
+            showsVerticalScrollIndicator={false}
+            keyboardShouldPersistTaps="handled"
+          >
             {children}
-          </VStack>
-        </ModalBody>
-        {showFooter && (
-          <ModalFooter style={formStyles.modalFooter}>
-            <Button
-              variant="outline"
-              onPress={onClose}
-              style={formStyles.buttonCancel}
-            >
-              <ButtonText style={formStyles.buttonCancelText}>{cancelLabel}</ButtonText>
-            </Button>
-            {onSubmit && (
-              <Button
+          </ScrollView>
+
+          {/* Full-Width Action Button Dock */}
+          {showFooter && onSubmit && (
+            <View style={formStyles.fullScreenFooter}>
+              <TouchableOpacity
                 onPress={onSubmit}
-                isDisabled={loading || submitDisabled}
+                disabled={loading || submitDisabled}
                 style={[
-                  formStyles.buttonPrimary,
-                  (loading || submitDisabled) && formStyles.buttonPrimaryDisabled,
+                  formStyles.fullScreenSubmitBtn,
+                  (loading || submitDisabled) && formStyles.fullScreenSubmitBtnDisabled,
                 ]}
+                activeOpacity={0.85}
               >
-                <ButtonText style={formStyles.buttonPrimaryText}>
-                  {loading ? 'Loading...' : submitLabel}
-                </ButtonText>
-              </Button>
-            )}
-          </ModalFooter>
-        )}
-      </ModalContent>
+                {loading ? (
+                  <ActivityIndicator size="small" color="#FFFFFF" />
+                ) : (
+                  <Text style={formStyles.fullScreenSubmitBtnText}>{submitLabel}</Text>
+                )}
+              </TouchableOpacity>
+            </View>
+          )}
+        </KeyboardAvoidingView>
+      </SafeAreaView>
     </Modal>
   );
 }
-

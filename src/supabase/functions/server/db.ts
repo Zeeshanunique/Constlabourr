@@ -24,13 +24,26 @@ export async function getProfileByEmail(email: string) {
   return data ? mapProfile(data) : null;
 }
 
+export function normalizePhoneNumber(raw: string | null | undefined): string {
+  if (!raw) return '';
+  let digits = String(raw).replace(/\D/g, '');
+  if (digits.length === 12 && digits.startsWith('91')) {
+    digits = digits.slice(2);
+  } else if (digits.length === 11 && digits.startsWith('0')) {
+    digits = digits.slice(1);
+  } else if (digits.length > 10) {
+    digits = digits.slice(-10);
+  }
+  return digits;
+}
+
 export async function getProfileByPhone(phone: string) {
   if (!phone) return null;
-  const clean = phone.replace(/\D/g, '').slice(0, 10);
+  const clean = normalizePhoneNumber(phone);
   const { data, error } = await supabase.from('profiles').select('*').eq('phone', clean).maybeSingle();
   if (error) {
     console.error('getProfileByPhone error:', error);
-    return null;
+    throw new Error(`Database error fetching profile: ${error.message}`);
   }
   return data ? mapProfile(data) : null;
 }
@@ -322,7 +335,7 @@ export async function getAcceptancesByContractor(contractorId: string) {
 
 // ---- Mappers ----
 export function mapProfile(r: any) {
-  return { id: r.id, email: r.email, name: r.name, role: r.role, phone: r.phone, aadhaarHash: r.aadhaar_hash, bankDetails: r.bank_details, skillLevel: r.skill_level, dailyWage: Number(r.daily_wage), overtimeRate: Number(r.overtime_rate || 0), messCharge: Number(r.mess_charge), contractorId: r.contractor_id, siteId: r.site_id, status: r.status, upiId: r.upi_id, createdAt: r.created_at, updatedAt: r.updated_at };
+  return { id: r.id, email: r.email, name: r.name, role: r.role, phone: r.phone, aadhaarHash: r.aadhaar_hash, bankDetails: r.bank_details, skillLevel: r.skill_level, dailyWage: Number(r.daily_wage), overtimeRate: Number(r.overtime_rate || 0), messCharge: Number(r.mess_charge), contractorId: r.contractor_id, siteId: r.site_id, status: r.status, upiId: r.upi_id, deviceSessionId: r.device_session_id, createdAt: r.created_at, updatedAt: r.updated_at };
 }
 
 function unmapProfile(p: any) {
@@ -343,6 +356,8 @@ function unmapProfile(p: any) {
   if (p.status !== undefined) row.status = p.status;
   if (p.upiId !== undefined) row.upi_id = p.upiId;
   if (p.upi_id !== undefined) row.upi_id = p.upi_id;
+  if (p.deviceSessionId !== undefined) row.device_session_id = p.deviceSessionId;
+  if (p.device_session_id !== undefined) row.device_session_id = p.device_session_id;
   if (p.createdAt !== undefined) row.created_at = p.createdAt;
   if (p.updatedAt !== undefined) row.updated_at = p.updatedAt;
   return row;
@@ -412,7 +427,12 @@ function unmapAttendance(a: any) {
   if (a.checkOut !== undefined) row.check_out = a.checkOut;
   if (a.breakStart !== undefined) row.break_start = a.breakStart;
   if (a.breakEnd !== undefined) row.break_end = a.breakEnd;
-  if (a.status !== undefined) row.status = a.status;
+  if (a.status !== undefined) {
+    let st = String(a.status).toLowerCase().trim();
+    if (st === 'overtime') st = 'present';
+    if (st === 'half_day') st = 'half-day';
+    row.status = st;
+  }
   if (a.totalHours !== undefined) row.total_hours = a.totalHours;
   if (a.breakHours !== undefined) row.break_hours = a.breakHours;
   if (a.netWorkHours !== undefined) row.net_work_hours = a.netWorkHours;

@@ -24,13 +24,26 @@ export async function getProfileByEmail(email: string) {
   return data ? mapProfile(data) : null;
 }
 
+export function normalizePhoneNumber(raw: string | null | undefined): string {
+  if (!raw) return '';
+  let digits = String(raw).replace(/\D/g, '');
+  if (digits.length === 12 && digits.startsWith('91')) {
+    digits = digits.slice(2);
+  } else if (digits.length === 11 && digits.startsWith('0')) {
+    digits = digits.slice(1);
+  } else if (digits.length > 10) {
+    digits = digits.slice(-10);
+  }
+  return digits;
+}
+
 export async function getProfileByPhone(phone: string) {
   if (!phone) return null;
-  const clean = phone.replace(/\D/g, '').slice(0, 10);
+  const clean = normalizePhoneNumber(phone);
   const { data, error } = await supabase.from('profiles').select('*').eq('phone', clean).maybeSingle();
   if (error) {
     console.error('getProfileByPhone error:', error);
-    return null;
+    throw new Error(`Database error fetching profile: ${error.message}`);
   }
   return data ? mapProfile(data) : null;
 }

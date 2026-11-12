@@ -34,6 +34,7 @@ import { colors, shadows, radii } from '../styles/theme';
 import { BrandLogo } from '../components/shared/BrandLogo';
 import { projectId, publicAnonKey } from '../utils/supabase/info';
 import { useTranslation, SupportedLanguage } from '../i18n';
+import { normalizePhoneNumber } from '../utils/phone';
 
 interface LoginScreenProps {
   onLogin?: (email: string, password: string) => Promise<void>;
@@ -86,7 +87,7 @@ export function LoginScreen({ onLogin, onRegister }: LoginScreenProps) {
   }, [authMode]);
 
   const handlePhonePasswordLogin = async () => {
-    const cleanPhone = phoneNumber.replace(/\D/g, '').slice(0, 10);
+    const cleanPhone = normalizePhoneNumber(phoneNumber);
     if (!cleanPhone || cleanPhone.length !== 10) {
       Toast.show({
         type: 'error',
@@ -152,7 +153,7 @@ export function LoginScreen({ onLogin, onRegister }: LoginScreenProps) {
       return;
     }
 
-    const cleanPhone = registerPhone.replace(/\D/g, '').slice(0, 10);
+    const cleanPhone = normalizePhoneNumber(registerPhone);
     if (cleanPhone.length !== 10) {
       Toast.show({
         type: 'error',
@@ -292,9 +293,9 @@ export function LoginScreen({ onLogin, onRegister }: LoginScreenProps) {
                       style={styles.phoneInput}
                       placeholder={t('auth.phonePlaceholder')}
                       value={phoneNumber}
-                      onChangeText={(val) => setPhoneNumber(val.replace(/[^0-9]/g, '').slice(0, 10))}
+                      onChangeText={(val) => setPhoneNumber(normalizePhoneNumber(val))}
                       keyboardType="phone-pad"
-                      maxLength={10}
+                      maxLength={14}
                       placeholderTextColor={colors.textLight}
                     />
                   </View>
@@ -487,9 +488,9 @@ export function LoginScreen({ onLogin, onRegister }: LoginScreenProps) {
                     style={styles.phoneInput}
                     placeholder={t('auth.phonePlaceholder')}
                     value={registerPhone}
-                    onChangeText={(val) => setRegisterPhone(val.replace(/[^0-9]/g, '').slice(0, 10))}
+                    onChangeText={(val) => setRegisterPhone(normalizePhoneNumber(val))}
                     keyboardType="phone-pad"
-                    maxLength={10}
+                    maxLength={14}
                     placeholderTextColor={colors.textLight}
                   />
                 </View>

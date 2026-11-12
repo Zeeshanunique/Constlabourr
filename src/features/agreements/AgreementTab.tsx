@@ -132,7 +132,7 @@ export function AgreementTab({ accessToken }: AgreementTabProps) {
   };
 
   return (
-    <SafeAreaView style={styles.container} edges={['top']}>
+    <SafeAreaView style={styles.container} edges={['top', 'bottom']}>
       {/* 1. TOP INDUSTRIAL HEADER */}
       <View style={styles.header}>
         <View style={styles.headerRow}>

@@ -1044,7 +1044,7 @@ export function ReportsTab({ accessToken }: ReportsTabProps) {
   };
 
   return (
-    <SafeAreaView style={styles.container} edges={['top']}>
+    <SafeAreaView style={styles.container} edges={['top', 'bottom']}>
       {/* 1. TOP INDUSTRIAL HEADER WITH BACK BUTTON & QUICK EXPORT */}
       <View style={styles.header}>
         <View style={styles.headerRow}>

@@ -16,7 +16,7 @@ npm install
 ### 2. Configure Environment
 Ensure `.env` contains your Supabase keys:
 ```bash
-EXPO_PUBLIC_SUPABASE_URL=https://jkwrupxrjbrmuufxetlh.supabase.co
+EXPO_PUBLIC_SUPABASE_URL=<YOUR_SUPABASE_URL>
 EXPO_PUBLIC_SUPABASE_ANON_KEY=<YOUR_ANON_KEY>
 SUPABASE_SERVICE_ROLE_KEY=<YOUR_SERVICE_ROLE_KEY>
 ```

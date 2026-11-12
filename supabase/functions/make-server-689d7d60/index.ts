@@ -103,7 +103,7 @@ app.post("/make-server-689d7d60/auth/login-phone", async (c) => {
     if (!phone || !password) {
       return c.json({ error: 'Mobile number and password are required' }, 400);
     }
-    const cleanPhone = phone.replace(/\D/g, '').slice(0, 10);
+    const cleanPhone = db.normalizePhoneNumber(phone);
     if (cleanPhone.length !== 10) {
       return c.json({ error: 'Please enter a valid 10-digit mobile number' }, 400);
     }
@@ -113,19 +113,39 @@ app.post("/make-server-689d7d60/auth/login-phone", async (c) => {
       return c.json({ error: 'Mobile number not registered' }, 404);
     }
 
-    let authEmail = profile.email;
-    if (!authEmail) {
-      const { data: authUserData } = await db.supabase.auth.admin.getUserById(profile.id);
-      authEmail = authUserData?.user?.email || `${cleanPhone}@constlabour.com`;
+    let authEmail = profile.email ? profile.email.trim().toLowerCase() : null;
+    let signInData: any = null;
+    let signInError: any = null;
+
+    if (authEmail) {
+      const res = await db.supabase.auth.signInWithPassword({
+        email: authEmail,
+        password,
+      });
+      signInData = res.data;
+      signInError = res.error;
     }
 
-    const { data: signInData, error: signInError } = await db.supabase.auth.signInWithPassword({
-      email: authEmail,
-      password,
-    });
+    // If signing in with profile.email failed or profile had no email, try with auth user email or default phone email
+    if (!signInData?.session) {
+      const { data: authUserData } = await db.supabase.auth.admin.getUserById(profile.id);
+      const fallbackEmail = authUserData?.user?.email || `${cleanPhone}@constlabour.com`;
+      if (fallbackEmail !== authEmail) {
+        const fallbackRes = await db.supabase.auth.signInWithPassword({
+          email: fallbackEmail,
+          password,
+        });
+        if (fallbackRes.data?.session) {
+          signInData = fallbackRes.data;
+          signInError = null;
+        } else if (!signInError) {
+          signInError = fallbackRes.error;
+        }
+      }
+    }
 
-    if (signInError) {
-      return c.json({ error: 'Incorrect password. Please try again or login with OTP.' }, 401);
+    if (signInError || !signInData?.session) {
+      return c.json({ error: 'Incorrect password. Please try again or check your password.' }, 401);
     }
 
     if (deviceSessionId) {

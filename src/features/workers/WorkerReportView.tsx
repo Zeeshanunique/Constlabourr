@@ -10,7 +10,7 @@ import {
   Platform,
   Share,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { MaterialIcons } from '@expo/vector-icons';
 import Toast from 'react-native-toast-message';
 import * as Print from 'expo-print';
@@ -80,6 +80,7 @@ export function WorkerReportView({
   initialMonth,
   initialYear,
 }: WorkerReportViewProps) {
+  const insets = useSafeAreaInsets();
   const { t, language } = useTranslation();
   const today = useMemo(() => new Date(), []);
   const todayStr = useMemo(() => formatDateKey(today), [today]);
@@ -1046,7 +1047,10 @@ Generated via ConstLabour`;
       {/* 3. SCROLLABLE REPORT BODY */}
       <ScrollView
         style={styles.scrollArea}
-        contentContainerStyle={styles.scrollContent}
+        contentContainerStyle={[
+          styles.scrollContent,
+          { paddingBottom: 90 + Math.max(insets.bottom, Platform.OS === 'ios' ? 24 : 14) },
+        ]}
         showsVerticalScrollIndicator={false}
       >
         {loading ? (
@@ -1375,7 +1379,12 @@ Generated via ConstLabour`;
       </ScrollView>
 
       {/* 4. FIXED BOTTOM DOCK (DOWNLOAD PDF & SHARE PDF) */}
-      <View style={styles.bottomDock}>
+      <View
+        style={[
+          styles.bottomDock,
+          { paddingBottom: Math.max(insets.bottom, Platform.OS === 'ios' ? 24 : 14) + (insets.bottom > 0 ? 4 : 0) },
+        ]}
+      >
         <TouchableOpacity
           style={styles.downloadPdfBtn}
           onPress={handleDownloadPdf}

@@ -24,6 +24,7 @@ import { AppContext, AppContextType, User, supabase } from './context/AppContext
 import { BrandLogo } from './components/shared/BrandLogo';
 import { OfflineBanner } from './components/shared/OfflineBanner';
 import { colors } from './styles/theme';
+import { normalizePhoneNumber } from './utils/phone';
 
 interface ErrorBoundaryState {
   hasError: boolean;
@@ -297,7 +298,7 @@ export default function App() {
           .eq('id', uid);
       }
 
-      await fetch(
+      const res = await fetch(
         `https://${projectId}.supabase.co/functions/v1/make-server-689d7d60/auth/takeover-session`,
         {
           method: 'POST',
@@ -307,9 +308,20 @@ export default function App() {
           },
           body: JSON.stringify({ deviceSessionId: newSessionId }),
         }
-      ).catch(console.error);
+      );
 
-      await fetchUserProfile(jwt, false, newSessionId);
+      const takeoverData = await res.json().catch(() => ({}));
+      if (takeoverData?.profile) {
+        const takenUser = {
+          ...takeoverData.profile,
+          deviceSessionId: newSessionId,
+        };
+        setUser(takenUser);
+        await AsyncStorage.setItem('@constlabour_cached_user', JSON.stringify(takenUser));
+      } else {
+        await fetchUserProfile(jwt, false, newSessionId);
+      }
+
       Toast.show({
         type: 'success',
         text1: 'Session Active',
@@ -422,11 +434,12 @@ export default function App() {
 
   const handleLogin = async (email: string, password: string) => {
     try {
+      const cleanEmail = email.trim().toLowerCase();
       const deviceSessionId = 'dev_' + Math.random().toString(36).substring(2) + Date.now().toString(36);
       await AsyncStorage.setItem('@constlabour_device_session_id', deviceSessionId);
 
       const { data, error } = await supabase.auth.signInWithPassword({
-        email,
+        email: cleanEmail,
         password,
       });
 
@@ -438,12 +451,23 @@ export default function App() {
       if (data.session?.access_token) {
         setAccessToken(data.session.access_token);
 
+        // Immediate user transition to prevent login screen stalling
+        const immediateUser: User = {
+          id: data.user.id,
+          email: data.user.email || '',
+          role: (data.user.user_metadata?.role as any) || 'contractor',
+          name: data.user.user_metadata?.name || data.user.email || 'User',
+          deviceSessionId,
+        };
+        setUser(immediateUser);
+        await AsyncStorage.setItem('@constlabour_cached_user', JSON.stringify(immediateUser));
+
         if (data.user?.id) {
-          await supabase.from('profiles').update({ device_session_id: deviceSessionId }).eq('id', data.user.id);
+          supabase.from('profiles').update({ device_session_id: deviceSessionId }).eq('id', data.user.id).then();
         }
 
         // Sync deviceSessionId to backend profile
-        await fetch(
+        fetch(
           `https://${projectId}.supabase.co/functions/v1/make-server-689d7d60/auth/profile`,
           {
             method: 'PUT',
@@ -456,11 +480,15 @@ export default function App() {
           }
         ).catch(console.error);
 
-        await fetchUserProfile(data.session.access_token, false, deviceSessionId);
         Toast.show({
           type: 'success',
           text1: 'Success',
           text2: 'Login successful!',
+        });
+
+        // Non-blocking background sync for fresh complete profile
+        fetchUserProfile(data.session.access_token, true, deviceSessionId).catch((err) => {
+          console.warn('Background profile refresh note:', err);
         });
       }
     } catch (error: any) {
@@ -492,7 +520,7 @@ export default function App() {
 
   const handleLoginWithPhone = async (phone: string, password: string) => {
     try {
-      const cleanPhone = phone.replace(/\D/g, '').slice(0, 10);
+      const cleanPhone = normalizePhoneNumber(phone);
       if (cleanPhone.length !== 10) {
         throw new Error('Please enter a valid 10-digit mobile number');
       }
@@ -520,15 +548,39 @@ export default function App() {
       if (data.session?.access_token) {
         await supabase.auth.setSession(data.session);
         setAccessToken(data.session.access_token);
+
+        // Construct user profile from backend response
+        const activeUser: User = {
+          id: data.profile?.id || data.session.user?.id,
+          email: data.profile?.email || data.session.user?.email || `${cleanPhone}@constlabour.com`,
+          role: (data.profile?.role as any) || (data.session.user?.user_metadata?.role as any) || 'contractor',
+          name: data.profile?.name || data.session.user?.user_metadata?.name || 'Contractor',
+          phone: data.profile?.phone || cleanPhone,
+          contractorId: data.profile?.contractorId,
+          deviceSessionId: deviceSessionId,
+          upiId: data.profile?.upiId,
+        };
+
+        // CRITICAL: Immediately update user state so navigation unmounts AuthNavigator and enters Dashboard
+        setUser(activeUser);
+        await AsyncStorage.setItem('@constlabour_cached_user', JSON.stringify(activeUser));
+
         if (data.session.user?.id) {
-          await supabase.from('profiles').update({ device_session_id: deviceSessionId }).eq('id', data.session.user.id);
+          supabase.from('profiles').update({ device_session_id: deviceSessionId }).eq('id', data.session.user.id).then();
         }
-        await fetchUserProfile(data.session.access_token, false, deviceSessionId);
+
         Toast.show({
           type: 'success',
           text1: 'Success',
           text2: 'Login successful!',
         });
+
+        // Non-blocking background sync
+        fetchUserProfile(data.session.access_token, true, deviceSessionId).catch((err) => {
+          console.warn('Background profile refresh note:', err);
+        });
+      } else {
+        throw new Error('No session returned from login');
       }
     } catch (error: any) {
       console.error('Phone login error:', error);

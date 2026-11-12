@@ -10,6 +10,8 @@ import { SettingsScreen } from '../screens/SettingsScreen';
 import { MaterialIcons } from '@expo/vector-icons';
 import { colors, shadows } from '../styles/theme';
 import { useTranslation } from '../i18n';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { getResponsiveTabBarStyle } from '../utils/navigationBar';
 
 export type ContractorTabParamList = {
   Home: { accessToken: string };
@@ -26,6 +28,7 @@ const Tab = createBottomTabNavigator<ContractorTabParamList>();
 export function ContractorNavigator({ route }: { route: any }) {
   const accessToken = route.params?.accessToken;
   const { t } = useTranslation();
+  const insets = useSafeAreaInsets();
   
   return (
     <Tab.Navigator
@@ -43,16 +46,7 @@ export function ContractorNavigator({ route }: { route: any }) {
           fontWeight: '700',
           marginBottom: 3,
         },
-        tabBarStyle: {
-          backgroundColor: '#FFFFFF',
-          borderTopWidth: 1,
-          borderTopColor: colors.border,
-          minHeight: 64,
-          height: undefined,
-          paddingTop: 6,
-          paddingBottom: 8,
-          ...shadows.dock,
-        },
+        tabBarStyle: getResponsiveTabBarStyle(insets),
       }}
     >
       <Tab.Screen

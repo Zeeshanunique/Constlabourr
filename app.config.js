@@ -18,7 +18,7 @@ module.exports = {
       icon: "./assets/icon.png"
     },
     android: {
-      versionCode: 2,
+      versionCode: 5,
       permissions: [
         "USE_BIOMETRIC",
         "USE_FINGERPRINT"

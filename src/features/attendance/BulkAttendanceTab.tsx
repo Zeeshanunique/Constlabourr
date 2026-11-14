@@ -1,32 +1,20 @@
 import React, { useState, useEffect } from 'react';
-import { View, StyleSheet, ScrollView, FlatList, Platform, TouchableOpacity } from 'react-native';
+import { View, StyleSheet, FlatList, Platform, TouchableOpacity, ScrollView } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { Text } from '../../components/ui/text';
-import { Button, ButtonText } from '../../components/ui/button';
+import { Text } from '@/components/ui/text';
 import { MaterialIcons } from '@expo/vector-icons';
-import { projectId } from '../../utils/supabase/info';
+import { projectId } from '@/utils/supabase/info';
 import { useRoute } from '@react-navigation/native';
 import Toast from 'react-native-toast-message';
-import { FormField } from '../../components/shared/FormField';
 import DateTimePicker from '@react-native-community/datetimepicker';
-import {
-  Select,
-  SelectTrigger,
-  SelectInput,
-  SelectIcon,
-  SelectPortal,
-  SelectBackdrop,
-  SelectContent,
-  SelectDragIndicatorWrapper,
-  SelectDragIndicator,
-  SelectItem,
-  SelectItemText,
-} from '../../components/ui/select';
+import { theme } from '@/styles/theme';
 
 interface Worker {
   id: string;
   name: string;
   phone: string;
+  skillLevel?: string;
+  dailyWage?: number;
   siteId?: string;
   siteName?: string;
 }
@@ -51,14 +39,18 @@ export function BulkAttendanceTab({ accessToken }: BulkAttendanceTabProps) {
   const [selectedWorkers, setSelectedWorkers] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(false);
   const [activeTab, setActiveTab] = useState<'checkin' | 'checkout'>('checkin');
-  const [currentTime, setCurrentTime] = useState(new Date());
 
   useEffect(() => {
-    const timer = setInterval(() => {
-      setCurrentTime(new Date());
-    }, 1000);
-    return () => clearInterval(timer);
-  }, []);
+    if (token) {
+      fetchSites();
+    }
+  }, [token]);
+
+  useEffect(() => {
+    if (token && selectedSite) {
+      fetchWorkers();
+    }
+  }, [token, selectedSite]);
 
   const fetchSites = async () => {
     if (!token) return;
@@ -70,7 +62,11 @@ export function BulkAttendanceTab({ accessToken }: BulkAttendanceTabProps) {
         }
       );
       const data = await response.json();
-      setSites(data.sites || []);
+      const loadedSites = data.sites || [];
+      setSites(loadedSites);
+      if (loadedSites.length > 0 && !selectedSite) {
+        setSelectedSite(loadedSites[0].id);
+      }
     } catch (error) {
       console.error('Error fetching sites:', error);
     }
@@ -87,6 +83,7 @@ export function BulkAttendanceTab({ accessToken }: BulkAttendanceTabProps) {
       );
       const data = await response.json();
       setWorkers(data.workers || []);
+      setSelectedWorkers(new Set());
     } catch (error) {
       console.error('Error fetching workers:', error);
     }
@@ -110,12 +107,12 @@ export function BulkAttendanceTab({ accessToken }: BulkAttendanceTabProps) {
     }
   };
 
-  const handleBulkMark = async (status: 'present' | 'absent') => {
+  const handleBulkMark = async (status: 'present' | 'absent' | 'half-day') => {
     if (!token || selectedWorkers.size === 0) {
       Toast.show({
         type: 'error',
-        text1: 'Error',
-        text2: 'Please select at least one worker',
+        text1: 'No Workers Selected',
+        text2: 'Select at least one worker to mark attendance',
       });
       return;
     }
@@ -123,6 +120,16 @@ export function BulkAttendanceTab({ accessToken }: BulkAttendanceTabProps) {
     setLoading(true);
     try {
       const dateStr = selectedDate.toISOString().split('T')[0];
+      const todayStr = new Date().toISOString().split('T')[0];
+      if (dateStr > todayStr) {
+        Toast.show({
+          type: 'error',
+          text1: 'Future Date Blocked',
+          text2: 'Attendance cannot be marked for future dates.',
+        });
+        setLoading(false);
+        return;
+      }
       const promises = Array.from(selectedWorkers).map(workerId =>
         fetch(
           `https://${projectId}.supabase.co/functions/v1/make-server-689d7d60/attendance`,
@@ -146,8 +153,8 @@ export function BulkAttendanceTab({ accessToken }: BulkAttendanceTabProps) {
 
       Toast.show({
         type: 'success',
-        text1: 'Success',
-        text2: `Marked ${selectedWorkers.size} workers as ${status}`,
+        text1: 'Bulk Attendance Marked',
+        text2: `Successfully marked ${selectedWorkers.size} workers as ${status.toUpperCase()}`,
       });
 
       setSelectedWorkers(new Set());
@@ -155,7 +162,7 @@ export function BulkAttendanceTab({ accessToken }: BulkAttendanceTabProps) {
       Toast.show({
         type: 'error',
         text1: 'Error',
-        text2: error.message || 'Failed to mark attendance',
+        text2: error.message || 'Failed to submit bulk attendance',
       });
     } finally {
       setLoading(false);
@@ -169,61 +176,78 @@ export function BulkAttendanceTab({ accessToken }: BulkAttendanceTabProps) {
     }
   };
 
-  const filteredWorkers = selectedSite
-    ? workers.filter(w => !w.siteId || w.siteId === selectedSite)
-    : workers;
-
-  const pendingCount = filteredWorkers.length;
-  const workingCount = 0; // This would come from actual attendance data
-  const completedCount = 0; // This would come from actual attendance data
-
-  const formatTime = (date: Date) => {
-    return date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true });
-  };
-
-  const formatDate = (date: Date) => {
-    return date.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
-  };
+  const isAllSelected = workers.length > 0 && selectedWorkers.size === workers.length;
 
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
-      <ScrollView style={styles.scrollView} contentContainerStyle={styles.scrollContent}>
-        {/* Site and Date Selectors */}
-        <View style={styles.selectorsContainer}>
-          <View style={styles.selectorGroup}>
-            <Text style={styles.selectorLabel}>Site</Text>
-            <Select selectedValue={selectedSite} onValueChange={setSelectedSite}>
-              <SelectTrigger variant="outline" size="md" style={styles.selectTrigger}>
-                <SelectInput placeholder="Select site" />
-                <SelectIcon />
-              </SelectTrigger>
-              <SelectPortal>
-                <SelectBackdrop />
-                <SelectContent>
-                  <SelectDragIndicatorWrapper>
-                    <SelectDragIndicator />
-                  </SelectDragIndicatorWrapper>
-                  {sites.map((site) => (
-                    <SelectItem key={site.id} label={site.name} value={site.id}>
-                      <SelectItemText>{site.name}</SelectItemText>
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </SelectPortal>
-            </Select>
-          </View>
-          <View style={styles.selectorGroup}>
-            <Text style={styles.selectorLabel}>Date</Text>
-            <TouchableOpacity
-              style={styles.dateButton}
-              onPress={() => setShowDatePicker(true)}
-            >
-              <Text style={styles.dateButtonText}>
-                {selectedDate.toISOString().split('T')[0]}
-              </Text>
-              <MaterialIcons name="calendar-today" size={20} color="#2563eb" />
-            </TouchableOpacity>
-          </View>
+      {/* Header */}
+      <View style={styles.header}>
+        <View>
+          <Text style={styles.headerTitle}>Bulk Attendance Desk</Text>
+          <Text style={styles.headerSubtitle}>Multi-select rapid attendance logging</Text>
+        </View>
+        <View style={styles.headerBadge}>
+          <Text style={styles.headerBadgeText}>{selectedWorkers.size} Selected</Text>
+        </View>
+      </View>
+
+      <View style={styles.content}>
+        {/* Site Selector Pills */}
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.siteScroller}>
+          {sites.map((site) => {
+            const isSelected = selectedSite === site.id;
+            return (
+              <TouchableOpacity
+                key={site.id}
+                onPress={() => setSelectedSite(site.id)}
+                style={[styles.siteChip, isSelected && styles.siteChipActive]}
+                activeOpacity={0.7}
+              >
+                <MaterialIcons 
+                  name="place" 
+                  size={14} 
+                  color={isSelected ? '#ffffff' : theme.colors.slate[500]} 
+                />
+                <Text style={[styles.siteChipText, isSelected && styles.siteChipTextActive]}>
+                  {site.name}
+                </Text>
+              </TouchableOpacity>
+            );
+          })}
+        </ScrollView>
+
+        {/* Date Selector Strip */}
+        <View style={styles.dateRow}>
+          <TouchableOpacity 
+            style={styles.datePickerBtn} 
+            onPress={() => setShowDatePicker(true)}
+            activeOpacity={0.7}
+          >
+            <MaterialIcons name="event" size={18} color={theme.colors.safetyOrange} />
+            <Text style={styles.datePickerText}>
+              {selectedDate.toLocaleDateString('en-IN', {
+                weekday: 'short',
+                day: 'numeric',
+                month: 'short',
+                year: 'numeric',
+              })}
+            </Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity 
+            style={[styles.selectAllBtn, isAllSelected && styles.selectAllBtnActive]} 
+            onPress={selectAll}
+            activeOpacity={0.7}
+          >
+            <MaterialIcons 
+              name={isAllSelected ? "check-box" : "check-box-outline-blank"} 
+              size={18} 
+              color={isAllSelected ? theme.colors.safetyOrange : theme.colors.slate[500]} 
+            />
+            <Text style={[styles.selectAllText, isAllSelected && styles.selectAllTextActive]}>
+              {isAllSelected ? 'Deselect All' : 'Select All'}
+            </Text>
+          </TouchableOpacity>
         </View>
 
         {showDatePicker && (
@@ -231,118 +255,120 @@ export function BulkAttendanceTab({ accessToken }: BulkAttendanceTabProps) {
             value={selectedDate}
             mode="date"
             display="default"
+            maximumDate={new Date()}
             onChange={onDateChange}
           />
         )}
 
-        {/* Current Time and Date Display */}
-        <View style={styles.timeDateContainer}>
-          <View style={styles.timeDisplay}>
-            <MaterialIcons name="access-time" size={24} color="#2563eb" />
-            <View style={styles.timeText}>
-              <Text style={styles.timeLabel}>Current Time</Text>
-              <Text style={styles.timeValue}>{formatTime(currentTime)}</Text>
-            </View>
-          </View>
-          <View style={styles.dateDisplay}>
-            <Text style={styles.dateLabel}>Today</Text>
-            <Text style={styles.dateValue}>{formatDate(new Date())}</Text>
-          </View>
-        </View>
-
-        {/* Stats Cards */}
-        <View style={styles.statsContainer}>
-          <View style={styles.statCard}>
-            <MaterialIcons name="pending" size={24} color="#f97316" />
-            <Text style={styles.statValue}>{pendingCount}</Text>
-            <Text style={styles.statLabel}>Pending</Text>
-          </View>
-          <View style={styles.statCard}>
-            <MaterialIcons name="work" size={24} color="#2563eb" />
-            <Text style={styles.statValue}>{workingCount}</Text>
-            <Text style={styles.statLabel}>Working</Text>
-          </View>
-          <View style={styles.statCard}>
-            <MaterialIcons name="check-circle" size={24} color="#22c55e" />
-            <Text style={styles.statValue}>{completedCount}</Text>
-            <Text style={styles.statLabel}>Completed</Text>
-          </View>
-        </View>
-
-        {/* Tabs */}
-        <View style={styles.tabContainer}>
+        {/* Shift Mode Switcher */}
+        <View style={styles.modeTabs}>
           <TouchableOpacity
-            style={[styles.tab, activeTab === 'checkin' && styles.tabActive]}
+            style={[styles.modeTab, activeTab === 'checkin' && styles.modeTabActive]}
             onPress={() => setActiveTab('checkin')}
+            activeOpacity={0.8}
           >
-            <MaterialIcons name="login" size={20} color={activeTab === 'checkin' ? '#2563eb' : '#6b7280'} />
-            <Text style={[styles.tabText, activeTab === 'checkin' && styles.tabTextActive]}>
-              Check-In ({pendingCount})
+            <MaterialIcons 
+              name="wb-sunny" 
+              size={16} 
+              color={activeTab === 'checkin' ? theme.colors.safetyOrange : theme.colors.slate[500]} 
+            />
+            <Text style={[styles.modeTabText, activeTab === 'checkin' && styles.modeTabTextActive]}>
+              Morning Attendance
             </Text>
           </TouchableOpacity>
+
           <TouchableOpacity
-            style={[styles.tab, activeTab === 'checkout' && styles.tabActive]}
+            style={[styles.modeTab, activeTab === 'checkout' && styles.modeTabActive]}
             onPress={() => setActiveTab('checkout')}
+            activeOpacity={0.8}
           >
-            <MaterialIcons name="logout" size={20} color={activeTab === 'checkout' ? '#2563eb' : '#6b7280'} />
-            <Text style={[styles.tabText, activeTab === 'checkout' && styles.tabTextActive]}>
-              Check-Out ({completedCount})
+            <MaterialIcons 
+              name="nights-stay" 
+              size={16} 
+              color={activeTab === 'checkout' ? theme.colors.safetyOrange : theme.colors.slate[500]} 
+            />
+            <Text style={[styles.modeTabText, activeTab === 'checkout' && styles.modeTabTextActive]}>
+              Evening Sign-Out
             </Text>
           </TouchableOpacity>
         </View>
 
-        {/* Worker List */}
-        {selectedSite && (
-          <View style={styles.workersSection}>
-            <Text style={styles.sectionTitle}>
-              {activeTab === 'checkin' ? 'Morning Check-In:' : 'Evening Check-Out:'}
-            </Text>
-            <Text style={styles.sectionSubtitle}>
-              {activeTab === 'checkin'
-                ? 'Tap each worker as they arrive at the site'
-                : 'Tap each worker as they leave the site'}
-            </Text>
-            <FlatList
-              data={filteredWorkers}
-              keyExtractor={(item) => item.id}
-              scrollEnabled={false}
-              renderItem={({ item }) => (
-                <View style={styles.workerCard}>
-                  <View style={styles.workerCardContent}>
-                    <View style={styles.workerInfo}>
-                      <Text style={styles.workerName}>{item.name}</Text>
-                      <Text style={styles.workerPhone}>{item.phone}</Text>
-                      <View style={styles.workerWage}>
-                        <MaterialIcons name="attach-money" size={16} color="#6b7280" />
-                        <Text style={styles.workerWageText}>₹500/day</Text>
+        {/* Worker Checklist */}
+        <FlatList
+          data={workers}
+          keyExtractor={(item) => item.id}
+          showsVerticalScrollIndicator={false}
+          contentContainerStyle={styles.listContent}
+          renderItem={({ item }) => {
+            const isChecked = selectedWorkers.has(item.id);
+            return (
+              <TouchableOpacity
+                style={[styles.workerCard, isChecked && styles.workerCardChecked]}
+                onPress={() => toggleWorker(item.id)}
+                activeOpacity={0.7}
+              >
+                <View style={styles.checkboxArea}>
+                  <MaterialIcons 
+                    name={isChecked ? "check-circle" : "radio-button-unchecked"} 
+                    size={22} 
+                    color={isChecked ? theme.colors.safetyOrange : theme.colors.slate[400]} 
+                  />
+                </View>
+                <View style={styles.workerInfo}>
+                  <Text style={styles.workerName}>{item.name}</Text>
+                  <View style={styles.workerMetaRow}>
+                    <Text style={styles.workerPhone}>{item.phone}</Text>
+                    {item.skillLevel ? (
+                      <View style={styles.skillBadge}>
+                        <Text style={styles.skillBadgeText}>{item.skillLevel.toUpperCase()}</Text>
                       </View>
-                    </View>
-                    <View style={styles.workerActions}>
-                      <Button
-                        onPress={() => handleBulkMark(activeTab === 'checkin' ? 'present' : 'absent')}
-                        style={styles.checkButton}
-                      >
-                        <MaterialIcons name={activeTab === 'checkin' ? 'login' : 'logout'} size={20} color="#ffffff" />
-                        <ButtonText style={styles.checkButtonText}>
-                          {activeTab === 'checkin' ? 'Check In' : 'Check Out'}
-                        </ButtonText>
-                      </Button>
-                      <TouchableOpacity style={styles.moreButton}>
-                        <MaterialIcons name="more-vert" size={20} color="#6b7280" />
-                      </TouchableOpacity>
-                    </View>
+                    ) : null}
                   </View>
                 </View>
-              )}
-              ListEmptyComponent={
-                <View style={styles.emptyState}>
-                  <Text style={styles.emptyText}>No workers found for this site</Text>
-                </View>
-              }
-            />
+                {item.dailyWage ? (
+                  <View style={styles.wagePill}>
+                    <Text style={styles.wageText}>₹{item.dailyWage}/d</Text>
+                  </View>
+                ) : null}
+              </TouchableOpacity>
+            );
+          }}
+          ListEmptyComponent={
+            <View style={styles.emptyState}>
+              <MaterialIcons name="group-off" size={44} color={theme.colors.slate[400]} />
+              <Text style={styles.emptyText}>No Workers Assigned</Text>
+              <Text style={styles.emptySubtext}>
+                No workers are assigned to this jobsite. Select another site or deploy workers first.
+              </Text>
+            </View>
+          }
+        />
+
+        {/* Action Trigger Footer */}
+        {selectedWorkers.size > 0 && (
+          <View style={styles.footerDock}>
+            <TouchableOpacity
+              style={[styles.actionBtn, styles.presentBtn]}
+              onPress={() => handleBulkMark('present')}
+              disabled={loading}
+              activeOpacity={0.85}
+            >
+              <MaterialIcons name="check" size={18} color="#ffffff" />
+              <Text style={styles.actionBtnText}>Mark Present ({selectedWorkers.size})</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[styles.actionBtn, styles.absentBtn]}
+              onPress={() => handleBulkMark('absent')}
+              disabled={loading}
+              activeOpacity={0.85}
+            >
+              <MaterialIcons name="close" size={18} color="#ffffff" />
+              <Text style={styles.actionBtnText}>Mark Absent ({selectedWorkers.size})</Text>
+            </TouchableOpacity>
           </View>
         )}
-      </ScrollView>
+      </View>
     </SafeAreaView>
   );
 }
@@ -350,233 +376,258 @@ export function BulkAttendanceTab({ accessToken }: BulkAttendanceTabProps) {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#f8fafc',
+    backgroundColor: theme.colors.background,
   },
-  scrollView: {
-    flex: 1,
-  },
-  scrollContent: {
-    padding: 20,
-    paddingBottom: 100,
-  },
-  selectorsContainer: {
-    flexDirection: 'row',
-    gap: 12,
-    marginBottom: 20,
-  },
-  selectorGroup: {
-    flex: 1,
-  },
-  selectorLabel: {
-    fontSize: 14,
-    fontWeight: '500',
-    color: '#374151',
-    marginBottom: 8,
-  },
-  selectTrigger: {
-    minHeight: 44,
-  },
-  dateButton: {
+  header: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    paddingTop: 12,
+    paddingBottom: 8,
+  },
+  headerTitle: {
+    fontSize: 22,
+    fontWeight: '800',
+    color: theme.colors.slate[900],
+    letterSpacing: -0.5,
+  },
+  headerSubtitle: {
+    fontSize: 13,
+    color: theme.colors.slate[500],
+    marginTop: 2,
+  },
+  headerBadge: {
+    backgroundColor: theme.colors.slate[900],
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: theme.radii.pill,
+  },
+  headerBadgeText: {
+    color: '#ffffff',
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  content: {
+    flex: 1,
+    paddingHorizontal: 16,
+    paddingTop: 8,
+  },
+  siteScroller: {
+    maxHeight: 38,
+    marginBottom: 10,
+  },
+  siteChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: theme.radii.pill,
     backgroundColor: '#ffffff',
     borderWidth: 1,
-    borderColor: '#e5e7eb',
-    borderRadius: 8,
-    paddingHorizontal: 12,
-    paddingVertical: 12,
-    minHeight: 44,
+    borderColor: theme.colors.border,
+    marginRight: 8,
   },
-  dateButtonText: {
-    fontSize: 16,
-    color: '#111827',
+  siteChipActive: {
+    backgroundColor: theme.colors.slate[900],
+    borderColor: theme.colors.slate[900],
   },
-  timeDateContainer: {
+  siteChipText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: theme.colors.slate[700],
+  },
+  siteChipTextActive: {
+    color: '#ffffff',
+  },
+  dateRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    marginBottom: 20,
+    alignItems: 'center',
+    marginBottom: 10,
   },
-  timeDisplay: {
+  datePickerBtn: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
     backgroundColor: '#ffffff',
-    padding: 12,
-    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: theme.radii.md,
     borderWidth: 1,
-    borderColor: '#e5e7eb',
+    borderColor: theme.colors.border,
   },
-  timeText: {
-    gap: 2,
-  },
-  timeLabel: {
-    fontSize: 12,
-    color: '#6b7280',
-  },
-  timeValue: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#111827',
-  },
-  dateDisplay: {
-    backgroundColor: '#ffffff',
-    padding: 12,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: '#e5e7eb',
-    alignItems: 'center',
-    justifyContent: 'center',
-    minWidth: 80,
-  },
-  dateLabel: {
-    fontSize: 12,
-    color: '#6b7280',
-  },
-  dateValue: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#111827',
-  },
-  statsContainer: {
-    flexDirection: 'row',
-    gap: 12,
-    marginBottom: 20,
-  },
-  statCard: {
-    flex: 1,
-    backgroundColor: '#ffffff',
-    borderRadius: 12,
-    padding: 16,
-    alignItems: 'center',
-    borderWidth: 1,
-    borderColor: '#e5e7eb',
-  },
-  statValue: {
-    fontSize: 24,
+  datePickerText: {
+    fontSize: 13,
     fontWeight: '700',
-    color: '#111827',
-    marginTop: 8,
+    color: theme.colors.slate[900],
   },
-  statLabel: {
-    fontSize: 12,
-    color: '#6b7280',
-    marginTop: 4,
-  },
-  tabContainer: {
+  selectAllBtn: {
     flexDirection: 'row',
-    backgroundColor: '#f3f4f6',
-    borderRadius: 8,
-    padding: 4,
-    marginBottom: 20,
-    gap: 4,
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
   },
-  tab: {
+  selectAllBtnActive: {},
+  selectAllText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: theme.colors.slate[600],
+  },
+  selectAllTextActive: {
+    color: theme.colors.safetyOrange,
+  },
+  modeTabs: {
+    flexDirection: 'row',
+    backgroundColor: theme.colors.slate[100],
+    borderRadius: theme.radii.md,
+    padding: 3,
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: theme.colors.slate[200],
+  },
+  modeTab: {
     flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
     gap: 6,
-    paddingVertical: 10,
-    paddingHorizontal: 16,
-    borderRadius: 6,
+    paddingVertical: 8,
+    borderRadius: theme.radii.sm,
   },
-  tabActive: {
+  modeTabActive: {
     backgroundColor: '#ffffff',
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.1,
-    shadowRadius: 2,
-    elevation: 2,
+    ...theme.shadows.sm,
   },
-  tabText: {
-    fontSize: 14,
-    fontWeight: '500',
-    color: '#6b7280',
-  },
-  tabTextActive: {
-    color: '#2563eb',
+  modeTabText: {
+    fontSize: 12,
     fontWeight: '600',
+    color: theme.colors.slate[600],
   },
-  workersSection: {
-    marginTop: 8,
-  },
-  sectionTitle: {
-    fontSize: 16,
+  modeTabTextActive: {
+    color: theme.colors.slate[900],
     fontWeight: '700',
-    color: '#111827',
-    marginBottom: 4,
   },
-  sectionSubtitle: {
-    fontSize: 14,
-    color: '#6b7280',
-    marginBottom: 16,
+  listContent: {
+    paddingBottom: 90,
   },
   workerCard: {
-    backgroundColor: '#ffffff',
-    borderRadius: 12,
-    padding: 16,
-    marginBottom: 12,
-    borderWidth: 1,
-    borderColor: '#e5e7eb',
-  },
-  workerCardContent: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
     alignItems: 'center',
+    backgroundColor: '#ffffff',
+    borderRadius: theme.radii.md,
+    padding: 12,
+    marginBottom: 8,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    ...theme.shadows.sm,
+  },
+  workerCardChecked: {
+    borderColor: theme.colors.safetyOrange,
+    backgroundColor: '#FFF7ED',
+  },
+  checkboxArea: {
+    marginRight: 12,
   },
   workerInfo: {
     flex: 1,
-    gap: 4,
+    gap: 2,
   },
   workerName: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: '#111827',
+    fontSize: 15,
+    fontWeight: '700',
+    color: theme.colors.slate[900],
   },
-  workerPhone: {
-    fontSize: 14,
-    color: '#6b7280',
-  },
-  workerWage: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    marginTop: 4,
-  },
-  workerWageText: {
-    fontSize: 14,
-    color: '#6b7280',
-  },
-  workerActions: {
+  workerMetaRow: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
   },
-  checkButton: {
-    backgroundColor: '#2563eb',
-    borderRadius: 8,
-    paddingVertical: 8,
-    paddingHorizontal: 16,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    minHeight: 36,
+  workerPhone: {
+    fontSize: 12,
+    color: theme.colors.slate[500],
   },
-  checkButtonText: {
-    color: '#ffffff',
-    fontWeight: '600',
-    fontSize: 14,
+  skillBadge: {
+    backgroundColor: theme.colors.slate[100],
+    paddingHorizontal: 6,
+    paddingVertical: 1,
+    borderRadius: 4,
   },
-  moreButton: {
-    padding: 8,
+  skillBadgeText: {
+    fontSize: 9,
+    fontWeight: '700',
+    color: theme.colors.slate[600],
+  },
+  wagePill: {
+    backgroundColor: theme.colors.slate[50],
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+  },
+  wageText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: theme.colors.slate[700],
   },
   emptyState: {
     padding: 40,
     alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#ffffff',
+    borderRadius: theme.radii.lg,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    marginTop: 20,
   },
   emptyText: {
     fontSize: 16,
-    color: '#9ca3af',
+    fontWeight: '700',
+    color: theme.colors.slate[900],
+    marginTop: 10,
+  },
+  emptySubtext: {
+    fontSize: 13,
+    color: theme.colors.slate[500],
+    textAlign: 'center',
+    marginTop: 4,
+    maxWidth: 240,
+  },
+  footerDock: {
+    position: 'absolute',
+    bottom: 16,
+    left: 16,
+    right: 16,
+    flexDirection: 'row',
+    gap: 10,
+    backgroundColor: '#ffffff',
+    padding: 10,
+    borderRadius: theme.radii.lg,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    ...theme.shadows.dock,
+  },
+  actionBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    paddingVertical: 12,
+    borderRadius: theme.radii.md,
+  },
+  presentBtn: {
+    backgroundColor: theme.colors.emerald[600],
+  },
+  absentBtn: {
+    backgroundColor: theme.colors.red[600],
+  },
+  actionBtnText: {
+    color: '#ffffff',
+    fontSize: 13,
+    fontWeight: '700',
   },
 });

@@ -1,6 +1,11 @@
-// Use raw CommonJS require so Babel doesn't wrap react-native in an immutable _interopNamespace proxy
-// @ts-ignore
-const ReactNative = require('react-native');
+// Polyfill InteractionManager for libraries relying on older React Native API
+let ReactNative: any = null;
+try {
+  // @ts-ignore
+  ReactNative = require('react-native');
+} catch {
+  // Ignore in case react-native exports are restricted
+}
 
 const interactionManagerPolyfill = {
   Events: {
@@ -31,34 +36,39 @@ const interactionManagerPolyfill = {
 };
 
 // Polyfill on raw ReactNative module exports and default export if present
-const targets = [ReactNative, ReactNative?.default].filter(Boolean);
-
-for (const target of targets) {
-  try {
-    Object.defineProperty(target, 'InteractionManager', {
-      configurable: true,
-      enumerable: true,
-      writable: true,
-      value: interactionManagerPolyfill,
-    });
-  } catch {
+if (ReactNative) {
+  const targets = [ReactNative, ReactNative?.default].filter(Boolean);
+  for (const target of targets) {
     try {
-      target.InteractionManager = interactionManagerPolyfill;
+      Object.defineProperty(target, 'InteractionManager', {
+        configurable: true,
+        enumerable: true,
+        writable: true,
+        value: interactionManagerPolyfill,
+      });
     } catch {
-      // ignore
+      try {
+        target.InteractionManager = interactionManagerPolyfill;
+      } catch {
+        // ignore
+      }
     }
   }
 }
 
 // Polyfill globally
 if (typeof globalThis !== 'undefined') {
-  (globalThis as any).InteractionManager = interactionManagerPolyfill;
-  if ((globalThis as any).global) {
-    (globalThis as any).global.InteractionManager = interactionManagerPolyfill;
-  }
+  try {
+    (globalThis as any).InteractionManager = interactionManagerPolyfill;
+    if ((globalThis as any).global) {
+      (globalThis as any).global.InteractionManager = interactionManagerPolyfill;
+    }
+  } catch {}
 }
 if (typeof window !== 'undefined') {
-  (window as any).InteractionManager = interactionManagerPolyfill;
+  try {
+    (window as any).InteractionManager = interactionManagerPolyfill;
+  } catch {}
 }
 
 export default interactionManagerPolyfill;

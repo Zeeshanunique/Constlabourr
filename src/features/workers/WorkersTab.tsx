@@ -1,16 +1,31 @@
-import React, { useState, useEffect } from 'react';
-import { View, StyleSheet, FlatList, Alert, TouchableOpacity } from 'react-native';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import {
+  View,
+  StyleSheet,
+  FlatList,
+  Alert,
+  TouchableOpacity,
+  Text,
+  TextInput,
+  ActivityIndicator,
+  ScrollView,
+  Linking,
+  BackHandler,
+  Platform,
+} from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { Box } from '@/components/ui/box';
-import { Text } from '@/components/ui/text';
-import { Button, ButtonText } from '@/components/ui/button';
-import { Input, InputField } from '@/components/ui/input';
 import { FormModal } from '@/components/shared/FormModal';
 import { FormField } from '@/components/shared/FormField';
+import { formStyles } from '@/components/shared/form-styles';
 import { MaterialIcons } from '@expo/vector-icons';
 import { projectId } from '@/utils/supabase/info';
 import { useRoute } from '@react-navigation/native';
 import Toast from 'react-native-toast-message';
+import { colors, shadows, radii } from '@/styles/theme';
+import { WorkerDetailView } from './WorkerDetailView';
+import { useTranslation } from '@/i18n';
+import { ListSkeleton } from '@/components/shared/Skeleton';
+import { EmptyState } from '@/components/shared/EmptyState';
 
 interface Worker {
   id: string;
@@ -19,9 +34,12 @@ interface Worker {
   email: string;
   skillLevel: string;
   dailyWage: number;
+  overtimeRate?: number;
   messCharge?: number;
   status: string;
   siteId?: string;
+  aadhaar?: string;
+  upiId?: string;
   bankDetails?: {
     accountNumber?: string;
     ifscCode?: string;
@@ -38,15 +56,181 @@ interface WorkersTabProps {
   accessToken?: string;
 }
 
+interface WorkerCardItemProps {
+  item: Worker;
+  siteName: string;
+  onPress: (worker: Worker) => void;
+  onCall: (phone?: string) => void;
+  onEdit: (worker: Worker) => void;
+  onDelete: (worker: Worker) => void;
+  t: (key: any) => string;
+}
+
+const WorkerCardItem = React.memo(function WorkerCardItem({
+  item,
+  siteName,
+  onPress,
+  onCall,
+  onEdit,
+  onDelete,
+  t,
+}: WorkerCardItemProps) {
+  const isSkilled = item.skillLevel === 'skilled';
+  const skillLabel =
+    item.skillLevel === 'skilled'
+      ? t('workers.skilled')
+      : item.skillLevel === 'semi-skilled'
+      ? t('workers.semiSkilled')
+      : item.skillLevel === 'highly-skilled'
+      ? t('workers.highlySkilled')
+      : t('workers.unskilled');
+
+  return (
+    <TouchableOpacity
+      style={styles.workerCard}
+      onPress={() => onPress(item)}
+      activeOpacity={0.88}
+    >
+      <View style={styles.cardMain}>
+        <View style={styles.avatarBox}>
+          <Text style={styles.avatarInitials}>
+            {item.name.charAt(0).toUpperCase()}
+          </Text>
+        </View>
+
+        <View style={styles.workerDetails}>
+          <View style={styles.nameRow}>
+            <Text style={styles.workerNameText}>{item.name}</Text>
+            <View style={[styles.skillBadge, isSkilled && styles.skillBadgeHigh]}>
+              <Text style={[styles.skillBadgeText, isSkilled && styles.skillBadgeTextHigh]}>
+                {skillLabel.toUpperCase()}
+              </Text>
+            </View>
+
+            {/* Phone Call Icon Button on Card */}
+            <TouchableOpacity
+              style={styles.cardHeaderCallBtn}
+              onPress={(e) => {
+                e.stopPropagation();
+                onCall(item.phone);
+              }}
+              activeOpacity={0.7}
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+            >
+              <MaterialIcons name="phone" size={15} color="#16A34A" />
+            </TouchableOpacity>
+          </View>
+
+          <Text style={styles.workerContact}>
+            📞 {item.phone || '-'} • ✉️ {item.email || '-'}{item.upiId ? ` • ⚡ ${item.upiId}` : ''}
+          </Text>
+
+          <View style={styles.siteBadgeRow}>
+            <MaterialIcons name="location-on" size={13} color={colors.accent} />
+            <Text style={styles.siteBadgeText}>{siteName}</Text>
+          </View>
+
+          {/* Financial Row */}
+          <View style={styles.financeRow}>
+            <View style={styles.financePill}>
+              <Text style={styles.financePillLabel}>{t('attendance.ratePerDay')}:</Text>
+              <Text style={styles.financePillVal}>₹{item.dailyWage || 0}</Text>
+            </View>
+            <View style={styles.financePill}>
+              <Text style={styles.financePillLabel}>OT:</Text>
+              <Text style={[styles.financePillVal, { color: colors.accent }]}>
+                ₹{item.overtimeRate !== undefined ? item.overtimeRate : 100}/hr
+              </Text>
+            </View>
+            {item.messCharge ? (
+              <View style={[styles.financePill, { backgroundColor: colors.warningLight }]}>
+                <Text style={[styles.financePillLabel, { color: colors.warningDark }]}>Mess:</Text>
+                <Text style={[styles.financePillVal, { color: colors.warningDark }]}>-₹{item.messCharge}</Text>
+              </View>
+            ) : null}
+          </View>
+
+          {/* View Ledger Affordance */}
+          <View style={styles.viewLedgerRow}>
+            <Text style={styles.viewLedgerText}>{t('attendance.workerAttendanceLedger')}</Text>
+            <MaterialIcons name="chevron-right" size={15} color={colors.accent} />
+          </View>
+        </View>
+      </View>
+
+      {/* Card Action Strip */}
+      <View style={styles.cardActionsStrip}>
+        <View style={styles.kycStatusRow}>
+          <MaterialIcons name="verified" size={14} color={colors.success} />
+          <Text style={styles.kycStatusText}>{t('common.verified')}</Text>
+        </View>
+
+        <View style={styles.actionButtonsRow}>
+          <TouchableOpacity
+            style={[styles.actionIconButton, styles.callActionBtn]}
+            onPress={(e) => {
+              e.stopPropagation();
+              onCall(item.phone);
+            }}
+            activeOpacity={0.7}
+          >
+            <MaterialIcons name="phone" size={15} color="#16A34A" />
+            <Text style={[styles.actionButtonText, { color: '#16A34A' }]}>{t('common.call')}</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[styles.actionIconButton, { marginLeft: 8 }]}
+            onPress={(e) => {
+              e.stopPropagation();
+              onEdit(item);
+            }}
+            activeOpacity={0.7}
+          >
+            <MaterialIcons name="edit" size={15} color={colors.primary} />
+            <Text style={styles.actionButtonText}>{t('common.edit')}</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[styles.actionIconButton, { marginLeft: 8 }]}
+            onPress={(e) => {
+              e.stopPropagation();
+              onDelete(item);
+            }}
+            activeOpacity={0.7}
+          >
+            <MaterialIcons name="delete-outline" size={15} color={colors.error} />
+            <Text style={[styles.actionButtonText, { color: colors.error }]}>{t('common.delete')}</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+    </TouchableOpacity>
+  );
+});
+
 export function WorkersTab({ accessToken }: WorkersTabProps) {
   const route = useRoute();
+  const { t, language } = useTranslation();
   const token = accessToken || (route.params as any)?.accessToken;
   const [workers, setWorkers] = useState<Worker[]>([]);
   const [sites, setSites] = useState<Site[]>([]);
   const [loading, setLoading] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
+  const [selectedSkillFilter, setSelectedSkillFilter] = useState('All');
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingWorker, setEditingWorker] = useState<Worker | null>(null);
+  const [selectedWorker, setSelectedWorker] = useState<Worker | null>(null);
+
+  const handleCall = (phone?: string) => {
+    if (!phone) {
+      Toast.show({ type: 'info', text1: 'No Phone Number', text2: 'No phone number saved for this worker' });
+      return;
+    }
+    const clean = phone.replace(/\D/g, '');
+    Linking.openURL(`tel:${clean}`).catch(() => {
+      Toast.show({ type: 'error', text1: 'Call Failed', text2: 'Could not open phone dialer' });
+    });
+  };
+
   const [formData, setFormData] = useState({
     name: '',
     email: '',
@@ -55,8 +239,10 @@ export function WorkersTab({ accessToken }: WorkersTabProps) {
     aadhaar: '',
     skillLevel: 'unskilled',
     dailyWage: '',
+    overtimeRate: '100',
     messCharge: '',
     siteId: '',
+    upiId: '',
     accountNumber: '',
     ifscCode: '',
     bankName: '',
@@ -69,24 +255,39 @@ export function WorkersTab({ accessToken }: WorkersTabProps) {
     }
   }, [token]);
 
+  // Handle hardware / device back button when worker detail is open
+  useEffect(() => {
+    const onHardwareBack = () => {
+      if (selectedWorker) {
+        setSelectedWorker(null);
+        return true; // Intercept and prevent navigating back to Dashboard
+      }
+      return false; // Default navigation behavior
+    };
+
+    const backSub = BackHandler.addEventListener('hardwareBackPress', onHardwareBack);
+    return () => backSub.remove();
+  }, [selectedWorker]);
+
   const fetchWorkers = async () => {
     if (!token) return;
+    setLoading(true);
     try {
       const response = await fetch(
         `https://${projectId}.supabase.co/functions/v1/make-server-689d7d60/workers`,
-        {
-          headers: { 'Authorization': `Bearer ${token}` },
-        }
+        { headers: { Authorization: `Bearer ${token}` } }
       );
       const data = await response.json();
-      setWorkers(data.workers || []);
+      const list = (data.workers || []).map((w: any) => ({
+        ...w,
+        upiId: (w.upiId || w.upi_id || '').trim(),
+      }));
+      setWorkers(list);
     } catch (error) {
       console.error('Error fetching workers:', error);
-      Toast.show({
-        type: 'error',
-        text1: 'Error',
-        text2: 'Failed to fetch workers',
-      });
+      Toast.show({ type: 'error', text1: 'Error', text2: 'Failed to fetch workers' });
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -95,9 +296,7 @@ export function WorkersTab({ accessToken }: WorkersTabProps) {
     try {
       const response = await fetch(
         `https://${projectId}.supabase.co/functions/v1/make-server-689d7d60/sites`,
-        {
-          headers: { 'Authorization': `Bearer ${token}` },
-        }
+        { headers: { Authorization: `Bearer ${token}` } }
       );
       const data = await response.json();
       setSites(data.sites || []);
@@ -108,38 +307,70 @@ export function WorkersTab({ accessToken }: WorkersTabProps) {
 
   const handleSubmit = async () => {
     if (!token) return;
+
+    if (!formData.name.trim()) {
+      Toast.show({ type: 'error', text1: 'Validation Error', text2: 'Please enter worker name' });
+      return;
+    }
+    const digits = formData.phone.trim().replace(/\D/g, '');
+    const cleanPhone = digits.length > 10 ? digits.slice(-10) : digits;
+    if (cleanPhone.length !== 10) {
+      Toast.show({ type: 'error', text1: 'Validation Error', text2: 'Mobile phone number must be exactly 10 digits' });
+      return;
+    }
+    const cleanAadhaar = formData.aadhaar ? formData.aadhaar.trim().replace(/\D/g, '').slice(0, 12) : '';
+    if (cleanAadhaar && cleanAadhaar.length !== 12) {
+      Toast.show({ type: 'error', text1: 'Validation Error', text2: 'Aadhaar number must be exactly 12 digits (or leave blank)' });
+      return;
+    }
+    const cleanEmail = formData.email.trim().toLowerCase();
+    if (cleanEmail && (!cleanEmail.includes('@') || !cleanEmail.includes('.'))) {
+      Toast.show({ type: 'error', text1: 'Validation Error', text2: 'Please enter a valid email address or leave blank' });
+      return;
+    }
+    if (!editingWorker && (!formData.password || formData.password.length < 6)) {
+      Toast.show({ type: 'error', text1: 'Validation Error', text2: 'Password must be at least 6 characters' });
+      return;
+    }
+    const dailyWageNum = parseFloat(formData.dailyWage);
+    if (isNaN(dailyWageNum) || dailyWageNum <= 0) {
+      Toast.show({ type: 'error', text1: 'Validation Error', text2: 'Please enter a valid daily wage rate' });
+      return;
+    }
+
     setLoading(true);
     try {
+      const otRateNum = formData.overtimeRate.trim() ? parseFloat(formData.overtimeRate) : 100;
       const workerData: any = {
-        name: formData.name,
-        email: formData.email,
-        phone: formData.phone,
-        skillLevel: formData.skillLevel,
-        dailyWage: parseFloat(formData.dailyWage) || 0,
+        name: formData.name.trim(),
+        email: cleanEmail || null,
+        phone: cleanPhone,
+        skillLevel: formData.skillLevel || 'unskilled',
+        dailyWage: dailyWageNum,
+        overtimeRate: isNaN(otRateNum) ? 100 : otRateNum,
         messCharge: parseFloat(formData.messCharge) || 0,
         siteId: formData.siteId || null,
+        upiId: formData.upiId.trim() || null,
+        upi_id: formData.upiId.trim() || null,
         bankDetails: {
-          accountNumber: formData.accountNumber,
-          ifscCode: formData.ifscCode,
-          bankName: formData.bankName,
+          accountNumber: formData.accountNumber.trim(),
+          ifscCode: formData.ifscCode.trim().toUpperCase(),
+          bankName: formData.bankName.trim(),
         },
       };
 
-      if (formData.aadhaar) {
-        workerData.aadhaar = formData.aadhaar;
-      }
+      if (cleanAadhaar) workerData.aadhaar = cleanAadhaar;
 
       if (editingWorker) {
-        // Update worker
-        if (formData.password) {
-          workerData.password = formData.password;
+        if (formData.password && formData.password.trim().length >= 6) {
+          workerData.password = formData.password.trim();
         }
         const response = await fetch(
           `https://${projectId}.supabase.co/functions/v1/make-server-689d7d60/workers/${editingWorker.id}`,
           {
             method: 'PUT',
             headers: {
-              'Authorization': `Bearer ${token}`,
+              Authorization: `Bearer ${token}`,
               'Content-Type': 'application/json',
             },
             body: JSON.stringify(workerData),
@@ -147,28 +378,19 @@ export function WorkersTab({ accessToken }: WorkersTabProps) {
         );
 
         if (!response.ok) {
-          const error = await response.json();
-          throw new Error(error.error || 'Failed to update worker');
+          const errData = await response.json().catch(() => ({}));
+          throw new Error(errData.error || 'Failed to update worker profile');
         }
-
-        Toast.show({
-          type: 'success',
-          text1: 'Success',
-          text2: 'Worker updated successfully',
-        });
+        Toast.show({ type: 'success', text1: 'Worker Updated', text2: `${workerData.name} record updated.` });
       } else {
-        // Create worker
-        if (!formData.password) {
-          throw new Error('Password is required');
-        }
-        workerData.password = formData.password;
+        workerData.password = formData.password.trim();
 
         const response = await fetch(
           `https://${projectId}.supabase.co/functions/v1/make-server-689d7d60/workers`,
           {
             method: 'POST',
             headers: {
-              'Authorization': `Bearer ${token}`,
+              Authorization: `Bearer ${token}`,
               'Content-Type': 'application/json',
             },
             body: JSON.stringify(workerData),
@@ -176,26 +398,17 @@ export function WorkersTab({ accessToken }: WorkersTabProps) {
         );
 
         if (!response.ok) {
-          const error = await response.json();
-          throw new Error(error.error || 'Failed to create worker');
+          const errData = await response.json().catch(() => ({}));
+          throw new Error(errData.error || 'Failed to create worker account');
         }
-
-        Toast.show({
-          type: 'success',
-          text1: 'Success',
-          text2: 'Worker created successfully',
-        });
+        Toast.show({ type: 'success', text1: 'Worker Enrolled', text2: `${workerData.name} enrolled successfully.` });
       }
 
       setIsModalOpen(false);
       resetForm();
       fetchWorkers();
     } catch (error: any) {
-      Toast.show({
-        type: 'error',
-        text1: 'Error',
-        text2: error.message || 'Failed to save worker',
-      });
+      Toast.show({ type: 'error', text1: 'Operation Failed', text2: error.message || 'Worker saving failed' });
     } finally {
       setLoading(false);
     }
@@ -203,12 +416,12 @@ export function WorkersTab({ accessToken }: WorkersTabProps) {
 
   const handleDelete = (worker: Worker) => {
     Alert.alert(
-      'Delete Worker',
-      `Are you sure you want to delete ${worker.name}?`,
+      'Remove Worker',
+      `Are you sure you want to remove ${worker.name} from the roster?`,
       [
         { text: 'Cancel', style: 'cancel' },
         {
-          text: 'Delete',
+          text: 'Remove',
           style: 'destructive',
           onPress: async () => {
             if (!token) return;
@@ -217,26 +430,15 @@ export function WorkersTab({ accessToken }: WorkersTabProps) {
                 `https://${projectId}.supabase.co/functions/v1/make-server-689d7d60/workers/${worker.id}`,
                 {
                   method: 'DELETE',
-                  headers: { 'Authorization': `Bearer ${token}` },
+                  headers: { Authorization: `Bearer ${token}` },
                 }
               );
 
-              if (!response.ok) {
-                throw new Error('Failed to delete worker');
-              }
-
-              Toast.show({
-                type: 'success',
-                text1: 'Success',
-                text2: 'Worker deleted successfully',
-              });
+              if (!response.ok) throw new Error('Failed to delete worker');
+              Toast.show({ type: 'success', text1: 'Worker Removed', text2: `${worker.name} removed.` });
               fetchWorkers();
             } catch (error: any) {
-              Toast.show({
-                type: 'error',
-                text1: 'Error',
-                text2: error.message || 'Failed to delete worker',
-              });
+              Toast.show({ type: 'error', text1: 'Error', text2: error.message });
             }
           },
         },
@@ -246,16 +448,21 @@ export function WorkersTab({ accessToken }: WorkersTabProps) {
 
   const handleEdit = (worker: Worker) => {
     setEditingWorker(worker);
+    const rawAadhaar = (worker as any).aadhaar || '';
+    const isClean12 = rawAadhaar.replace(/\D/g, '').length === 12;
+
     setFormData({
       name: worker.name,
-      email: worker.email,
+      email: worker.email || '',
       password: '',
-      phone: worker.phone,
-      aadhaar: '',
-      skillLevel: worker.skillLevel,
-      dailyWage: worker.dailyWage.toString(),
-      messCharge: (worker.messCharge || 0).toString(),
+      phone: worker.phone ? worker.phone.replace(/\D/g, '').slice(-10) : '',
+      aadhaar: isClean12 ? rawAadhaar : '',
+      skillLevel: worker.skillLevel || 'unskilled',
+      dailyWage: worker.dailyWage ? worker.dailyWage.toString() : '',
+      overtimeRate: worker.overtimeRate !== undefined ? worker.overtimeRate.toString() : '100',
+      messCharge: worker.messCharge ? worker.messCharge.toString() : '',
       siteId: worker.siteId || '',
+      upiId: worker.upiId || (worker as any).upi_id || '',
       accountNumber: worker.bankDetails?.accountNumber || '',
       ifscCode: worker.bankDetails?.ifscCode || '',
       bankName: worker.bankDetails?.bankName || '',
@@ -272,8 +479,10 @@ export function WorkersTab({ accessToken }: WorkersTabProps) {
       aadhaar: '',
       skillLevel: 'unskilled',
       dailyWage: '',
+      overtimeRate: '100',
       messCharge: '',
       siteId: '',
+      upiId: '',
       accountNumber: '',
       ifscCode: '',
       bankName: '',
@@ -281,236 +490,363 @@ export function WorkersTab({ accessToken }: WorkersTabProps) {
     setEditingWorker(null);
   };
 
-  const filteredWorkers = workers.filter(worker =>
-    worker.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    worker.phone.includes(searchTerm) ||
-    worker.email.toLowerCase().includes(searchTerm.toLowerCase())
+  // Memoized filtered workers by search and skill (null-safe for optional fields like email)
+  const filteredWorkers = useMemo(() => {
+    const term = (searchTerm || '').trim().toLowerCase();
+    const filterSkill = (selectedSkillFilter || 'All').toLowerCase();
+
+    return workers.filter((w) => {
+      if (!w) return false;
+      const nameMatch = (w.name || '').toLowerCase().includes(term);
+      const phoneMatch = (w.phone || '').includes(term);
+      const emailMatch = (w.email || '').toLowerCase().includes(term);
+      const matchesSearch = !term || nameMatch || phoneMatch || emailMatch;
+
+      const workerSkill = (w.skillLevel || 'unskilled').toLowerCase();
+      const matchesSkill = filterSkill === 'all' || workerSkill === filterSkill;
+
+      return matchesSearch && matchesSkill;
+    });
+  }, [workers, searchTerm, selectedSkillFilter]);
+
+  const avgWage = useMemo(() => {
+    return workers.length > 0
+      ? Math.round(workers.reduce((acc, w) => acc + (w.dailyWage || 0), 0) / workers.length)
+      : 800;
+  }, [workers]);
+
+  const siteMap = useMemo(() => {
+    const map = new Map<string, string>();
+    sites.forEach((s) => map.set(s.id, s.name));
+    return map;
+  }, [sites]);
+
+  const renderWorkerItem = useCallback(
+    ({ item }: { item: Worker }) => {
+      const siteName = item.siteId ? siteMap.get(item.siteId) || t('workers.assignedSite') : '-';
+      return (
+        <WorkerCardItem
+          item={item}
+          siteName={siteName}
+          onPress={setSelectedWorker}
+          onCall={handleCall}
+          onEdit={handleEdit}
+          onDelete={handleDelete}
+          t={t}
+        />
+      );
+    },
+    [siteMap, t, handleCall, handleEdit, handleDelete]
   );
 
+  const skillOptions = [
+    { label: t('workers.unskilled'), value: 'unskilled' },
+    { label: t('workers.semiSkilled'), value: 'semi-skilled' },
+    { label: t('workers.skilled'), value: 'skilled' },
+    { label: t('workers.highlySkilled'), value: 'highly-skilled' },
+  ];
+
+  const siteOptions = sites.map((s) => ({ label: s.name, value: s.id }));
+
   return (
-    <SafeAreaView style={styles.container} edges={['top']}>
-      <View style={styles.content}>
-        {/* Header */}
-        <View style={styles.header}>
-          <View style={styles.headerText}>
-            <Text style={styles.headerTitle}>Workers</Text>
-            <Text style={styles.headerSubtitle}>Manage your labour workforce</Text>
-          </View>
-          <Button
-            onPress={() => { resetForm(); setIsModalOpen(true); }}
-            style={styles.addButton}
-          >
-            <MaterialIcons name="add" size={20} color="#ffffff" />
-            <ButtonText style={styles.addButtonText}>Add Worker</ButtonText>
-          </Button>
-        </View>
-
-        {/* Search */}
-        <View style={styles.searchContainer}>
-          <Input size="md" variant="outline" style={styles.searchWrapper}>
-            <MaterialIcons name="search" size={20} color="#9ca3af" style={styles.searchIcon} />
-            <InputField
-              placeholder="Search by name or phone..."
-              value={searchTerm}
-              onChangeText={setSearchTerm}
-              style={styles.searchInput}
-              placeholderTextColor="#9ca3af"
-            />
-          </Input>
-        </View>
-
-        {/* Workers List */}
-        <FlatList
-          data={filteredWorkers}
-          keyExtractor={(item) => item.id}
-          contentContainerStyle={styles.listContent}
-          renderItem={({ item }) => (
-            <View style={styles.workerCard}>
-              <View style={styles.workerCardHeader}>
-                <View style={styles.workerInfo}>
-                  <Text style={styles.workerName}>{item.name}</Text>
-                  <Text style={styles.workerPhone}>{item.phone}</Text>
-                </View>
-                <View style={styles.workerActions}>
-                  <TouchableOpacity onPress={() => handleEdit(item)} style={styles.actionButton}>
-                    <MaterialIcons name="edit" size={20} color="#2563eb" />
-                  </TouchableOpacity>
-                  <TouchableOpacity onPress={() => handleDelete(item)} style={styles.actionButton}>
-                    <MaterialIcons name="delete" size={20} color="#dc2626" />
-                  </TouchableOpacity>
-                </View>
-              </View>
-              <View style={styles.workerDetails}>
-                <View style={styles.detailRow}>
-                  <Text style={styles.detailLabel}>Skill Level:</Text>
-                  <Text style={styles.detailValue}>{item.skillLevel}</Text>
-                </View>
-                <View style={styles.detailRow}>
-                  <Text style={styles.detailLabel}>Daily Wage:</Text>
-                  <Text style={styles.detailValue}>₹{item.dailyWage}</Text>
-                </View>
-                <View style={styles.detailRow}>
-                  <Text style={styles.detailLabel}>Status:</Text>
-                  <View style={[styles.statusBadge, item.status === 'active' && styles.statusBadgeActive]}>
-                    <Text style={[styles.statusText, item.status === 'active' && styles.statusTextActive]}>
-                      {item.status}
-                    </Text>
-                  </View>
-                </View>
-              </View>
-            </View>
-          )}
-          ListEmptyComponent={
-            <View style={styles.emptyState}>
-              <MaterialIcons name="people-outline" size={64} color="#d1d5db" style={{ marginBottom: 16 }} />
-              <Text style={styles.emptyText}>No workers found</Text>
-              <Text style={styles.emptySubtext}>Add your first worker to get started</Text>
-            </View>
-          }
+    <SafeAreaView style={styles.container} edges={selectedWorker ? [] : ['top']}>
+      {selectedWorker ? (
+        <WorkerDetailView
+          worker={workers.find((w) => w.id === selectedWorker.id) || selectedWorker}
+          onBack={() => setSelectedWorker(null)}
+          onEdit={() => handleEdit(workers.find((w) => w.id === selectedWorker.id) || selectedWorker)}
+          accessToken={token}
+          sites={sites}
+          onWorkerUpdated={fetchWorkers}
         />
-      </View>
+      ) : (
+        <>
+          {/* 1. TOP INDUSTRIAL HEADER */}
+          <View style={styles.header}>
+            <View style={styles.headerRow}>
+              <View>
+                <Text style={styles.headerTitle}>{t('workers.directory')}</Text>
+                <Text style={styles.headerSubtitle}>{t('workers.directorySubtitle')}</Text>
+              </View>
+              <TouchableOpacity
+                style={styles.addWorkerButton}
+                onPress={() => {
+                  resetForm();
+                  setIsModalOpen(true);
+                }}
+                activeOpacity={0.85}
+              >
+                <MaterialIcons name="person-add" size={16} color="#FFFFFF" />
+                <Text style={styles.addWorkerButtonText}>{t('workers.addWorker')}</Text>
+              </TouchableOpacity>
+            </View>
 
-      {/* Add/Edit Modal */}
+            {/* 2. WORKFORCE KPI BENTO STRIP */}
+            <View style={styles.kpiRow}>
+              <View style={styles.kpiCard}>
+                <Text style={styles.kpiLabel}>{t('workers.totalWorkers')}</Text>
+                <Text style={styles.kpiValue}>{workers.length}</Text>
+              </View>
+              <View style={styles.kpiCard}>
+                <Text style={styles.kpiLabel}>{t('attendance.ratePerDay')}</Text>
+                <Text style={[styles.kpiValue, { color: colors.accent }]}>₹{avgWage}</Text>
+              </View>
+              <View style={styles.kpiCard}>
+                <Text style={styles.kpiLabel}>{t('common.verified')}</Text>
+                <Text style={[styles.kpiValue, { color: colors.success }]}>98%</Text>
+              </View>
+              <View style={styles.kpiCard}>
+                <Text style={styles.kpiLabel}>{t('nav.agreements')}</Text>
+                <Text style={[styles.kpiValue, { color: colors.primary }]}>{workers.length}</Text>
+              </View>
+            </View>
+          </View>
+
+          <View style={styles.content}>
+            {/* 3. SEARCH & SKILL FILTER BAR */}
+            <View style={styles.searchContainer}>
+              <MaterialIcons name="search" size={20} color={colors.textLight} style={styles.searchIcon} />
+              <TextInput
+                style={styles.searchInput}
+                placeholder={t('common.search')}
+                value={searchTerm}
+                onChangeText={setSearchTerm}
+                placeholderTextColor={colors.textLight}
+              />
+              {searchTerm ? (
+                <TouchableOpacity onPress={() => setSearchTerm('')}>
+                  <MaterialIcons name="clear" size={18} color={colors.textMuted} />
+                </TouchableOpacity>
+              ) : null}
+            </View>
+
+            {/* Skill Category Pills */}
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.skillFilterScroll}>
+              {['All', 'Skilled', 'Semi-Skilled', 'Unskilled'].map((skill) => {
+                const isSelected = selectedSkillFilter === skill;
+                const label = skill === 'All' ? t('common.all') :
+                  skill === 'Skilled' ? t('workers.skilled') :
+                  skill === 'Semi-Skilled' ? t('workers.semiSkilled') :
+                  skill === 'Unskilled' ? t('workers.unskilled') : skill;
+                return (
+                  <TouchableOpacity
+                    key={skill}
+                    style={[styles.skillPill, isSelected && styles.skillPillActive]}
+                    onPress={() => setSelectedSkillFilter(skill)}
+                    activeOpacity={0.8}
+                  >
+                    <Text style={[styles.skillPillText, isSelected && styles.skillPillTextActive]}>
+                      {label}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </ScrollView>
+
+            {/* 4. WORKER CARDS LIST (OPTIMIZED) */}
+            {loading && workers.length === 0 ? (
+              <ListSkeleton count={5} />
+            ) : (
+              <FlatList
+                data={filteredWorkers}
+                keyExtractor={(item) => item.id}
+                renderItem={renderWorkerItem}
+                initialNumToRender={8}
+                maxToRenderPerBatch={8}
+                windowSize={5}
+                removeClippedSubviews={Platform.OS === 'android'}
+                showsVerticalScrollIndicator={false}
+                contentContainerStyle={styles.listContent}
+                refreshing={loading}
+                onRefresh={fetchWorkers}
+                ListEmptyComponent={
+                  searchTerm || selectedSkillFilter !== 'All' ? (
+                    <EmptyState
+                      icon="search-off"
+                      title={t('common.noResults') || 'No Workers Match'}
+                      description={
+                        searchTerm
+                          ? `No workers match "${searchTerm}". Check your spelling or clear filters.`
+                          : `No workers found in "${selectedSkillFilter}" skill level.`
+                      }
+                      actionLabel="Reset Filters"
+                      onAction={() => {
+                        setSearchTerm('');
+                        setSelectedSkillFilter('All');
+                      }}
+                    />
+                  ) : (
+                    <EmptyState
+                      icon="engineering"
+                      title={t('workers.noWorkersFound')}
+                      description={
+                        language === 'hi'
+                          ? `"+ ${t('workers.addWorker')}" दबाकर नए श्रमिक जोड़ें।`
+                          : language === 'bn'
+                          ? `"+ ${t('workers.addWorker')}" ট্যাপ করে নতুন শ্রমিক যোগ করুন।`
+                          : `Tap below to onboard your first construction worker.`
+                      }
+                      actionLabel={`+ ${t('workers.addWorker')}`}
+                      onAction={() => setIsModalOpen(true)}
+                    />
+                  )
+                }
+              />
+            )}
+          </View>
+        </>
+      )}
+
+      {/* 5. ONBOARDING / EDIT FULL SCREEN FORM */}
       <FormModal
         isOpen={isModalOpen}
-        onClose={() => { setIsModalOpen(false); resetForm(); }}
-        title={editingWorker ? 'Edit Worker' : 'Add New Worker'}
-        subtitle={editingWorker ? 'Update worker information' : 'Enter worker details to create their profile'}
+        onClose={() => setIsModalOpen(false)}
+        title={editingWorker ? t('workers.editWorker') : t('workers.addWorker')}
+        subtitle={editingWorker ? t('workers.directorySubtitle') : t('workers.directorySubtitle')}
+        submitLabel={editingWorker ? t('common.save') : t('workers.addWorker')}
         onSubmit={handleSubmit}
-        submitLabel={editingWorker ? 'Update Worker' : 'Create Worker'}
         loading={loading}
-        submitDisabled={!formData.name.trim() || !formData.email.trim() || !formData.phone.trim()}
+        submitDisabled={
+          !formData.name.trim() ||
+          !formData.phone.trim() ||
+          !formData.dailyWage.trim()
+        }
       >
+        <Text style={formStyles.sectionHeader}>
+          {language === 'hi' ? 'बुनियादी जानकारी' : language === 'bn' ? 'প্রাথমিক তথ্য' : 'Basic Information'}
+        </Text>
+
         <FormField
-          label="Full Name"
-                      value={formData.name}
-                      onChangeText={(text) => setFormData({ ...formData, name: text })}
-          placeholder="Full name"
+          label={t('workers.workerName')}
           required
-          type="text"
+          value={formData.name}
+          onChangeText={(val) => setFormData({ ...formData, name: val })}
+          placeholder={t('workers.workerNamePlaceholder')}
         />
 
         <FormField
-          label="Phone Number"
-          value={formData.phone}
-          onChangeText={(text) => setFormData({ ...formData, phone: text })}
-          placeholder="Phone number"
+          label={t('workers.phone')}
           required
           type="phone"
+          value={formData.phone}
+          onChangeText={(val) => setFormData({ ...formData, phone: val })}
+          placeholder={t('workers.phonePlaceholder')}
+          helperText={language === 'hi' ? '10-अंकीय मोबाइल नंबर' : language === 'bn' ? '১০-সংখ্যার মোবাইল নম্বর' : '10-digit mobile number'}
         />
 
         <FormField
-          label="Email Address"
-                      value={formData.email}
-                      onChangeText={(text) => setFormData({ ...formData, email: text })}
-                      placeholder="worker@example.com"
-          required
+          label={`${t('forms.emailAddress')} (${t('common.optional')})`}
+          required={false}
           type="email"
+          value={formData.email}
+          onChangeText={(val) => setFormData({ ...formData, email: val })}
+          placeholder="worker@example.com"
+          autoCapitalize="none"
         />
 
-                {!editingWorker && (
-          <FormField
-            label="Password"
-                        value={formData.password}
-                        onChangeText={(text) => setFormData({ ...formData, password: text })}
-            placeholder="Minimum 6 characters"
-            required
-            type="password"
-          />
-                )}
-
-                {editingWorker && (
-          <FormField
-            label="New Password (optional)"
-                        value={formData.password}
-                        onChangeText={(text) => setFormData({ ...formData, password: text })}
-                        placeholder="Leave blank to keep current"
-            type="password"
-          />
-                )}
-
         <FormField
-          label="Aadhaar Number"
-                      value={formData.aadhaar}
-                      onChangeText={(text) => setFormData({ ...formData, aadhaar: text })}
-          placeholder="XXXX XXXX XXXX"
+          label={t('workers.aadhaarNumber')}
           type="number"
-                      keyboardType="number-pad"
+          value={formData.aadhaar}
+          onChangeText={(val) => setFormData({ ...formData, aadhaar: val })}
+          placeholder={t('workers.aadhaarPlaceholder')}
+          helperText={language === 'hi' ? '12-अंकीय आधार संख्या' : language === 'bn' ? '১২-সংখ্যার আধার নম্বর' : '12-digit Aadhaar'}
         />
 
         <FormField
-          label="Skill Level"
+          label={editingWorker ? `${t('auth.createPassword')} (${t('common.optional')})` : t('auth.createPassword')}
+          required={!editingWorker}
+          type="password"
+          value={formData.password}
+          onChangeText={(val) => setFormData({ ...formData, password: val })}
+          placeholder={t('auth.passwordPlaceholder')}
+        />
+
+        <Text style={formStyles.sectionHeader}>{t('workers.skillLevel')}</Text>
+
+        <FormField
+          label={t('workers.skillLevel')}
+          type="select"
           value={formData.skillLevel}
-          onValueChange={(value) => setFormData({ ...formData, skillLevel: value })}
-          placeholder="Select skill level"
+          onChangeText={(val) => setFormData({ ...formData, skillLevel: val })}
+          selectOptions={skillOptions}
+          placeholder={t('workers.skillLevel')}
+        />
+
+        <FormField
+          label={t('workers.dailyWage')}
           required
+          type="number"
+          suffix="₹/day"
+          value={formData.dailyWage}
+          onChangeText={(val) => setFormData({ ...formData, dailyWage: val })}
+          placeholder={t('workers.dailyWagePlaceholder')}
+        />
+
+        <FormField
+          label={`${t('workers.overtimeRate')} (${t('common.optional')})`}
+          required={false}
+          type="number"
+          suffix="₹/hr"
+          value={formData.overtimeRate}
+          onChangeText={(val) => setFormData({ ...formData, overtimeRate: val })}
+          placeholder={t('workers.overtimeRatePlaceholder')}
+        />
+
+        <FormField
+          label={`${t('workers.messDeduction')} (${t('common.optional')})`}
+          type="number"
+          suffix="₹/day"
+          value={formData.messCharge}
+          onChangeText={(val) => setFormData({ ...formData, messCharge: val })}
+          placeholder={t('workers.messDeductionPlaceholder')}
+        />
+
+        <Text style={formStyles.sectionHeader}>{t('workers.assignedSite')}</Text>
+
+        <FormField
+          label={t('workers.assignedSite')}
           type="select"
-          selectOptions={[
-            { label: 'Unskilled', value: 'unskilled' },
-            { label: 'Semi-skilled', value: 'semi-skilled' },
-            { label: 'Skilled', value: 'skilled' },
-            { label: 'Highly Skilled', value: 'highly-skilled' },
-          ]}
-        />
-
-        <FormField
-          label="Daily Wage (₹)"
-                      value={formData.dailyWage}
-                      onChangeText={(text) => setFormData({ ...formData, dailyWage: text })}
-                      placeholder="Daily wage"
-          required
-          type="number"
-                      keyboardType="decimal-pad"
-        />
-
-        <FormField
-          label="Daily Mess Charge (₹)"
-                      value={formData.messCharge}
-                      onChangeText={(text) => setFormData({ ...formData, messCharge: text })}
-                      placeholder="Mess charge per day"
-          helperText="Deducted from payroll when present"
-          type="number"
-                      keyboardType="decimal-pad"
-        />
-
-        <FormField
-          label="Assign to Site"
           value={formData.siteId}
-          onValueChange={(value) => setFormData({ ...formData, siteId: value })}
-          placeholder="Select site"
-          type="select"
+          onChangeText={(val) => setFormData({ ...formData, siteId: val })}
           selectOptions={[
-            { label: 'None', value: '' },
-            ...sites.map((site) => ({ label: site.name, value: site.id })),
+            { label: '-', value: '' },
+            ...siteOptions,
           ]}
+          placeholder={t('workers.selectSitePlaceholder')}
         />
 
-        <Text size="md" bold style={{ fontSize: 18, fontWeight: '700', color: '#111827', marginTop: 8, marginBottom: 16 }}>Bank Details (Optional)</Text>
+        <Text style={formStyles.sectionHeader}>{t('workerPortal.bankDetails')}</Text>
 
         <FormField
-          label="Bank Name"
+          label={t('workers.upiId')}
+          value={formData.upiId}
+          onChangeText={(val) => setFormData({ ...formData, upiId: val })}
+          placeholder={t('workers.upiIdPlaceholder')}
+          autoCapitalize="none"
+        />
+
+        <FormField
+          label={t('workers.bankName')}
           value={formData.bankName}
-          onChangeText={(text) => setFormData({ ...formData, bankName: text })}
-          placeholder="Bank name"
-          type="text"
+          onChangeText={(val) => setFormData({ ...formData, bankName: val })}
+          placeholder={t('workers.bankName')}
         />
 
         <FormField
-          label="Account Number"
-                      value={formData.accountNumber}
-                      onChangeText={(text) => setFormData({ ...formData, accountNumber: text })}
-                      placeholder="Bank account number"
+          label={t('workers.bankAccountNumber')}
           type="number"
-                      keyboardType="number-pad"
+          value={formData.accountNumber}
+          onChangeText={(val) => setFormData({ ...formData, accountNumber: val })}
+          placeholder={t('workers.bankAccountNumber')}
         />
 
         <FormField
-          label="IFSC Code"
-                      value={formData.ifscCode}
-                      onChangeText={(text) => setFormData({ ...formData, ifscCode: text.toUpperCase() })}
-                      placeholder="IFSC code"
-          type="text"
-                      autoCapitalize="characters"
+          label={t('workers.bankIfscCode')}
+          value={formData.ifscCode}
+          onChangeText={(val) => setFormData({ ...formData, ifscCode: val })}
+          placeholder={t('workers.bankIfscCode')}
+          autoCapitalize="characters"
         />
       </FormModal>
     </SafeAreaView>
@@ -520,163 +856,307 @@ export function WorkersTab({ accessToken }: WorkersTabProps) {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#f8fafc',
+    backgroundColor: colors.background,
+  },
+  header: {
+    backgroundColor: colors.primary,
+    paddingTop: 12,
+    paddingBottom: 14,
+    paddingHorizontal: 16,
+    ...shadows.card,
+  },
+  headerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 12,
+  },
+  headerTitle: {
+    fontSize: 20,
+    fontWeight: '800',
+    color: '#FFFFFF',
+    letterSpacing: -0.3,
+  },
+  headerSubtitle: {
+    fontSize: 11,
+    color: '#94A3B8',
+    marginTop: 2,
+  },
+  addWorkerButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: colors.accent,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: radii.md,
+    ...shadows.sm,
+  },
+  addWorkerButtonText: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: '#FFFFFF',
+    marginLeft: 4,
+  },
+  kpiRow: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  kpiCard: {
+    flex: 1,
+    backgroundColor: '#1E293B',
+    borderRadius: radii.md,
+    paddingVertical: 8,
+    paddingHorizontal: 10,
+    borderWidth: 1,
+    borderColor: '#334155',
+  },
+  kpiLabel: {
+    fontSize: 9,
+    fontWeight: '700',
+    color: '#94A3B8',
+    textTransform: 'uppercase',
+  },
+  kpiValue: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: '#FFFFFF',
+    marginTop: 2,
   },
   content: {
     flex: 1,
-    padding: 20,
-  },
-  header: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'flex-start',
-    marginBottom: 20,
-  },
-  headerText: {
-    flex: 1,
-    marginRight: 12,
-  },
-  headerTitle: {
-    fontSize: 24,
-    fontWeight: '700',
-    color: '#111827',
-    marginBottom: 4,
-  },
-  headerSubtitle: {
-    fontSize: 14,
-    color: '#6b7280',
-  },
-  addButton: {
-    backgroundColor: '#2563eb',
-    borderRadius: 8,
-    paddingVertical: 10,
     paddingHorizontal: 16,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    minHeight: 40,
-  },
-  addButtonText: {
-    color: '#ffffff',
-    fontWeight: '600',
-    fontSize: 14,
+    paddingTop: 12,
   },
   searchContainer: {
-    marginBottom: 20,
-  },
-  searchWrapper: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#ffffff',
-    borderRadius: 8,
+    backgroundColor: colors.surface,
     borderWidth: 1,
-    borderColor: '#e5e7eb',
+    borderColor: colors.borderDark,
+    borderRadius: radii.md,
     paddingHorizontal: 12,
     minHeight: 44,
+    marginBottom: 10,
+    ...shadows.sm,
   },
   searchIcon: {
     marginRight: 8,
   },
   searchInput: {
     flex: 1,
-    fontSize: 16,
-    color: '#111827',
-    paddingVertical: 10,
+    minHeight: 44,
+    fontSize: 13,
+    color: colors.text,
+    fontWeight: '600',
+  },
+  skillFilterScroll: {
+    marginBottom: 10,
+    maxHeight: 34,
+  },
+  skillPill: {
+    paddingHorizontal: 14,
+    paddingVertical: 6,
+    borderRadius: radii.pill,
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.border,
+    marginRight: 8,
+  },
+  skillPillActive: {
+    backgroundColor: colors.primary,
+    borderColor: colors.primary,
+  },
+  skillPillText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: colors.textMuted,
+  },
+  skillPillTextActive: {
+    color: '#FFFFFF',
   },
   listContent: {
-    paddingBottom: 20,
+    paddingBottom: 24,
   },
   workerCard: {
-    backgroundColor: '#ffffff',
-    borderRadius: 12,
-    padding: 16,
-    marginBottom: 12,
+    backgroundColor: colors.surface,
+    borderRadius: radii.xl,
+    padding: 14,
     borderWidth: 1,
-    borderColor: '#e5e7eb',
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.05,
-    shadowRadius: 2,
-    elevation: 1,
+    borderColor: colors.border,
+    marginBottom: 10,
+    ...shadows.sm,
   },
-  workerCardHeader: {
+  cardMain: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
     alignItems: 'flex-start',
-    marginBottom: 12,
   },
-  workerInfo: {
-    flex: 1,
+  avatarBox: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: colors.surfaceMuted,
+    borderWidth: 1,
+    borderColor: colors.borderDark,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 12,
   },
-  workerName: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: '#111827',
-    marginBottom: 4,
-  },
-  workerPhone: {
-    fontSize: 14,
-    color: '#6b7280',
-  },
-  workerActions: {
-    flexDirection: 'row',
-    gap: 8,
-  },
-  actionButton: {
-    padding: 8,
+  avatarInitials: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: colors.primary,
   },
   workerDetails: {
-    gap: 8,
-    paddingTop: 12,
-    borderTopWidth: 1,
-    borderTopColor: '#f3f4f6',
+    flex: 1,
   },
-  detailRow: {
+  nameRow: {
     flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 4,
+  },
+  workerNameText: {
+    fontSize: 15,
+    fontWeight: '800',
+    color: colors.text,
+    flexShrink: 1,
+    marginRight: 8,
+  },
+  skillBadge: {
+    backgroundColor: colors.surfaceMuted,
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+    borderRadius: radii.xs,
+  },
+  skillBadgeHigh: {
+    backgroundColor: '#EFF6FF',
+  },
+  skillBadgeText: {
+    fontSize: 9,
+    fontWeight: '800',
+    color: colors.textMuted,
+  },
+  skillBadgeTextHigh: {
+    color: '#1D4ED8',
+  },
+  workerContact: {
+    fontSize: 11,
+    color: colors.textMuted,
+    marginBottom: 4,
+  },
+  siteBadgeRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  siteBadgeText: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: colors.accent,
+    marginLeft: 2,
+  },
+  financeRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
     gap: 8,
   },
-  detailLabel: {
-    fontSize: 14,
-    color: '#6b7280',
-    fontWeight: '500',
+  financePill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: colors.surfaceMuted,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: radii.xs,
   },
-  detailValue: {
-    fontSize: 14,
-    color: '#111827',
+  financePillLabel: {
+    fontSize: 10,
+    color: colors.textMuted,
+    marginRight: 4,
+  },
+  financePillVal: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: colors.text,
+  },
+  cardActionsStrip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingTop: 10,
+    marginTop: 10,
+    borderTopWidth: 1,
+    borderTopColor: colors.border,
+  },
+  kycStatusRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  kycStatusText: {
+    fontSize: 11,
     fontWeight: '600',
+    color: colors.successDark,
+    marginLeft: 4,
+    flexShrink: 1,
   },
-  statusBadge: {
-    backgroundColor: '#f3f4f6',
+  actionButtonsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  actionIconButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
     paddingHorizontal: 8,
     paddingVertical: 4,
-    borderRadius: 6,
+    borderRadius: radii.sm,
+    backgroundColor: colors.surfaceMuted,
   },
-  statusBadgeActive: {
-    backgroundColor: '#dcfce7',
+  callActionBtn: {
+    backgroundColor: '#DCFCE7',
+    borderWidth: 1,
+    borderColor: '#86EFAC',
   },
-  statusText: {
-    fontSize: 12,
-    color: '#6b7280',
-    fontWeight: '600',
-  },
-  statusTextActive: {
-    color: '#16a34a',
-  },
-  emptyState: {
-    padding: 60,
+  cardHeaderCallBtn: {
+    marginLeft: 'auto',
+    width: 26,
+    height: 26,
+    borderRadius: 13,
+    backgroundColor: '#DCFCE7',
+    borderWidth: 1,
+    borderColor: '#86EFAC',
     alignItems: 'center',
     justifyContent: 'center',
   },
-  emptyText: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: '#374151',
-    marginBottom: 8,
+  viewLedgerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 8,
+    gap: 2,
   },
-  emptySubtext: {
-    fontSize: 14,
-    color: '#9ca3af',
-    textAlign: 'center',
+  viewLedgerText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: colors.accent,
+  },
+  actionButtonText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: colors.text,
+    marginLeft: 3,
+  },
+  emptyContainer: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 48,
+  },
+  emptyTitle: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: colors.textMuted,
+    marginTop: 12,
+  },
+  emptySubtitle: {
+    fontSize: 12,
+    color: colors.textLight,
+    marginTop: 4,
   },
 });
